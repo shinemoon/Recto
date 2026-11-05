@@ -546,6 +546,18 @@ PYTHONPATH=src python3 -m recto.sources.device stop
 数据落 `[device] data_dir`：每次同步一个 `decks/<日期>/<时刻>_<id>/`，同时并入 `aggregate/*.jsonl`（跨 deck 去重）。
 浏览与导出在 Web 的「摘录接入」（`/admin/`）。
 
+「工具」面板的**导出到纸间**（`/admin/?pane=tools`）由服务端造 payload、服务端代发到手机
+`http://<手机>:8080/send`，两条路都试过才报失败：
+
+1. **服务器代发**（主路径）：浏览器从公网域名打开控制台时不能直连私网 IP，而服务器与手机同在局域网。
+2. **浏览器直连**（兜底）：服务器与手机不同网段时用。跨源 POST JSON 会先发 `OPTIONS` 预检，
+   纸间 App 不答预检时请求会**挂住**（既不报错也不返回），所以这条只作兜底且**带 8 秒超时**。
+
+第一本就两条路全失败 → 直接停并提示「让手机上的阅读 App 回到前台」。排查口诀：
+先在服务器上 `curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"title":"t","entries":[]}' http://<手机>:8080/send`，
+通了才说明是前端问题；端口能连但无响应 = App 被系统冻结（亮屏再试）。
+
+
 ### 语料服务 + 阅读高亮（:5013，可选）
 
 语料服务是一个**独立应用**，Recto 只做两件事：`/corpus/*` 反代（注入同一套外壳与皮肤）、把它的 `keywords.json` 读成阅读器滤镜。它不在跑时：

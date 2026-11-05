@@ -1049,8 +1049,8 @@ def _render_tools(handler, data_dir: Path, flash: str = "") -> str:
         '    <b>⚠ 浏览器 CORS 必 block</b><br>'
         '    当前 origin 是公网域名 (<code id="zh-cors-origin"></code>),'
         '    浏览器不允许从公网页面 fetch 私网 IP,推送会失败并报 "more-private address space local"。<br>'
-        '    <b>修法</b>: PC 浏览器地址栏改成 <code>http://&lt;服务器私网 IP&gt;:8081</code> 直接访问 (需 server 跟 PC 同一 / 互通网段)。<br>'
-        '    例: 服务器在 <code>192.168.1.10</code>,PC 浏览器填 <code>http://192.168.1.10:8081</code>。'
+        '    <b>修法</b>: PC 浏览器地址栏改成 <code>http://&lt;服务器私网 IP&gt;:5015</code> 直接访问 (需 server 跟 PC 同一 / 互通网段)。<br>'
+        '    例: 服务器在 <code>192.168.1.10</code>,PC 浏览器填 <code>http://192.168.1.10:5015</code>。'
         '  </div>'
         '  <form id="zhijian-form">'
         '    <label>设备 IP : 端口 (浏览器 localStorage 记住, 每次自动填回)</label>'
@@ -1076,6 +1076,9 @@ def _render_tools(handler, data_dir: Path, flash: str = "") -> str:
         '    </div>'
         '    <label>摘录文本搜索 (content / idea, 留空 = 全部)</label>'
         '    <input type="text" name="q" placeholder="例: 风 / 月亮 / 桥">'
+        '    <label>最多推送 (安全上限, 命中更多就先收紧筛选)</label>'
+        f'    <input type="number" name="safety_cap" min="0" step="1" value="{len(excerpts) + 50}" '
+        '           title="0 = 不限">'
         '    <div class="btn-row">'
         '      <button type="submit">推送 (浏览器转发)</button>'
         '      <span style="color:var(--muted);font:11px var(--sans)" id="zh-status">就绪</span>'
@@ -1131,22 +1134,40 @@ def _render_tools(handler, data_dir: Path, flash: str = "") -> str:
         '    if(!j.ok){status.textContent="✗ "+j.error;log.textContent=JSON.stringify(j,null,2);log.className="out err";return;}'
         '    status.textContent="共 "+j.total+" 条 / "+j.book_count+" 本"+(j.time_minutes?(" / 时长 "+j.time_minutes+" 分钟"):"")+", 开始推送...";'
         # 逐本推, 串行, 实时回显
+        '    function withTimeout(p,ms,label){'
+        '      return Promise.race([p,new Promise(function(_,rej){setTimeout(function(){rej(new Error(label+" 超时 "+ms+"ms"));},ms);})]);'
+        '    }'
         '    var sent=0,failed=[];'
         '    for(var i=0;i<j.payloads.length;i++){'
         '      var p=j.payloads[i];'
         '      var line="▸ 《"+p.title+"》"+p.entries.length+" 条…";'
         '      log.textContent+=line+"\\n";'
+        '      var bodyObj={title:p.title,author:p.author,type:p.type||1,locationUnit:p.locationUnit||0,entries:p.entries};'
+        '      var txt=JSON.stringify(bodyObj);'
+        '      var okone=false,how="";'
+        # ① 先由 server 代发: 浏览器跨源 POST JSON 会先发 OPTIONS 预检, 纸间 App
+        #    不答预检时 fetch 既不报错也不返回 (挂住) —— 所以不能把它当主路径。
         '      try{'
-        '        var rr=await fetch("http://"+host+":"+port+"/send",{'
-        '          method:"POST",'
-        '          headers:{"Content-Type":"application/json"},'
-        '          body:JSON.stringify({title:p.title,author:p.author,type:p.type||1,locationUnit:p.locationUnit||0,entries:p.entries,})'
-        '        });'
-        '        var t=await rr.text().catch(function(_){return "";});'
-        '        var j=null;try{j=JSON.parse(t);}catch(_){}'
-        '        if(rr.ok && j && j.code===200){sent+=p.entries.length;log.textContent+="  ✓ "+rr.status+" code="+j.code+"\\n";}'
-        '        else{var body=t.slice(0,200);failed.push({title:p.title,status:rr.status,code:j&&j.code,msg:j&&j.message,body:body});log.textContent+="  ✗ HTTP "+rr.status+(j?(" code="+j.code+" "+j.message):body)+"\\n";}'
-        '      }catch(e){failed.push({title:p.title,err:String(e)});log.textContent+="  ✗ "+e+"\\n";}'
+        '        var fd2=new FormData();fd2.append("host",host);fd2.append("port",port);fd2.append("payload",txt);'
+        '        var r2=await withTimeout(fetch("/admin/api/zhijian-send",{method:"POST",body:fd2}),30000,"服务器代发");'
+        '        var j2=await r2.json().catch(function(_){return null;});'
+        '        if(j2 && j2.ok){okone=true;how="服务器代发";}'
+        '        else{log.textContent+="  · 服务器代发不通 ("+((j2&&(j2.error||j2.body))||r2.status)+"), 改走浏览器直连\\n";}'
+        '      }catch(e){log.textContent+="  · 服务器代发异常 ("+e+"), 改走浏览器直连\\n";}'
+        # ② 兜底: 浏览器直连手机 (server 与手机不在同一网段时唯一可行路径)
+        '      if(!okone){'
+        '        try{'
+        '          var rr=await withTimeout(fetch("http://"+host+":"+port+"/send",{method:"POST",headers:{"Content-Type":"application/json"},body:txt}),8000,"直连");'
+        '          var t=await rr.text().catch(function(_){return "";});'
+        '          var jr=null;try{jr=JSON.parse(t);}catch(_){}'
+        '          if(rr.ok && jr && jr.code===200){okone=true;how="浏览器直连";}'
+        '          else{failed.push({title:p.title,status:rr.status,code:jr&&jr.code,msg:jr&&jr.message,body:t.slice(0,200)});log.textContent+="  ✗ 直连 HTTP "+rr.status+(jr?(" code="+jr.code+" "+(jr.message||"")):t.slice(0,200))+"\\n";}'
+        '        }catch(e2){failed.push({title:p.title,err:String(e2)});log.textContent+="  ✗ 直连失败 "+e2+"\\n";}'
+        '      }'
+        '      if(okone){sent+=p.entries.length;log.textContent+="  ✓ "+how+"成功\\n";}'
+        # 第一本两条路都不通 = 设备不在线 (App 被系统冻结时端口能连但不应答)。
+        # 继续往下试只会每本各等 20s, 不如立刻停, 并告诉用户怎么办。
+        '      if(!okone && sent===0){log.textContent+="\\n设备无响应, 已停止后续推送。请让手机上的阅读 App 回到前台 (亮屏) 后再试。\\n";log.scrollTop=log.scrollHeight;break;}'
         '      log.scrollTop=log.scrollHeight;'
         '    }'
         '    var summary="\\n=== 完成 ===\\n共推 "+sent+" 条 / "+j.payloads.length+" 本";'
@@ -1379,6 +1400,36 @@ def _send_redirect(handler, location: str) -> None:
     handler.end_headers()
 
 
+ZHIJIAN_TIMEOUT = 12.0
+
+
+def _post_json(url: str, obj: dict, timeout: float = ZHIJIAN_TIMEOUT) -> tuple[int, str, str | None]:
+    """POST 一个 JSON 到设备。返回 (status, body_text, error)。
+
+    server 直推存在的唯一理由: 浏览器从公网页面不能 fetch 私网 IP。
+    """
+    import urllib.error
+    import urllib.request
+
+    data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, method="POST",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read().decode("utf-8", "replace"), None
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "replace")
+        except Exception:
+            pass
+        return exc.code, body, None
+    except Exception as exc:
+        return 0, "", f"{type(exc).__name__}: {exc}"
+
+
 def _send_json(handler, obj: Any, status: int = 200) -> None:
     data = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
     handler.send_response(status)
@@ -1597,6 +1648,78 @@ def handle_admin(handler, data_dir: Path, path: str, query: str) -> bool:
         handler.send_header("Cache-Control", "no-store")
         handler.end_headers()
         handler.wfile.write(png_bytes)
+        return True
+
+    # /admin/api/export-zhijian (POST) — 浏览器当桥: server 只造 payload 清单,
+    # 浏览器拿到后自己 fetch 到 http://<手机>:<端口>/send。
+    # 为什么不在 server 直推: server 与手机可能不同子网, 而浏览器跟手机在同一网段;
+    # 且 filter 维度 (书名/作者/时间窗/文本) 在 server 端比 client 端更可靠。
+    if path == "/admin/api/export-zhijian" and handler.command == "POST":
+        form = _read_form(handler)
+        host = (form.get("host", "") or "").strip()
+        try:
+            port = int(form.get("port", "8080") or "8080")
+        except ValueError:
+            port = 8080
+        source = (form.get("source", "all") or "all").strip()
+        book_name = (form.get("book_name", "") or "").strip()
+        author = (form.get("author", "") or "").strip()
+        day_from = (form.get("day_from", "") or "").strip()
+        day_to = (form.get("day_to", "") or "").strip()
+        text_q = (form.get("q", "") or "").strip()
+        try:
+            safety_cap = int(form.get("safety_cap", "200") or "200")
+        except ValueError:
+            safety_cap = 200
+        if not host:
+            _send_json(handler, {"ok": False, "error": "手机 IP 必填 (host)"}, status=400)
+            return True
+        try:
+            result = _build_zhijian_payloads(
+                data_dir, host, port, source, book_name, author,
+                day_from, day_to, text_q, safety_cap,
+            )
+        except Exception as exc:  # 不许把 traceback 当 JSON 吐给前端
+            _send_json(handler, {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=500)
+            return True
+        _send_json(handler, result)
+        return True
+
+    # /admin/api/zhijian-send (POST) — 由服务器代发一本到 http://<手机>:<端口>/send
+    # 存在理由: 从公网域名 (如 xx.zicp.fun) 打开控制台时, 浏览器不允许页面
+    # fetch 私网 IP (CORS / Private Network Access), 而服务器与手机同在局域网。
+    if path == "/admin/api/zhijian-send" and handler.command == "POST":
+        form = _read_form(handler)
+        host = (form.get("host") or "").strip()
+        try:
+            port = int(form.get("port") or "8080")
+        except ValueError:
+            port = 8080
+        raw = form.get("payload") or ""
+        if not host or not raw:
+            _send_json(handler, {"ok": False, "error": "host / payload 必填"}, status=400)
+            return True
+        try:
+            body_obj = json.loads(raw)
+        except Exception:
+            _send_json(handler, {"ok": False, "error": "payload 不是合法 JSON"}, status=400)
+            return True
+        code, text, err = _post_json(f"http://{host}:{port}/send", body_obj, ZHIJIAN_TIMEOUT)
+        if err:
+            _send_json(handler, {"ok": False, "error": err}, status=502)
+            return True
+        try:
+            jr = json.loads(text)
+        except Exception:
+            jr = None
+        ok = code == 200 and (jr is None or jr.get("code") == 200)
+        _send_json(handler, {
+            "ok": ok,
+            "status": code,
+            "code": (jr or {}).get("code"),
+            "message": (jr or {}).get("message"),
+            "body": (text or "")[:300],
+        }, status=200 if ok else 502)
         return True
 
     # /admin/api/excerpts.json (enriched: joined book meta + source + char count)
