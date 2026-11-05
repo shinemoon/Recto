@@ -709,7 +709,7 @@ src/recto/
 
 - [docs/READER.md](docs/READER.md) —— 内置阅读器：分页、排版、坐标口径、调试口
 - [docs/UI.md](docs/UI.md) —— 外壳 / 皮肤 / 分区 / 组件
-- [推广文案](docs/promo-xiaohongshu.md) —— 面向小红书的一页介绍
+
 
 ---
 
