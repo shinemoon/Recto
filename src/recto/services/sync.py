@@ -43,6 +43,21 @@ _PUSH_LOCK = threading.Lock()
 _TIME_CACHE: dict[str, float] = {"at": 0.0}
 _TIME_GAP = 600.0          # 时长拉的节流: 10 分钟内不重复打云端
 
+# 自动同步的运行时状态 (只活在内存里; 权威时间戳在边车 JSON 上)
+#   _PUSH_STATE[key] = {at, ok, pct, why, error, inflight, again, tries}
+#   _PULL_BOOK_AT[key] = 上次自动拉这本的时间
+_PUSH_STATE: dict[str, dict] = {}
+_PULL_BOOK_AT: dict[str, float] = {}
+
+
+def _sync_cfg(name: str, default=None):
+    """读 [sync] 段的一项 —— 每次现读, 设置页改了立刻生效 (不用重启)。"""
+    try:
+        cfg = _config_mod.get_config()
+        return cfg.get("sync", name, default)
+    except Exception:  # noqa: BLE001 — 配置读不出来按默认走
+        return default
+
 
 def _setup_log() -> None:
     if log.handlers:
@@ -209,6 +224,31 @@ def _link_by_key(key: str) -> dict | None:
         if row["key"] == key:
             return row
     return None
+
+
+def _link_light(key: str) -> dict | None:
+    """只看这一本书自己的边车, 不扫书库。
+
+    进度每几秒就保存一次, 那条路径上不需要"全库映射表" —— 扫一遍书库
+    在书多的机器上会被翻页拖成肉眼可见的卡顿。
+    """
+    row = reader_state.get_book(key) or {}
+    path = str(row.get("path") or "")
+    if not path:
+        return None
+    link = sidecar.cloud_link(path) or {}
+    if not (link.get("id64") or link.get("id32")):
+        return None
+    return {
+        "key": key, "path": path,
+        "title": row.get("title") or Path(path).stem,
+        "author": row.get("author") or "",
+        "id64": str(link.get("id64") or ""),
+        "id32": str(link.get("id32") or ""),
+        "name": str(link.get("name") or row.get("title") or Path(path).stem),
+        "total_count": int(link.get("total_count") or 0),
+        "bytes": int(row.get("bytes") or 0),
+    }
 
 
 def ensure_links() -> dict:
@@ -547,31 +587,214 @@ def _total_count_for(geo: geometry.BookGeometry | None, cur: int | None,
     return max(2, chapter_id + 1)
 
 
-def mirror_reader_progress(key: str, pct: float, *, finished: bool = False) -> dict:
-    """阅读器存进度时顺手推云端 (节流, 只前进)。
+def sync_settings() -> dict:
+    """当前生效的自动同步设置 (每次现读, 设置页改完立刻生效)。"""
+    return {
+        "auto": bool(_sync_cfg("auto", True)),
+        "pull_on_open": bool(_sync_cfg("pull_on_open", True)),
+        "push_debounce_sec": float(_sync_cfg("push_debounce_sec", 12) or 12),
+        "pull_gap_sec": float(_sync_cfg("pull_gap_sec", 120) or 120),
+        "flush_on_hide": bool(_sync_cfg("flush_on_hide", True)),
+        "stamp": bool(_sync_cfg("stamp", True)),
+    }
 
-    与 pull 用同一口径 (字节比例), 所以两侧不会互相拉扯。
+
+def _state_of(key: str) -> dict:
+    """一本书的同步状态 (不读云端, 只看边车 + 内存 —— 要快)。
+
+    state:
+      no-link   这本书还没跟云端对上 (没有边车映射)
+      off       自动同步被关了
+      synced    本地最后位置已经推上去
+      dirty     本地动过, 还在等节流窗口
+      pushing   正在推
+      cloud-ahead  云端更靠前 (本地的位置落后), 不往回拨 —— 下次打开会对齐
+      failed    上一次推失败了
     """
-    cfg = _config_mod.get_config()
-    if not bool(cfg.get("sync", "auto", True)):
-        return {"ok": False, "skipped": "auto-off"}
-    gap = float(cfg.get("sync", "push_debounce_sec", 8) or 8)
-    now = time.time()
-    stamp = f"push_at_{key}"
+    st = sync_settings()
+    rec = _PUSH_STATE.get(key) or {}
+    out: dict = {
+        "state": "no-link",
+        "last_push_at": None, "last_push_pct": None,
+        "last_pull_at": None, "last_pull_pct": None,
+        "inflight": bool(rec.get("inflight")),
+        "ok": rec.get("ok"), "error": rec.get("error"), "why": rec.get("why"),
+        "pending_pct": rec.get("pending_pct"),
+        "cloud_ahead": bool(rec.get("cloud_ahead")),
+        "cloud_pct": rec.get("cloud_pct"),
+    }
+    row = _link_light(key)
+    if row:
+        link = sidecar.cloud_link(row["path"]) or {}
+        out["last_push_at"] = link.get("last_push_at")
+        out["last_push_pct"] = link.get("last_push_pct")
+        out["last_pull_at"] = link.get("last_pull_at")
+        out["last_pull_pct"] = link.get("last_pull_pct")
+        if rec.get("inflight"):
+            out["state"] = "pushing"
+        elif rec.get("pending_pct") is not None:
+            out["state"] = "dirty"
+        elif rec.get("ok") is False:
+            out["state"] = "failed"
+        elif rec.get("ok") and rec.get("cloud_ahead"):
+            out["state"] = "cloud-ahead"
+        else:
+            out["state"] = "synced"
+    if not st["auto"]:
+        out["state"] = "off"
+    return out
+
+
+def sync_state(key: str) -> dict:
+    """同步状态 + 生效设置 (阅读页右下角那行小字 / 前端判断用)。"""
+    out = _state_of(key)
+    out["settings"] = sync_settings()
+    return out
+
+
+def _push_worker(key: str) -> None:
+    """后台把这本书的进度推上去。节流在调用方做, 这里只管推。"""
+    for _ in range(2):        # 推期间又存了进度 → 最多再补一次
+        ok = False
+        why = ""
+        err = None
+        pct = None
+        rec_cloud = None
+        ahead = False
+        try:
+            res = push_once(keys=[key])
+            det = (res.get("detail") or [{}])[0]
+            ok = int(res.get("pushed") or 0) > 0
+            why = str(det.get("why") or det.get("skipped") or "")
+            err = det.get("error")
+            pct = det.get("pct")
+            if why.startswith("regress("):
+                # 「云端比本地靠前」时我们没写 —— 把小字要显示的**云端**百分比留出来
+                try:
+                    rec_cloud = float(str(why).split("<", 1)[1].rstrip(")"))
+                except (IndexError, ValueError):
+                    rec_cloud = None
+            if not ok and not err:
+                # "没写" 不等于 "失败": 云端已经是这个位置 / 云端更靠前 / 本地没进度,
+                # 三种都是正常结局。只有真的报错才算失败 (否则小字永远挂"同步失败")。
+                ahead = why.startswith("regress") or why == "cloud-already-done"
+                ok = ahead or why in ("noop", "no-baseline", "no-progress")
+        except Exception as e:  # noqa: BLE001 — 网络抖动不该冒到阅读页
+            err = f"{type(e).__name__}: {e}"
+            log.warning("自动推送失败 · %s · %s", key, e)
+        with _PUSH_LOCK:
+            rec = _PUSH_STATE.setdefault(key, {})
+            rec["at"] = time.time()
+            rec["ok"] = bool(ok)
+            rec["why"] = why
+            rec["error"] = err
+            rec["cloud_ahead"] = bool(ahead)
+            if pct is not None:
+                rec["pct"] = pct
+            if rec_cloud is not None:
+                rec["cloud_pct"] = rec_cloud
+            rec.pop("pending_pct", None)
+            rec["inflight"] = False
+            again = bool(rec.get("again"))
+            rec["again"] = False
+        if not again:
+            return
+        time.sleep(0.5)
+
+
+def _delayed_push(key: str) -> None:
+    """节流窗口到了再补一次 (读者停手之后最后那个位置不能一直挂着)。"""
     with _PUSH_LOCK:
-        last = float(_LINK_CACHE.get(stamp) or 0)  # type: ignore[arg-type]
-        if now - last < gap:
-            return {"ok": True, "throttled": True}
-        _LINK_CACHE[stamp] = now  # type: ignore[index]
+        rec = _PUSH_STATE.setdefault(key, {})
+        if rec.get("inflight"):
+            rec["again"] = True
+            return
+        if rec.get("pending_pct") is None:
+            return
+        rec["inflight"] = True
+    threading.Thread(target=_push_worker, args=(key,), daemon=True,
+                     name="recto-push").start()
+
+
+def mirror_reader_progress(key: str, pct: float, *, finished: bool = False,
+                           flush: bool = False) -> dict:
+    """阅读器存进度后顺手推云端 —— **放到后台线程, 不阻塞翻页**。
+
+    节流 = `[sync] push_debounce_sec`; `flush=True` 绕过节流 (离开页面时的最后一推)。
+    节流只决定"多久打一次云端", 推送本身仍然只前进 (`push_decision`),
+    所以手机端读得更靠前时不会被这里往回拨。
+    """
+    st = sync_settings()
+    if not st["auto"]:
+        return {"ok": False, "skipped": "auto-off", "state": _state_of(key)}
+    row = _link_light(key)
+    if not row:
+        return {"ok": False, "skipped": "no-cloud-link", "state": _state_of(key)}
+    now = time.time()
+    gap = float(st["push_debounce_sec"] or 12)
+    with _PUSH_LOCK:
+        rec = _PUSH_STATE.setdefault(key, {})
+        rec["pending_pct"] = round(float(pct), 8)
+        if rec.get("inflight"):
+            rec["again"] = True          # 这一推跑完再补一次, 不丢最后位置
+            return {"ok": True, "queued": True, "inflight": True, "state": _state_of(key)}
+        last = float(rec.get("at") or 0)
+        if not flush and now - last < gap:
+            # 节流: 不立刻打云端, 但**排一个到点的补推** ——
+            # 否则读者停在原地不再翻页, 最后一个位置就永远挂在那里,
+            # 右下角一直显示"同步中…"。
+            wait = max(0.5, gap - (now - last))
+            threading.Timer(wait, _delayed_push, args=(key,)).start()
+            return {"ok": True, "throttled": True, "retry_in": round(wait, 1),
+                    "state": _state_of(key)}
+        rec["inflight"] = True
+    threading.Thread(target=_push_worker, args=(key,), daemon=True,
+                     name="recto-push").start()
+    return {"ok": True, "queued": True, "state": _state_of(key)}
+
+
+def pull_book(key: str, *, force: bool = False) -> dict:
+    """打开一本书时跟云端对一次进度 (节流 `[sync] pull_gap_sec`)。
+
+    `changed=True` 时前端应该跳到 `anchor`; 本地更靠前时不动 (只报 local-ahead)。
+    """
+    st = sync_settings()
+    if not st["auto"]:
+        return {"ok": False, "skipped": "auto-off", "state": sync_state(key)}
+    if not st["pull_on_open"] and not force:
+        return {"ok": False, "skipped": "pull-off", "state": sync_state(key)}
     row = _link_by_key(key)
     if not row:
-        return {"ok": False, "skipped": "no-cloud-link"}
+        return {"ok": False, "skipped": "no-cloud-link", "state": sync_state(key)}
+    now = time.time()
+    gap = float(st["pull_gap_sec"] or 120)
+    if not force and now - float(_PULL_BOOK_AT.get(key) or 0) < gap:
+        return {"ok": True, "skipped": "throttled", "state": sync_state(key)}
+    _PULL_BOOK_AT[key] = now
     try:
-        res = push_once(keys=[key])
-    except Exception as e:  # noqa: BLE001
-        log.warning("推给阅读器失败 · %s", e)
-        return {"ok": False, "error": str(e)}
-    return {"ok": res["pushed"] > 0, "result": res}
+        # 时长不在打开时拉: 那是"记录"不是"位置", 手动拉取 / 定时任务去做
+        res = pull_once(keys=[key], only_forward=True, with_time=False)
+    except Exception as e:  # noqa: BLE001 — 拉不到就按本地位置读, 不挡打开
+        log.warning("自动拉取失败 · %s · %s", key, e)
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "state": sync_state(key)}
+    det = (res.get("detail") or [{}])[0]
+    prog = reader_state.get_progress(key) or {}
+    changed = bool(res.get("updated"))
+    if changed:
+        log.info("自动拉取 · %s · 云端 %s · 第 %s 章", row["title"],
+                 geometry.format_pct(det.get("pct"), int(det.get("bytes") or 0)),
+                 int(det.get("chapter") or 0) + 1)
+    return {
+        "ok": True,
+        "changed": changed,
+        "skipped": det.get("skipped"),
+        "cloud_pct": det.get("pct"),
+        "local_pct": det.get("local"),
+        "anchor": {"chapter": int(prog.get("chapter") or 0),
+                   "offset": int(prog.get("offset") or 0),
+                   "percent": float(prog.get("percent") or 0.0)},
+        "state": sync_state(key),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -647,7 +870,8 @@ def pull_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
         except Exception:
             position = ""
         reader_state.save_progress(r["key"], chapter, offset, pct_store, position,
-                                   complete=1 if (ent.get("finished") or pct >= 0.999) else 0)
+                                   complete=1 if (ent.get("finished") or pct >= 0.999) else 0,
+                                   allow_rewind=True)
         updated += 1
         sidecar.touch_cloud(r["path"], last_pull_at=_now(), last_pull_pct=round(pct, 8))
         detail.append({"book": r["title"], "pct": round(pct, 8), "bytes": nbytes,

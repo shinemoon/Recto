@@ -56,7 +56,16 @@
     fx: localStorage.getItem('recto.fx') || 'slide',
     page: 0, pageCount: 1, pageStride: 0, pageW: 0, pageGap: 0,
     swipedAt: 0,
-    draggedAt: 0
+    draggedAt: 0,
+    // 云端同步: sid = 这个页面实例的随机 id (服务端用它挡住"旧标签页把进度写回去")
+    sid: 's' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3),
+    sync: null,          // {settings:{...}, state:{...}}
+    syncT: 0,
+    pulled: false,
+    // 读者在这一页里真的动过没有 (滚轮/触摸/按键/点击)。
+    // 没动过就不写进度: 刚打开时正文还在排版, 量到的锚点可能是恢复前的位置,
+    // 写回去就会把"读到 90%"变成"停在章首" —— 这是老用户报过的现象。
+    userMoved: false
   };
 
   // ---------- 基础 ----------
@@ -760,6 +769,14 @@
     S.saveT = setTimeout(saveProgress, now ? 200 : 2500);
   }
 
+  // 读者是否真的到了全书末尾 (scroll: 滚到底; page: 最后一章最后一页)
+  function atEnd() {
+    if (isPaged()) {
+      return S.cur >= S.chapters.length - 1 && S.page >= S.pageCount - 1;
+    }
+    return window.scrollY + window.innerHeight >= document.body.scrollHeight - 40;
+  }
+
   // 当前游标: 滚动模式 = 视口顶部那一段; 翻页模式 = 当前页左上角那一段
   function currentAnchor() {
     var el = isPaged() ? pageTopBlock() : topBlock();
@@ -767,17 +784,148 @@
     return { el: el, ch: +el.dataset.ch, off: +el.dataset.off };
   }
 
-  function saveProgress() {
+  function saveProgress(now, opts) {
+    opts = opts || {};
+    if (!S.userMoved && !opts.force) return;   // 见 S.userMoved 的注释
     var a = currentAnchor();
     if (!a) return;
     var ch = a.ch, off = a.off;
     var pct = pctOf(ch, off);
     $('#rv-pct').textContent = pctText(pct, S.bytes);
-    if (ch === S.lastCh && off === S.lastOff) return;
+    if (ch === S.lastCh && off === S.lastOff && !opts.force) return;
+    var moved = (ch !== S.lastCh || off !== S.lastOff);
     S.lastCh = ch; S.lastOff = off;
-    api('/progress', { method: 'POST', body: { chapter: ch, offset: off } })
-      .then(function (r) { if (r && r.percent != null) $('#rv-pct').textContent = pctText(r.percent, S.bytes); })
-      .catch(function () { /* 离线时静默, 下次滚动再试 */ });
+    api('/progress', {
+      method: 'POST',
+      body: { chapter: ch, offset: off, sid: S.sid,
+              flush: !!opts.flush, jump: !!opts.jump, end: atEnd() }
+    }).then(function (r) {
+      if (!r) return;
+      if (r.stale) {
+        // 服务端判定"这是落后于别处的旧位置": 保留更靠前的进度, 页面跟着对齐
+        toast('别处读到更后面, 已保留那边的进度', 2600);
+        if (r.chapter != null && (+r.chapter !== ch || +r.offset !== off)) {
+          S.lastCh = null; S.lastOff = null;
+          jumpTo(+r.chapter, +r.offset);
+        }
+      } else if (r.percent != null) {
+        $('#rv-pct').textContent = pctText(r.percent, S.bytes);
+      }
+      if (r.sync) renderStamp(r.sync);
+    }).catch(function () { /* 离线时静默, 下次滚动再试 */ });
+    if (moved && opts.flush) flushProgress();
+  }
+
+  // ---------- 云端同步 (进度) ----------
+  // 口径: 服务端负责"只前进"的闸门; 前端只做三件事 ——
+  //   1. 打开时先对一次 (云端更靠前就跳过去)
+  //   2. 右下角那行小字 (可在设置页关掉)
+  //   3. 离开 / 切后台时把最后位置立刻推上去 (不等节流)
+  var stampEl = $('#rv-sync');
+
+  function clockOf(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+
+  function stampPct(p) {
+    if (p == null) return '—';
+    return (Math.floor((+p || 0) * 1000) / 10).toFixed(1) + '%';
+  }
+
+  function renderStamp(st) {
+    if (!stampEl) return;
+    var cfg = (st && st.settings) || (S.sync && S.sync.settings) || {};
+    var s = (st && st.state !== undefined) ? st : ((S.sync || {}).state || {});
+    if (!cfg.stamp || !cfg.auto || !s || !s.state) { stampEl.hidden = true; return; }
+    if (s.state === 'no-link' || s.state === 'off') { stampEl.hidden = true; return; }
+    var txt;
+    if (s.state === 'pushing' || s.state === 'dirty') {
+      txt = '掌阅 同步中…';
+    } else if (s.state === 'failed') {
+      txt = '掌阅 同步失败';
+    } else if (s.state === 'cloud-ahead') {
+      // 云端读得更靠前: 我们不会把云端往回拨, 下次打开这本书会对齐过去
+      txt = '掌阅 更靠前 ' + stampPct(s.cloud_pct != null ? s.cloud_pct : s.last_push_pct);
+    } else {
+      var t = clockOf(s.last_push_at);
+      txt = t ? ('掌阅 ' + t + ' 已同步 ' + stampPct(s.last_push_pct))
+              : '掌阅 尚未同步';
+    }
+    stampEl.textContent = txt;
+    stampEl.hidden = false;
+  }
+
+  function syncPoll() {
+    clearInterval(S.syncT);
+    S.syncT = setInterval(function () {
+      if (document.visibilityState === 'hidden') return;
+      api('/sync-state').then(renderStamp).catch(function () {});
+    }, 20000);
+  }
+
+  function flushProgress() {
+    var cfg = (S.sync && S.sync.settings) || {};
+    if (!cfg.auto || cfg.flush_on_hide === false) return;
+    if (!S.userMoved) return;                  // 没动过 = 库里的位置已经是对的
+    var a = currentAnchor();
+    if (!a) return;
+    // 节流窗口里可能还有一次没推上去 —— 离开页面时补上 (服务端 flush 绕过节流)。
+    // 用 keepalive fetch 而不是 sendBeacon: 同样的"页面走了还发得出去", 但
+    // 请求体是普通 JSON, 排查时看得见 (beacon 的 body 在日志里往往是空的)。
+    var payload = JSON.stringify({ chapter: a.ch, offset: a.off, sid: S.sid, flush: 1 });
+    try {
+      fetch(API + '/progress', {
+        method: 'POST', keepalive: true,
+        headers: { 'Content-Type': 'application/json' }, body: payload
+      }).catch(function () {});
+    } catch (e) {
+      beacon('/progress', { chapter: a.ch, offset: a.off, sid: S.sid, flush: 1 });
+    }
+  }
+
+  // 打开一本书时先跟云端对一次: 云端更靠前 → 跳过去; 本地更靠前 → 说明该推
+  function autoPull() {
+    var cfg = (S.sync && S.sync.settings) || {};
+    if (!cfg.auto || !cfg.pull_on_open) return;
+    api('/sync').then(function (r) {
+      if (!r) return;
+      if (r.state) { S.sync.state = r.state; renderStamp(r.state); }
+      if (!r.changed || !r.anchor) {
+        if (r.skipped === 'local-ahead') queueSave(true);
+        return;
+      }
+      var a = r.anchor;
+      // 读者已经开始读了 (滚动/点按/按键) → 绝不把位置拽走。
+      // 网络慢时这条请求可能要一两秒才回来, 那一两秒里人已经在读了;
+      // 此时跳到"云端的更靠前位置" = 把书从手里抢走。留到下次打开再对齐,
+      // 右下角会显示「掌阅 更靠前 x%」提醒, 不闷掉信息。
+      if (S.userMoved) {
+        // 服务端这时已经把云端位置写进库了 —— 立刻把读者的真实位置写回去,
+        // 否则"停在这一页不动"的人下次打开会被带到云端那个更靠前的位置。
+        setTimeout(function () { saveProgress(true, { force: true }); }, 300);
+        return;
+      }
+      var cur = currentAnchor();
+      var same = cur && (+a.chapter === cur.ch && Math.abs(+a.offset - cur.off) < 2);
+      if (same) return;
+      S.lastCh = null; S.lastOff = null;
+      jumpTo(+a.chapter || 0, +a.offset || 0);
+      toast('已同步掌阅进度 · ' + stampPct(a.percent) + ' · 第 ' + ((+a.chapter || 0) + 1) + ' 章', 2400);
+      // 服务端已经把云端位置写进库了; 这里只把"已保存锚点"钉到目标上,
+      // 不再补一次保存 —— 跳转刚发起时 DOM 还没排好, 量出来的锚点会偏。
+      S.lastCh = +a.chapter || 0;
+      S.lastOff = +a.offset || 0;
+    }).catch(function () { /* 离线: 按本地位置读 */ });
+  }
+
+  function syncBoot(cfg) {
+    S.sync = cfg || S.sync || {};
+    renderStamp(S.sync.state);
+    if (S.sync.settings && S.sync.settings.stamp) syncPoll();
+    if (!S.pulled) { S.pulled = true; autoPull(); }
   }
 
   // ---------- 选区 / 划线 ----------
@@ -2212,6 +2360,13 @@
     if (!scrollInsidePanel(ev)) hideTypo();
   }, { passive: true });
 
+  // ---------- 用户输入标记 ----------
+  // 只认真正的手势 —— 程序化的 scrollToOffset / layoutPaged 也会发 scroll 事件,
+  // 不能拿 scroll 当"读者动过"的证据。
+  ['wheel', 'touchstart', 'touchmove', 'pointerdown', 'keydown'].forEach(function (ev) {
+    window.addEventListener(ev, function () { S.userMoved = true; }, { passive: true });
+  });
+
   // ---------- 滚动 ----------
   // 滚动方向决定顶栏显隐: 下滑收起, 上滑 / 回到顶部唤出
   window.addEventListener('scroll', function () {
@@ -2243,12 +2398,20 @@
         if (ch !== S.cur) { S.cur = ch; markToc(); if (!S.loaded[ch + 1]) ensureNext(); }
         $('#rv-pct').textContent = pctText(pctOf(ch, +el.dataset.off), S.bytes);
       }
-      // 读到底: 最后一章末尾进入视口 → 位置记到章末, 服务端按 >=99.9% 判读完
-      if (S.cur === S.chapters.length - 1 &&
+      // 读到底: 最后一章末尾进入视口 → 位置记到章末, 并把「读完」明确告诉服务端。
+      // 注意: 只在读者**真的动过**之后才算 —— 打开一本书时如果本来就停在末尾,
+      // 这一屏也会"看起来到底", 那不等于刚读完 (会误标 readComplete=1)。
+      if (S.userMoved && S.cur === S.chapters.length - 1 &&
           window.scrollY + window.innerHeight >= document.body.scrollHeight - 40) {
         var last = S.chapters[S.cur];
-        api('/progress', { method: 'POST', body: { chapter: S.cur, offset: Math.max(0, last.size - 1) } })
-          .then(function (r) { if (r && r.percent != null) $('#rv-pct').textContent = pctText(r.percent, S.bytes); })
+        api('/progress', { method: 'POST',
+                           body: { chapter: S.cur, offset: Math.max(0, last.size - 1),
+                                   sid: S.sid, end: S.cur >= S.chapters.length - 1 } })
+          .then(function (r) {
+            if (!r) return;
+            if (r.percent != null && !r.stale) $('#rv-pct').textContent = pctText(r.percent, S.bytes);
+            if (r.sync) renderStamp(r.sync);
+          })
           .catch(function () {});
         return;
       }
@@ -2277,12 +2440,17 @@
   }
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'hidden') {
+      flushProgress();
       beacon('/session', { action: 'end' });
     } else {
       api('/session', { method: 'POST', body: { action: 'start' } }).catch(function () {});
+      api('/sync-state').then(renderStamp).catch(function () {});
     }
   });
-  window.addEventListener('pagehide', function () { beacon('/session', { action: 'end' }); });
+  window.addEventListener('pagehide', function () {
+    flushProgress();
+    beacon('/session', { action: 'end' });
+  });
 
   // 排查口 (只读): 页号表 / 当前游标 —— 探针与手查都用它
   window.__RV__ = {
@@ -2346,6 +2514,7 @@
       // 从上次位置恢复后的那一次跳转不算"下滑阅读" —— 落地时顶栏应当可见
       lastY = window.scrollY;
       setBar(false);
+      syncBoot(meta.sync);
     });
   }
 

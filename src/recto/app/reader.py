@@ -30,6 +30,7 @@ import urllib.parse
 from pathlib import Path
 
 from recto.core import bookfile
+from recto.services import sync as _sync
 from recto.services import reader_state as rs
 from recto.app.ui import shell
 
@@ -233,6 +234,8 @@ _READER_HTML = """
   </main>
 
   <div class="rv-pageind" id="rv-pageind" hidden></div>
+  <!-- 右下角云端同步状态 (可在设置页关掉): 只读文字, 不吃指针 -->
+  <div class="rv-sync" id="rv-sync" hidden aria-live="off"></div>
 
   <!-- 翻页效果的舞台: 固定盖满整个视口, 不吃指针 -->
   <div class="rv-fxstage" id="rv-fxstage" aria-hidden="true"></div>
@@ -297,6 +300,8 @@ def _meta(key: str, doc: bookfile.BookDoc) -> dict:
         "bookmarks": rs.list_bookmarks(key),
         "notes": rs.list_notes(key),
         "stats": rs.time_stats(key),
+        # 自动同步 (前端据此决定: 打开时要不要先拉一次 / 右下角要不要显示时间)
+        "sync": _sync.sync_state(key),
     }
 
 
@@ -392,6 +397,14 @@ def handle(h) -> bool:
         if method == "GET" and rest[:1] == ["chapter"] and len(rest) == 2:
             h._json(200, _chapter_payload(doc, int(rest[1])))
             return True
+        if method == "GET" and rest[:1] == ["sync"] and len(rest) == 1:
+            # 打开一本书时跟云端对一次 (节流 [sync] pull_gap_sec)。
+            # 云端更靠前 → 写本地并回 anchor, 前端跳过去; 本地更靠前 → 不动。
+            h._json(200, _sync.pull_book(key, force=bool(q.get("force"))))
+            return True
+        if method == "GET" and rest[:1] == ["sync-state"] and len(rest) == 1:
+            h._json(200, _sync.sync_state(key))
+            return True
         if method == "GET" and rest[:1] == ["mark"] and len(rest) == 1:
             # 关键词高亮: 语料 (keywords.json) → 词表 + 每类样式。
             # 一个字符都不改 DOM (highlight 模式), 所以进度/划线坐标不受影响。
@@ -417,13 +430,28 @@ def handle(h) -> bool:
             ch = max(0, min(ch, len(doc.chapters) - 1))
             pct = doc.percent(ch, off)
             pos = doc.position(ch, off)
-            out = rs.save_progress(key, ch, off, pct, pos)
-            # 同时回写本地书库 (只前进) —— 阅读器不切片, 位置按字节比例折算,
-            # 与 pull 用同一套口径, 所以两侧不会互相拉扯。
+            # sid = 这个阅读器页面实例的随机 id; jump = 目录跳转这类"我就是想回去"的动作。
+            # 两者合起来挡住"早上没关的旧标签页把进度写回上午的位置"。
+            # 「读完」只认读者真的到了末尾 (at_end), 不认百分比:
+            # 最后一章的块粒度可能把 99.76% 抬到 99.9997%, 那不是读完。
+            at_end = body.get("end")
+            complete = (1 if at_end else 0) if at_end is not None else None
+            out = rs.save_progress(key, ch, off, pct, pos, complete=complete,
+                                   sid=str(body.get("sid") or "")[:24],
+                                   allow_rewind=bool(body.get("jump")))
+            if out.get("skipped") == "stale-rewind":
+                # 旧会话的落后位置: 不写库, 也不推云端; 让前端跟上真正的位置
+                out["sync"] = _sync.sync_state(key)
+                out["percent"] = float(out.get("percent") or 0.0)
+                h._json(200, {"ok": True, "stale": True, **out})
+                return True
+            # 推云端放到后台线程 (节流在 sync 里) —— 翻页不能等网络。
+            # flush=True 是"离开页面/切后台"的最后一推, 绕过节流。
             try:
-                from recto.services import sync as _sync
                 out["library"] = _sync.mirror_reader_progress(
-                    key, pct, finished=bool(pct >= 0.999)) or None
+                    key, pct, finished=bool(out.get("complete")),
+                    flush=bool(body.get("flush"))) or None
+                out["sync"] = (out["library"] or {}).get("state") or _sync.sync_state(key)
             except Exception:
                 out["library"] = None
             h._json(200, {"ok": True, "percent": pct, "position": pos, **out})

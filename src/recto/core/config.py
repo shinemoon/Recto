@@ -70,10 +70,15 @@ DEFAULTS: dict[str, Any] = {
         "shared_dir": "",                 # 空 = <项目根>/config/webauth
         "ttl_days": 7,
     },
+    # 阅读器与云端阅读服务之间的自动同步 (双向)。全部可在设置页改
+    # (落 settings.json, 优先级: 环境变量 > 设置页 > 这里)。
     "sync": {
-        "auto": True,
-        "push_debounce_sec": 8,
-        "pull_gap_sec": 120,
+        "auto": True,                # 总开关: 阅读中自动推送 + 打开时自动拉取
+        "pull_on_open": True,        # 打开一本书时先跟云端对一次 (云端更靠前就跳过去)
+        "push_debounce_sec": 12,     # 两次推送至少隔多久 (太小会一直打云端)
+        "pull_gap_sec": 120,         # 同一本书两次自动拉取的间隔
+        "flush_on_hide": True,       # 切后台/离开页面时立刻把最后位置推上去
+        "stamp": True,               # 阅读页右下角显示云端同步时间/进度
     },
 }
 
@@ -160,6 +165,11 @@ class Config:
             "RECTO_AUTH_USER": ("auth", "user"),
             "RECTO_AUTH_PASSWORD": ("auth", "password"),
             "RECTO_SYNC_AUTO": ("sync", "auto"),
+            "RECTO_SYNC_PULL_ON_OPEN": ("sync", "pull_on_open"),
+            "RECTO_SYNC_PUSH_DEBOUNCE": ("sync", "push_debounce_sec"),
+            "RECTO_SYNC_PULL_GAP": ("sync", "pull_gap_sec"),
+            "RECTO_SYNC_FLUSH_ON_HIDE": ("sync", "flush_on_hide"),
+            "RECTO_SYNC_STAMP": ("sync", "stamp"),
         }
         for env, (sec, key) in env_map.items():
             v = os.environ.get(env)

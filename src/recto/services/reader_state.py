@@ -146,6 +146,8 @@ def conn() -> sqlite3.Connection:
         # 云端已记录的分钟数 —— 与本地位图分开存, 展示/统计取两者较大值
         ("rtime", {"cloud_minutes": "INTEGER NOT NULL DEFAULT 0",
                    "cloud_at": "TEXT DEFAULT ''"}),
+        # 上一次写进度的那个阅读器会话 (见 save_progress 的"别被旧标签页拽回去")
+        ("rprogress", {"sid": "TEXT DEFAULT ''"}),
     ):
         have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
         for col, ddl in cols.items():
@@ -486,19 +488,51 @@ def get_progress(key: str) -> dict:
     return dict(r)
 
 
+# 两个**不同的阅读器会话**之间, 允许的最大回退 (占全书比例)。
+#
+# 存在的理由: 早上开着没关的标签页停在 53%, 你在手机读到 99%; 那个旧页面
+# 只要滚动一下就会把本地进度写回 53% —— 之后每次打开都从中间开始, 而云端
+# 又因为"只前进"不会被拨回去, 两边就永久错位。同一个会话里的回退一律放行
+# (读者自己往回翻是正常的)。
+REWIND_GUARD = 0.05
+
+
 def save_progress(key: str, chapter: int, offset: int, percent: float,
-                  position: str = "", complete: int | None = None) -> dict:
-    """写进度。`complete` 缺省按比例判（>=99.9% 视为读完，对齐云端 readComplete）。"""
+                  position: str = "", complete: int | None = None, *,
+                  sid: str = "", allow_rewind: bool = False) -> dict:
+    """写进度。`complete` 缺省按比例判（>=99.9% 视为读完，对齐云端 readComplete）。
+
+    `sid` = 阅读器页面实例的随机 id。跨会话的大幅回退会被挡下, 返回库里
+    **原来那条** (带 `skipped="stale-rewind"`), 除非 allow_rewind。
+    """
     c = conn()
     if complete is None:
         complete = 1 if percent >= 0.999 else 0
+    cur: dict = {}
+    if not allow_rewind:
+        cur = get_progress(key)
+        cur_pct = float(cur.get("percent") or 0.0)
+        cur_sid = str(cur.get("sid") or "")
+        if (cur.get("updated_at") and cur_pct > 0
+                and float(percent) < cur_pct - REWIND_GUARD
+                and sid and cur_sid and sid != cur_sid):
+            out = dict(cur)
+            out.update({"skipped": "stale-rewind",
+                        "ignored_percent": float(percent),
+                        "cur_percent": cur_pct})
+            return out
+    if not sid:
+        # 不带 sid 的写者 (CLI / 探针 / 同步流程) 不该把"上一个阅读器会话"
+        # 的信息抹掉 —— 抹掉等于给下一个会话开了"随便回退"的口子。
+        sid = str((cur or get_progress(key)).get("sid") or "")
     c.execute(
-        """INSERT INTO rprogress(book,chapter,offset,percent,position,complete,updated_at)
-           VALUES(?,?,?,?,?,?,?)
+        """INSERT INTO rprogress(book,chapter,offset,percent,position,complete,updated_at,sid)
+           VALUES(?,?,?,?,?,?,?,?)
            ON CONFLICT(book) DO UPDATE SET chapter=excluded.chapter, offset=excluded.offset,
              percent=excluded.percent, position=excluded.position, complete=excluded.complete,
-             updated_at=excluded.updated_at""",
-        (key, int(chapter), int(offset), float(percent), position, int(complete), _now()))
+             updated_at=excluded.updated_at, sid=excluded.sid""",
+        (key, int(chapter), int(offset), float(percent), position, int(complete), _now(),
+         str(sid or "")))
     c.commit()
     return get_progress(key)
 

@@ -67,8 +67,13 @@ password = ""                     # 空 = 读环境 RECTO_AUTH_PASSWORD 或 <dat
 shared_dir = ""                   # 空 = <项目根>/config/webauth (同机多服务共享会话密钥时指到同一目录)
 ttl_days = 7
 
-# --- 同步策略 ---
+# --- 同步策略 (本地阅读 ⇄ 云端阅读服务) ---
+# 这几项都能在「设置 → 云端同步」里改, 改完立刻生效 (落 settings.json);
+# 这里写的是部署默认值, 环境变量 RECTO_SYNC_* 优先级最高。
 [sync]
-auto = true
-push_debounce_sec = 8
-pull_gap_sec = 120
+auto = true                     # 总开关: 阅读中自动推送 + 打开书时自动拉取
+pull_on_open = true             # 打开一本书时先跟云端对一次进度 (云端更靠前就跳过去)
+push_debounce_sec = 12          # 两次推送至少隔多久 (太小会一直打云端)
+pull_gap_sec = 120              # 同一本书两次自动拉取的间隔
+flush_on_hide = true            # 切后台 / 离开页面时立刻把最后位置推上去 (不等节流)
+stamp = true                    # 阅读页右下角显示「掌阅 15:37 已同步 32.4%」

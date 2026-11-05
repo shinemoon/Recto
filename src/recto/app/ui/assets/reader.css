@@ -372,6 +372,24 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
 }
 .rv-pageind[hidden] { display: none !important; }
 
+/* 右下角的云端同步状态 (设置页可关; 只读, 不吃指针)
+ * 内容: 「掌阅 15:37 已同步 32.4%」/「掌阅 同步中…」/「掌阅 尚未同步」
+ * 断网/失败时只变色不改布局 —— 这是提示, 不是错误面板。 */
+.rv-sync {
+  position: fixed; right: max(8px, env(safe-area-inset-right));
+  bottom: max(3px, env(safe-area-inset-bottom));
+  z-index: 22; pointer-events: none; user-select: none;
+  color: var(--rv-dim); font-size: .68rem; line-height: 1.4;
+  font-variant-numeric: tabular-nums; letter-spacing: .02em;
+  opacity: .6; max-width: 46vw; text-align: right;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rv-sync[hidden] { display: none !important; }
+/* 窄屏: 页码在正中间同一行, 往上让一点, 免得两行挤在一起 */
+@media (max-width: 460px) {
+  .rv-sync { bottom: calc(max(3px, env(safe-area-inset-bottom)) + 1rem); opacity: .55; }
+}
+
 .rv.is-paged .rv-main { padding: 0 .8rem; }
 /* 页高 = 整个视口高 (顶栏浮在上面, 不扣它的高度) → 上下边距相等 = 正文在视口里垂直居中。
  * 刘海/安全区不参与"边距"的语义, 但也不能让字压进去 —— 上下取同一个值

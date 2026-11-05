@@ -159,10 +159,24 @@ rtime.cloud_minutes  = 云端 read_report/book 给的当天分钟 (App / 其它�
 | 方向 | 触发 | 行为 |
 |---|---|---|
 | 云端 → 阅读器 | 手动 `pull` / API「从掌阅拉取」 | 云端 **`readPosition`（chapterId + f3）优先**，缺失才按 `readPercent` 反解；云端为 0 时不写（不抹本地进度） |
+| 云端 → 阅读器 | **打开一本书时自动**（`pull_on_open`） | 节流 `pull_gap_sec`；云端更靠前 → 写本地并跳到那个位置；本地更靠前 → 不动，排一次推 |
 | 云端 → 阅读器 | 自动 pull（`only_forward`） | 只在云端更靠前时覆盖 |
-| 阅读器 → 云端 | 阅读时每 `sync.push_debounce_sec` 秒至多一次 | 写掌阅 `uploadProcess`（双 key：32 hex 文件 MD5 + 64 hex 云书架 id），**只前进不回退** |
+| 阅读器 → 云端 | 阅读中每翻一段（后台线程，节流 `push_debounce_sec`） | 写掌阅 `uploadProcess`（双 key：32 hex 文件 MD5 + 64 hex 云书架 id），**只前进不回退**；节流到点自动补推 |
+| 阅读器 → 云端 | 切后台 / 离开页面（`flush_on_hide`） | 绕过节流补最后一推（`keepalive` fetch，页面走了也发得出去） |
 | 手动 push | API「推到掌阅」/ `recto push` | 同上，默认也挡回退（`--allow-rewind` 可强推） |
 | 手动修复 | `recto align --fix` | 按云端自己的百分比重算 `readPosition`（不动进度值） |
+
+三处「自动」全是 `[sync]` 的开关，**设置 → 云端同步**里能逐项关，改完立刻生效。
+右下角那行小字（`stamp`）是观察窗：`掌阅 15:37 已同步 32.4%` / `同步中…` /
+`更靠前 41.0%` / `同步失败`。
+
+两条保守设计：
+
+- **不抢书**：打开书的那次 `pull` 可能一两秒才回来。若这段时间读者已经滚动/点按，
+  就不再跳（只留小字提示），下次打开再对齐 —— 把人从正在读的那页拽走比进度落后更糟。
+  同时立刻把读者真实位置写回库，避免"停在这一页不动"的人下次被带到云端位置。
+- **旧会话不倒退**：`rprogress.sid` 记写入者会话。停在 53% 没关的旧标签页再滚动，
+  不会把已读到 99% 的进度写回去（`REWIND_GUARD = 0.05`，同一会话内的回翻照常放行）。
 
 **云端同一本书有三份记录**：`getProgress` 的 32 hex key、64 hex key，以及
 `getUserNotebooks` 里 App 自己写的那份（带 `updatetime`）。三份互不同步。

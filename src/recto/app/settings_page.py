@@ -40,6 +40,7 @@ _CSS = """
 .st-msg.ok{color:var(--rc-ok,#2e7d32)}
 .st-msg.err{color:var(--rc-danger)}
 .st-path{font-family:var(--rc-mono);font-size:var(--rc-fs-sm);word-break:break-all}
+.st-checks{display:grid;gap:8px;justify-items:start;margin:2px 0 0}
 .st-check{display:flex;align-items:center;gap:8px;font-size:var(--rc-fs-sm);color:var(--rc-dim)}
 .st-check input{width:16px;height:16px;accent-color:var(--rc-primary)}
 .st-field select,.mk-row select{
@@ -97,6 +98,54 @@ _JS = r"""
     var n = $('st-lib-books'); if (n) n.textContent = String(lib.books || 0);
     var e = $('st-lib-state'); if (e) e.textContent = lib.note || '';
     var f = $('st-lib'); if (f && !f.value) f.value = lib.dir || '';
+  }
+
+  // ---- 云端同步 (进度) ----
+  var SY_LABEL = { env: '环境变量', settings: '设置页', config: 'config.toml' };
+  function syPaint(d){
+    if (!d) return;
+    var on = $('sy-auto'); if (on) on.checked = !!d.auto;
+    var pu = $('sy-pull'); if (pu) pu.checked = !!d.pull_on_open;
+    var fl = $('sy-flush'); if (fl) fl.checked = !!d.flush_on_hide;
+    var st = $('sy-stamp'); if (st) st.checked = !!d.stamp;
+    var gp = $('sy-gap'); if (gp && document.activeElement !== gp) gp.value = d.push_debounce_sec;
+    var pg = $('sy-pullgap'); if (pg) pg.textContent = d.pull_gap_sec;
+    var pill = $('sy-pill');
+    if (pill) {
+      var bits = [];
+      if (!d.auto) bits.push('已关闭');
+      else {
+        bits.push('已启用');
+        if (d.stamp) bits.push('右下角显示');
+      }
+      pill.textContent = bits.join(' · ');
+      pill.className = 'pill' + (d.auto ? '' : ' mute');
+    }
+    var srcBox = $('sy-src');
+    if (srcBox && d.source) {
+      var names = [];
+      ['auto','pull_on_open','flush_on_hide','stamp','push_debounce_sec'].forEach(function(k){
+        var v = d.source[k];
+        var label = SY_LABEL[v] || v;
+        if (names.indexOf(label) < 0) names.push(label);
+      });
+      srcBox.textContent = names.join(' / ');
+    }
+  }
+  function syLoad(){
+    fetch('/api/settings', { credentials: 'same-origin' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ syPaint(d.sync); })
+      .catch(function(){ var p = $('sy-pill'); if (p) p.textContent = '读取失败'; });
+  }
+  function syCollect(){
+    return {
+      auto: !!($('sy-auto') || {}).checked,
+      pull_on_open: !!($('sy-pull') || {}).checked,
+      flush_on_hide: !!($('sy-flush') || {}).checked,
+      stamp: !!($('sy-stamp') || {}).checked,
+      push_debounce_sec: parseInt(($('sy-gap') || {}).value, 10) || 12
+    };
   }
 
   // ---- 阅读高亮 (语料滤镜) ----
@@ -237,6 +286,16 @@ _JS = r"""
       }).catch(function(e){ msg('st-lib-msg', e.message, true); done(); });
       return;
     }
+    if (act === 'sync' || act === 'sync-reset') {
+      var sbody = act === 'sync' ? { sync: syCollect() } : { sync: null };
+      post('/api/settings', sbody).then(function(r){
+        syPaint(r.sync);
+        msg('st-sync-msg', act === 'sync' ? '已保存, 下一次翻页就按新设置同步'
+                                          : '已回到 config.toml 的写法');
+        done();
+      }).catch(function(e){ msg('st-sync-msg', e.message, true); done(); });
+      return;
+    }
     if (act === 'mark' || act === 'mark-reset') {
       var body = act === 'mark' ? { action: 'save', conf: mkCollect() } : { action: 'reset' };
       post('/api/mark', body).then(function(r){
@@ -261,7 +320,8 @@ _JS = r"""
     done();
   });
 
-  // 阅读高亮卡: 打开页面就拉一次 (与其它卡片各自独立, 互不阻塞)
+  // 两张卡各自拉一次, 互不阻塞
+  syLoad();
   mkLoad();
 })();
 """
@@ -295,9 +355,46 @@ def library_state() -> dict:
             "overridden": src == "settings"}
 
 
+def sync_state() -> dict:
+    """云端同步的生效值 + 每一项的来源 (设置页 / config.toml / 环境变量)。"""
+    import os
+
+    from recto.services import sync as _sync
+
+    eff = _sync.sync_settings()
+    over = st.active_overrides()
+    db = over.get("sync_push_debounce")
+
+    def src(key: str, env: str) -> str:
+        if os.environ.get(env) is not None:
+            return "env"
+        return "settings" if key in over else "config"
+
+    return {
+        "auto": eff["auto"],
+        "pull_on_open": eff["pull_on_open"],
+        "flush_on_hide": eff["flush_on_hide"],
+        "stamp": eff["stamp"],
+        "push_debounce_sec": int(round(eff["push_debounce_sec"])),
+        "pull_gap_sec": int(round(eff["pull_gap_sec"])),
+        "source": {
+            "auto": src("sync_auto", "RECTO_SYNC_AUTO"),
+            "pull_on_open": src("sync_pull_on_open", "RECTO_SYNC_PULL_ON_OPEN"),
+            "flush_on_hide": src("sync_flush_on_hide", "RECTO_SYNC_FLUSH_ON_HIDE"),
+            "stamp": src("sync_stamp", "RECTO_SYNC_STAMP"),
+            "push_debounce_sec": src("sync_push_debounce", "RECTO_SYNC_PUSH_DEBOUNCE"),
+        },
+        "override_keys": sorted(over.keys()),
+        "has_override": bool(db) or any(
+            k in over for k in ("sync_auto", "sync_pull_on_open",
+                                "sync_flush_on_hide", "sync_stamp")),
+    }
+
+
 def summary() -> dict:
     return {"ok": True, "nickname": st.nickname(),
             "login": _login_name(), "library": library_state(),
+            "sync": sync_state(),
             "password_source": _password_source_label()}
 
 
@@ -390,6 +487,29 @@ def page_html(user: str | None = None) -> str:
            "当前书库目录由环境变量 RECTO_LIBRARY_DIR 决定, 本页改了也不生效。</div>")
         + "</div></details>",
 
+        # --- 云端同步 (阅读进度) ---
+        '<details class="sec" id="sync"><summary>云端同步 '
+        '<span class="pill mute" id="sy-pill">读取中…</span></summary><div class="sec-body">'
+        '<div class="st-note">阅读时把进度推到云端阅读服务（掌阅），打开一本书时先跟云端对一次。'
+        '推送<b>只前进</b>——手机端读得更靠前时不会被网页这边往回拨。</div>'
+        '<div class="st-checks" style="margin-top:12px">'
+        '<label class="st-check"><input type="checkbox" id="sy-auto"> 阅读时自动同步</label>'
+        '<label class="st-check"><input type="checkbox" id="sy-pull"> 打开书时先拉取云端进度</label>'
+        '<label class="st-check"><input type="checkbox" id="sy-flush"> 切后台 / 离开页面时立刻推送</label>'
+        '<label class="st-check"><input type="checkbox" id="sy-stamp"> 阅读页右下角显示同步时间</label>'
+        '<label class="st-check">推送间隔 <input class="mk-num" id="sy-gap" type="number" '
+        'min="3" max="300" step="1"> 秒</label>'
+        "</div>"
+        '<div class="row" style="margin-top:12px">'
+        '<button class="primary" data-st="sync">保存</button>'
+        '<button data-st="sync-reset">回到 config.toml</button>'
+        '<span id="st-sync-msg" class="st-msg"></span></div>'
+        '<div class="st-note" style="margin-top:10px">来源: <span id="sy-src">—</span>'
+        ' · 拉取间隔 (只读) <b id="sy-pullgap">—</b> 秒</div>'
+        '<div class="st-note" style="margin-top:6px">改完立刻生效（下一次翻页 / 打开书就用新设置），'
+        '不用重启服务。</div>'
+        "</div></details>",
+
         # --- 阅读高亮 (语料 → 阅读器) ---
         '<details class="sec" id="mark"><summary>阅读高亮 '
         '<span class="pill mute" id="mk-pill">读取中…</span></summary><div class="sec-body">'
@@ -476,6 +596,31 @@ def api_post(body: dict) -> dict:
     lib_given = "library_dir" in body
     changed_lib = False
 
+    sync_given = "sync" in body
+    if sync_given:
+        raw = body.get("sync")
+        if raw is None or raw == "":
+            st.clear("sync_auto", "sync_pull_on_open", "sync_flush_on_hide",
+                     "sync_stamp", "sync_push_debounce")
+        elif isinstance(raw, dict):
+            kv = {}
+            for key in ("auto", "pull_on_open", "flush_on_hide", "stamp"):
+                if key in raw:
+                    val = bool(raw.get(key))
+                    kv["sync_" + key] = "on" if val else "off"
+            if "push_debounce_sec" in raw:
+                try:
+                    gap = int(float(raw.get("push_debounce_sec")))
+                except (TypeError, ValueError):
+                    raise ValueError("推送间隔要写数字 (秒)")
+                if gap < 3 or gap > 300:
+                    raise ValueError("推送间隔要在 3–300 秒之间")
+                kv["sync_push_debounce"] = str(gap)
+            if kv:
+                st.update(**kv)
+        else:
+            raise ValueError("sync 要是对象或 null")
+
     if nickname_given:
         nick = str(body.get("nickname") or "").strip()
         if len(nick) > 24:
@@ -496,11 +641,13 @@ def api_post(body: dict) -> dict:
             st.update(library_dir=val)
             changed_lib = True
 
-    if nickname_given or lib_given:
+    if nickname_given or lib_given or sync_given:
+        # sync 改了必须让配置单例重读 settings.json 的覆盖层, 否则新设置要等重启才生效
         _reload_runtime(rescan=changed_lib)
 
     out = summary()
-    out["changed"] = {"nickname": nickname_given, "library": lib_given}
+    out["changed"] = {"nickname": nickname_given, "library": lib_given,
+                      "sync": sync_given}
     return out
 
 

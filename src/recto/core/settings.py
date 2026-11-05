@@ -25,7 +25,11 @@ NAME = "settings.json"
 _LOCK = threading.RLock()
 
 # 允许设置的键 (白名单, 其余一律不写盘)
-KEYS = ("nickname", "library_dir")
+KEYS = ("nickname", "library_dir",
+        # 云端同步 (设置页「云端同步」卡): 布尔用 "on"/"off" 存,
+        # 数字用字符串存 —— settings.json 里人能直接看懂
+        "sync_auto", "sync_pull_on_open", "sync_flush_on_hide",
+        "sync_stamp", "sync_push_debounce")
 
 
 # ---------------------------------------------------------------- 文件
@@ -103,6 +107,28 @@ def clear(*keys) -> dict:
 
 # ---------------------------------------------------------------- 配置覆盖
 
+def _bool(v, default: bool | None = None) -> bool | None:
+    """settings.json 里的 "on"/"off"/1/true… → bool。空 = 不覆盖。"""
+    if v is None or v == "":
+        return default
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    if s in ("1", "on", "true", "yes", "y"):
+        return True
+    if s in ("0", "off", "false", "no", "n"):
+        return False
+    return default
+
+
+_SYNC_BOOLS = (
+    ("sync_auto", "auto"),
+    ("sync_pull_on_open", "pull_on_open"),
+    ("sync_flush_on_hide", "flush_on_hide"),
+    ("sync_stamp", "stamp"),
+)
+
+
 def overrides(cfg=None) -> dict:
     """给 `config.Config.load()` 用的覆盖层 (只含真的设了的项)。"""
     d = load(cfg)
@@ -110,6 +136,19 @@ def overrides(cfg=None) -> dict:
     lib = str(d.get("library_dir") or "").strip()
     if lib:
         out.setdefault("library", {})["dir"] = lib
+    sync: dict = {}
+    for key, name in _SYNC_BOOLS:
+        v = _bool(d.get(key))
+        if v is not None:
+            sync[name] = v
+    try:
+        db = str(d.get("sync_push_debounce") or "").strip()
+        if db:
+            sync["push_debounce_sec"] = max(3, min(300, int(float(db))))
+    except (TypeError, ValueError):
+        pass
+    if sync:
+        out["sync"] = sync
     return out
 
 
@@ -124,6 +163,16 @@ def active_overrides() -> dict:
     nick = str(d.get("nickname") or "").strip()
     if nick:
         out["nickname"] = nick
+    env_auto = os.environ.get("RECTO_SYNC_AUTO")
+    for key, name in _SYNC_BOOLS:
+        if key == "sync_auto" and env_auto is not None:
+            continue
+        v = _bool(d.get(key))
+        if v is not None:
+            out[key] = v
+    db = str(d.get("sync_push_debounce") or "").strip()
+    if db and os.environ.get("RECTO_SYNC_PUSH_DEBOUNCE") is None:
+        out["sync_push_debounce"] = db
     return out
 
 
