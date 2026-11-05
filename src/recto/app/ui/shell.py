@@ -51,12 +51,40 @@ def _e(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=True)
 
 
+# --- 标志 (logo) ---------------------------------------------------------
+# 原图 `logo.png` 由工具 `tools/make_logo.py` 加工成透明派生图放进 assets/:
+#   logo-mark.png = 只有图徽 (顶栏, 跟文字品牌并排)
+#   logo-full.png = 图徽 + 文字 (登录卡片, 单独就能认)
+# favicon / apple-touch-icon 同源, 浏览器标签页也用同一个标志。
+LOGO_MARK = ASSET_DIR / "logo-mark.png"          # 346x128 (顶栏显示高 22px)
+LOGO_FULL = ASSET_DIR / "logo-full.png"          # 500x320 (登录卡片显示高 64px)
+FAVICON = ASSET_DIR / "favicon.png"
+TOUCH_ICON = ASSET_DIR / "apple-touch-icon.png"
+
+
+def logo_mark(cls: str = "rc-logo") -> str:
+    """顶栏图徽。`alt=""` —— 紧跟着就是文字品牌, 读屏不必念两遍。"""
+    return (f'<img class="{cls}" src="/assets/logo-mark.png" alt="" '
+            'width="346" height="128" decoding="async">')
+
+
+def logo_full(cls: str = "rc-logo rc-logo-full") -> str:
+    """完整标志 (图徽 + 文字)。只用在登录卡片顶部。"""
+    return (f'<img class="{cls}" src="/assets/logo-full.png" alt="{_e(BRAND_FULL)}" '
+            'width="500" height="320" decoding="async">')
+
+
+def favicon_links() -> str:
+    return ('<link rel="icon" type="image/png" href="/assets/favicon.png">'
+            '<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">')
+
+
 def brand(small: str = "") -> str:
     """顶栏品牌。`small` 只在显式传入时渲染 (默认顶栏只有「云阅 Recto」)。"""
     tail = f'<small>{_e(small)}</small>' if small else ""
     return (
         '<a class="rc-brand" href="/">'
-        f'<span class="rc-mark" aria-hidden="true"></span>{BRAND_HTML}{tail}</a>'
+        f'{logo_mark()}{BRAND_HTML}{tail}</a>'
     )
 
 
@@ -292,6 +320,7 @@ def document(*, title: str, body: str, active: str = "", kicker: str = "",
 <title>{_e(title_txt)}</title>
 <link rel="stylesheet" href="/assets/recto.css">
 <link rel="stylesheet" href="/assets/skin.css">
+{favicon_links()}
 {head_extra}
 </head><body class="{_e(body_class)}">
 <div class="rc-shell">
@@ -326,6 +355,7 @@ def auth_page(*, title: str = "", body: str) -> str:
 <title>{_e(page_title)}</title>
 <link rel="stylesheet" href="/assets/recto.css">
 <link rel="stylesheet" href="/assets/skin.css">
+{favicon_links()}
 </head><body class="rc-auth">{body}</body></html>"""
 
 
@@ -333,7 +363,7 @@ def login_body(*, next_url: str = "/", err: str = "", user: str = "",
                ttl_days: int = 7, note: str = "") -> str:
     err_html = f'<div class="err">{_e(err)}</div>' if err else ""
     return f"""<form class="rc-auth-card" method="post" action="/login" autocomplete="on">
-  {brand('')}
+  <a class="rc-lockup" href="/" aria-label="{_e(BRAND_FULL)}">{logo_full()}</a>
   <header class="rc-head"><h1>登录</h1>
   <div class="rc-sub">{_e(note or '用阅读器宿主 (:5000) 的账号密码登录 —— 一套凭据, 全部分区通用。')}</div></header>
   <input type="hidden" name="next" value="{_e(next_url or '/')}">
@@ -348,19 +378,30 @@ def login_body(*, next_url: str = "/", err: str = "", user: str = "",
 </form>"""
 
 
+# 静态资源白名单 (文件名 → MIME)。只有这里列出来的能从 /assets/ 取到。
+_ASSET_TYPES = {
+    "recto.css": "text/css; charset=utf-8",
+    "reader.css": "text/css; charset=utf-8",
+    "reader.js": "text/javascript; charset=utf-8",
+    # 标志 (tools/make_logo.py 从 logo.png 生成)
+    "logo-mark.png": "image/png",
+    "logo-full.png": "image/png",
+    "favicon.png": "image/png",
+    "apple-touch-icon.png": "image/png",
+}
+
+
 def assets_css(name: str) -> tuple[bytes, str] | None:
-    """静态样式资源 → (bytes, mime)。只允许白名单里的文件名。"""
-    if name in ("recto.css", "reader.css", "reader.js"):
-        p = ASSET_DIR / name
-        ctype = ("text/javascript; charset=utf-8" if name.endswith(".js")
-                 else "text/css; charset=utf-8")
-        try:
-            return p.read_bytes(), ctype
-        except OSError:
-            return None
-    if name == "skin.css":
+    """静态资源 → (bytes, mime)。只允许白名单里的文件名。"""
+    if name == "skin.css":                       # 每请求现生成 (皮肤可换)
         return skins.skin_css().encode("utf-8"), "text/css; charset=utf-8"
-    return None
+    ctype = _ASSET_TYPES.get(name)
+    if not ctype:
+        return None
+    try:
+        return (ASSET_DIR / name).read_bytes(), ctype
+    except OSError:
+        return None
 
 
 def skin_payload() -> str:

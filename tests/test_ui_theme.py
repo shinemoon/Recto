@@ -430,6 +430,80 @@ def test_brand_no_subtitle():
     ok("<small>自己写的</small>" in shell.brand("自己写的"), "显式传 small 仍然渲染")
 
 
+@case
+def test_logo_assets():
+    """标志: `logo.png` 的透明派生图必须入库, 并被 /assets/ 白名单放行。"""
+    assets = shell.ASSET_DIR
+    for name in ("logo-mark.png", "logo-full.png", "favicon.png", "apple-touch-icon.png"):
+        p = assets / name
+        ok(p.exists() and p.stat().st_size > 200,
+           f"{name} 已生成 ({p.stat().st_size if p.exists() else 0}B)")
+        hit = shell.assets_css(name)
+        ok(hit is not None and hit[1] == "image/png", f"{name} 能被 /assets/ 取到 (image/png)")
+        ok(hit is not None and hit[0][:8] == b"\x89PNG\r\n\x1a\n", f"{name} 是合法 PNG")
+
+    ok(shell.assets_css("../config.toml") is None, "白名单外的路径取不到 (防穿越)")
+    ok(shell.assets_css("recto.css")[1].startswith("text/css"), "样式表仍然可服务")
+
+
+@case
+def test_logo_in_shell():
+    """顶栏 = 图徽 + 文字品牌; 登录页 = 完整标志; 两个外壳都声明 favicon。"""
+    page = shell.document(title="书架", body="", active="library")
+    ok('/assets/logo-mark.png' in page, "顶栏用 logo-mark.png")
+    ok('alt=""' in page.split('class="rc-brand"')[1].split("</a>")[0],
+       "图徽 alt 为空 (文字品牌已读, 不重复念)")
+    ok('width="346" height="128"' in page, "图徽带固有尺寸 (避免加载时跳动)")
+    ok('rc-brand-en">Recto</span>' in page, "图徽旁边仍是中英文品牌名")
+    ok('<link rel="icon" type="image/png" href="/assets/favicon.png">' in page, "顶层页面有 favicon")
+    ok('rel="apple-touch-icon"' in page, "顶层页面有 apple-touch-icon")
+
+    login = shell.auth_page(body="<p>x</p>")
+    ok('rel="icon"' in login, "登录页也有 favicon")
+    ok('/assets/logo-mark.png' not in login, "登录页不放小图徽")
+
+    body = shell.login_body(next_url="/", ttl_days=7)
+    ok('class="rc-lockup"' in body, "登录卡片顶部是完整标志")
+    ok('/assets/logo-full.png' in body, "登录卡片用 logo-full.png")
+    ok('aria-label="云阅 Recto"' in body, "完整标志带可读名称")
+    ok('rc-brand' not in body, "登录卡片不再重复一遍文字品牌")
+
+
+@case
+def test_logo_dark_skin_invert():
+    """深色皮肤把标志反相成白色; 浅色不动。"""
+    light = skins.skin_css({"skin": "material"})
+    dark = skins.skin_css({"skin": "material-dark"})
+    ok("invert(1)" not in light, "浅色皮肤不反相")
+    ok("html img.rc-logo{filter:invert(1);}" in dark, "深色皮肤反相标志")
+    ok("color-scheme:dark" in dark, "深色皮肤仍是 color-scheme:dark")
+
+
+@case
+def test_logo_freshness():
+    """派生图不能比源图旧 —— 换了 logo.png 忘了重跑 tools/make_logo.py 要报出来。"""
+    src = Path(__file__).resolve().parents[1] / "logo.png"
+    if not src.exists():
+        ok(True, "仓库里没有 logo.png, 跳过新鲜度检查")
+        return
+    stale = [n for n in ("logo-mark.png", "logo-full.png", "favicon.png", "apple-touch-icon.png")
+             if not (shell.ASSET_DIR / n).exists()
+             or (shell.ASSET_DIR / n).stat().st_mtime < src.stat().st_mtime]
+    ok(not stale, "派生图不比 logo.png 旧" + (f" (陈旧: {stale})" if stale else ""))
+
+
+@case
+def test_logo_css():
+    """标志的版式: 只按高度约束 (不拉伸), 手机缩一档, 登录页 64px。"""
+    css = (shell.ASSET_DIR / "recto.css").read_text(encoding="utf-8")
+    block = css.split(".rc-brand .rc-logo {")[1].split("}")[0]
+    ok("height: 22px" in block, "顶栏图徽 22px 高")
+    ok("width: auto" in block, "宽度自动 (不拉伸)")
+    ok("height: 64px" in css.split(".rc-logo-full {")[1].split("}")[0], "登录页标志 64px 高")
+    ok(".rc-lockup" in css, "登录页标志有独立容器")
+    ok(css.count(".rc-brand .rc-logo { height:") >= 2, "手机/极窄机各缩一档")
+
+
 def main():
     print(f"\n{PASS} passed, {FAIL} failed")
     return 1 if FAIL else 0

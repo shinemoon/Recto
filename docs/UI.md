@@ -60,6 +60,27 @@ EPUB2 `<meta name="cover">`，取不到再按文件名带 `cover` 的图兜底�
 卡片与按钮的事件统一走 **document 委托** —— 脚本在 `<head>` 里, 不保证执行时
 元素已解析完 (曾经因此"搜索框不响应")。
 
+## 1.3 标志 ( `.rc-logo` / `.rc-lockup` )
+
+`logo.png`（仓库根）经 `tools/make_logo.py` 变成两张透明位图：
+
+* `logo-mark.png` — 只有图徽，顶栏用，跟 `云阅 Recto` 文字并排（`shell.brand()`）。
+* `logo-full.png` — 图徽 + 文字，登录卡片顶部用（`shell.login_body()` 的 `.rc-lockup`）。
+
+规则：
+
+```css
+.rc-brand .rc-logo { display:block; height:22px; width:auto; }   /* 手机 20px, ≤380 18px */
+.rc-logo-full       { display:block; height:64px; width:auto; }
+```
+
+* **只给高度，宽度 auto** —— 两个文件比例不同（图徽 2.7:1 / 完整 1.55:1），任何
+  `width` 定值都会把其中一个压扁。
+* 图徽 `alt=""`（紧跟文字品牌，读屏不必念两遍）；完整标志 `alt="云阅 Recto"`。
+* 深色皮肤靠 `skin.css` 输出的 `html img.rc-logo{filter:invert(1)}` 反相；
+  位图本身是**纯黑 + alpha**，所以反相不会带出底块。
+* 加新尺寸/新位置时，别改这两条基础规则，用局部覆盖（例如 `.rc-auth-card` 里）。
+
 ## 2 换肤 / 细调 (不改代码)
 
 打开 `http://<host>:5015/appearance`:

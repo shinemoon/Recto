@@ -274,7 +274,8 @@ def _rewrite_html(html: str, title_hint: str = "语料", user: str | None = None
 
     css = ('<link rel="stylesheet" href="/assets/recto.css">'
            '<link rel="stylesheet" href="/assets/skin.css">'
-           f"<style>{_BRIDGE_CSS}</style>")
+           + shell.favicon_links()
+           + f"<style>{_BRIDGE_CSS}</style>")
     if "</head>" in body:
         body = body.replace("</head>", css + "</head>", 1)
     header = _shell_header(user)

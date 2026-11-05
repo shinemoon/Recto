@@ -78,10 +78,18 @@ hr { border: 0; border-top: 1px solid var(--rc-outline-variant); margin: var(--r
   letter-spacing: .12em; text-transform: uppercase;
   color: var(--rc-mute); margin-left: 6px;
 }
-.rc-brand .rc-mark {
-  display: inline-block; width: 11px; height: 11px; border-radius: var(--rc-radius-field);
-  background: var(--rc-primary); transform: rotate(45deg);
+/* 标志: `logo.png` 的透明派生图 (tools/make_logo.py)。
+   原图是宽幅图徽 (346x128, 约 2.7:1), 只按高度约束宽度, 不裁不拉伸。
+   深色皮肤靠 skin.css 里的 invert 规则翻白 (图本身是纯黑 + alpha)。 */
+.rc-brand .rc-logo {
+  display: block; height: 22px; width: auto; flex: 0 0 auto;
+  /* 品牌行是 baseline 对齐的, 图往下沉 1px 视觉上才跟中文字居中 */
+  transform: translateY(1px);
 }
+/* 登录卡片顶部: 完整标志 (图徽 + 文字), 单独就能认, 所以不再并排文字品牌 */
+.rc-lockup { display: inline-block; text-decoration: none; }
+.rc-logo-full { display: block; height: 64px; width: auto; }
+.rc-lockup + .rc-head { margin-top: 14px; }
 .rc-brand small {
   font-family: var(--rc-sans); font-size: 11px; font-weight: 500;
   color: var(--rc-mute); letter-spacing: .1em; text-transform: uppercase;
@@ -975,6 +983,7 @@ body.rc-auth {
 @media (max-width: 860px) {
   .rc-top-in { padding: 6px 14px 0; gap: 10px; }
   .rc-brand { font-size: 19px; padding-bottom: 7px; }
+  .rc-brand .rc-logo { height: 20px; }
   .rc-brand small { display: none; }
   .rc-main { padding: 20px 16px 56px; }
   .rc-head h1 { font-size: calc(var(--rc-fs) * 1.5); }
@@ -1028,6 +1037,8 @@ body.rc-auth {
 }
 
 @media (max-width: 380px) {
+  /* 极窄机: 图徽让位给五个导航标签 */
+  .rc-brand .rc-logo { height: 18px; }
   .rc-main { padding: 16px 12px 48px; }
   .card, details.sec, .bk { border-radius: calc(var(--rc-radius-card, 16px) * .8); }
   .shelf-grid { grid-template-columns: 1fr 1fr; }

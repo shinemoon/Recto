@@ -398,8 +398,12 @@ def skin_css(conf: dict | None = None) -> str:
     skins = all_skins(conf)
     css = ["/* Recto skin: %s — generated, do not edit */" % sid]
     css.append(_var_block(tokens, conf))
-    css.append("html{color-scheme:%s;}" % ("dark" if tokens.get("mode") == "dark"
-                                           else "light"))
+    dark = tokens.get("mode") == "dark"
+    css.append("html{color-scheme:%s;}" % ("dark" if dark else "light"))
+    if dark:
+        # 标志是"纯黑 + alpha"的位图 (见 tools/make_logo.py), 深色皮肤下直接反相即可,
+        # 透明区域不受影响。深色皮肤换标志图也不需要重出图。
+        css.append("html img.rc-logo{filter:invert(1);}")
     extra = (skins.get(sid) or {}).get("extra_css") or ""
     if extra:
         css.append("/* skin extra */\n" + extra)

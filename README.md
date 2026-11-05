@@ -503,6 +503,32 @@ readPercent = ( Σ bytes(spine[0..chapterId]) + f3 ) / Σ bytes(spine)
 
 ---
 
+## 标志（Logo）
+
+界面用 `logo.png`（仓库根，2048×2048 黑字白底）作为标志。原图不能直接用：
+白底块在深色皮肤上是个白方块，四周留白也让 22px 高的图徽只剩几个像素。
+
+`tools/make_logo.py` 把它加工成三件**透明派生图**（入库，克隆仓库不需要 `logo.png` 也能跑）：
+
+| 文件 | 用在哪 | 尺寸 |
+|---|---|---|
+| `assets/logo-mark.png` | 顶栏图徽（`云阅 Recto` 文字左边） | 346×128（显示高 22px/20px/18px） |
+| `assets/logo-full.png` | 登录卡片顶部（图徽 + 文字，单独就能认） | 500×320（显示高 64px） |
+| `assets/favicon.png` / `apple-touch-icon.png` | 浏览器标签页 / iOS 主屏 | 64×64 / 180×180 |
+
+```bash
+python3 tools/make_logo.py            # logo.png → 四张派生图
+python3 tools/make_logo.py --check    # 派生图比源图旧就 exit 1（CI 用）
+```
+
+三条约定：
+
+* **只按高度缩放**（`height: Npx; width: auto`），永远不拉伸 —— 1.55:1 的完整标志和
+  2.7:1 的图徽各自保持比例。
+* **白底已经转成 alpha**，前景是纯黑；深色皮肤由 `skin.css` 里一条
+  `html img.rc-logo{filter:invert(1)}` 反相成白色 —— 换皮肤不用重出图。
+* 派生图**跟着入库**，`tests/test_ui_theme.py` 会检查它们是否比 `logo.png` 旧。
+
 ## 可选组件
 
 ### 墨水屏摘录接入（:8080）
@@ -593,6 +619,7 @@ cd tools && npm i playwright@1.55.0        # 一次就够（或 export PLAYWRIGH
 npx playwright install chromium-headless-shell
 
 cd .. && node tools/probe_all_pages.mjs    # 页面/导航/溢出
+node tools/probe_logo.mjs                  # 标志: 加载/比例/尺寸/深色反相/favicon
 node tools/probe_reader_paged.mjs          # 阅读器左右翻页
 ```
 
