@@ -62,6 +62,9 @@
     sync: null,          // {settings:{...}, state:{...}}
     syncT: 0,
     pulled: false,
+    // 这次打开书已经问过"要不要跳到云端"了 (同一次打开不重复打扰)
+    choiceAsked: false,
+    choiceT: 0,
     // 读者在这一页里真的动过没有 (滚轮/触摸/按键/点击)。
     // 没动过就不写进度: 刚打开时正文还在排版, 量到的锚点可能是恢复前的位置,
     // 写回去就会把"读到 90%"变成"停在章首" —— 这是老用户报过的现象。
@@ -886,40 +889,75 @@
     }
   }
 
-  // 打开一本书时先跟云端对一次: 云端更靠前 → 跳过去; 本地更靠前 → 说明该推
+  // 云端比本地靠前时, 让读者自己决定: 跳过去, 还是留在本地继续读。
+  // 以前是"拉进来 + 自动跳" —— 读者正等着看正文, 位置突然被拽走, 而且
+  // 原来的位置已经被覆盖, 想留下都留不住。现在打开这一刻只比不写。
+  function askCloudChoice(r) {
+    var el = $('#rv-choice');
+    if (!el || S.choiceAsked) return;
+    S.choiceAsked = true;
+    var cp = r.cloud_pct, lp = r.local_pct;
+    var txt = $('#rv-choice-txt');
+    if (txt) {
+      txt.innerHTML =
+        '掌阅云端读到 <b>' + stampPct(cp) + '</b>（第 ' + ((+r.cloud_chapter || 0) + 1) + ' 章）' +
+        '<br>这里停在 <b>' + stampPct(lp) + '</b>';
+    }
+    el.hidden = false;
+    clearTimeout(S.choiceT);
+    S.choiceT = setTimeout(hideChoice, 12000);
+  }
+
+  function hideChoice() {
+    clearTimeout(S.choiceT);
+    var el = $('#rv-choice');
+    if (el) el.hidden = true;
+  }
+
+  function chooseCloud(which) {
+    hideChoice();
+    api('/sync-choice', { method: 'POST', body: { choice: which } }).then(function (r) {
+      if (!r) return;
+      if (r.state) { S.sync.state = r.state; renderStamp(r.state); }
+      if (which === 'cloud') {
+        var a = r.anchor || {};
+        if (a.chapter == null) return;
+        S.lastCh = null; S.lastOff = null;
+        jumpTo(+a.chapter || 0, +a.offset || 0);
+        // 服务端已经把云端位置写进库了; 这里只把"已保存锚点"钉到目标上,
+        // 不再补一次保存 —— 跳转刚发起时 DOM 还没排好, 量出来的锚点会偏。
+        S.lastCh = +a.chapter || 0;
+        S.lastOff = +a.offset || 0;
+        var cn = (a.catalog != null) ? (+a.catalog + 1) : ((+a.chapter || 0) + 1);
+        toast('已同步掌阅进度 · ' + stampPct(a.percent) + ' · 第 ' + cn + ' 章', 2400);
+      } else if (r.ok) {
+        toast('留在本地 · 已把当前进度写到云端', 2600);
+      } else {
+        toast('留在本地, 但这次没写上去 (' + (r.error || r.skipped || '稍后自动重试') + ')', 3200);
+      }
+    }).catch(function () { toast('同步失败, 稍后自动重试', 2200); });
+  }
+
+  // 打开一本书时先跟云端对一次: 云端更靠前 → 问读者; 本地更靠前 → 说明该推。
   function autoPull() {
     var cfg = (S.sync && S.sync.settings) || {};
     if (!cfg.auto || !cfg.pull_on_open) return;
     api('/sync').then(function (r) {
       if (!r) return;
       if (r.state) { S.sync.state = r.state; renderStamp(r.state); }
-      if (!r.changed || !r.anchor) {
-        if (r.skipped === 'local-ahead') queueSave(true);
-        return;
-      }
-      var a = r.anchor;
-      // 读者已经开始读了 (滚动/点按/按键) → 绝不把位置拽走。
-      // 网络慢时这条请求可能要一两秒才回来, 那一两秒里人已经在读了;
-      // 此时跳到"云端的更靠前位置" = 把书从手里抢走。留到下次打开再对齐,
-      // 右下角会显示「掌阅 更靠前 x%」提醒, 不闷掉信息。
-      if (S.userMoved) {
-        // 服务端这时已经把云端位置写进库了 —— 立刻把读者的真实位置写回去,
-        // 否则"停在这一页不动"的人下次打开会被带到云端那个更靠前的位置。
-        setTimeout(function () { saveProgress(true, { force: true }); }, 300);
-        return;
-      }
-      var cur = currentAnchor();
-      var same = cur && (+a.chapter === cur.ch && Math.abs(+a.offset - cur.off) < 2);
-      if (same) return;
-      S.lastCh = null; S.lastOff = null;
-      jumpTo(+a.chapter || 0, +a.offset || 0);
-      toast('已同步掌阅进度 · ' + stampPct(a.percent) + ' · 第 ' + ((+a.chapter || 0) + 1) + ' 章', 2400);
-      // 服务端已经把云端位置写进库了; 这里只把"已保存锚点"钉到目标上,
-      // 不再补一次保存 —— 跳转刚发起时 DOM 还没排好, 量出来的锚点会偏。
-      S.lastCh = +a.chapter || 0;
-      S.lastOff = +a.offset || 0;
+      if (r.need_choice && r.anchor) { askCloudChoice(r); return; }
+      if (r.skipped === 'local-ahead') queueSave(true);
     }).catch(function () { /* 离线: 按本地位置读 */ });
   }
+
+  // 选择条上的两个按钮 (document 级委托: 面板/正文随时会被替换)
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    var b = t && t.closest ? t.closest('#rv-choice [data-c]') : null;
+    if (!b) return;
+    e.preventDefault();
+    chooseCloud(b.getAttribute('data-c'));
+  });
 
   function syncBoot(cfg) {
     S.sync = cfg || S.sync || {};

@@ -579,6 +579,33 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
   color: var(--rv-fg); cursor: pointer; }
 .rv-noteedit-b button.primary { background: var(--rv-accent); border-color: var(--rv-accent); color: #fff; }
 
+/* 云端比本地靠前时的选择条 —— 一问一答, 不抢正文位置。
+ * 三件事要一起成立: 浮在正文之上但不遮住当前行 / 两个按钮都好按 /
+ * 不选也有出路 (定时收起, 按本地位置继续读)。 */
+.rv-choice {
+  position: fixed; left: 50%; bottom: 6.6rem; transform: translateX(-50%);
+  z-index: 65; width: min(22rem, 92vw);
+  background: var(--rv-panel); color: var(--rv-fg);
+  border: 1px solid var(--rv-line); border-radius: var(--rv-radius-lg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .18);
+  padding: .72rem .88rem .62rem; font-size: .84rem; line-height: 1.55;
+}
+.rv-choice[hidden] { display: none !important; }
+.rv-choice-txt b { font-variant-numeric: tabular-nums; }
+.rv-choice-btns { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .55rem; }
+.rv-choice-btns button {
+  font: inherit; font-size: .8rem; font-weight: 500; cursor: pointer;
+  padding: .3rem .95rem; border-radius: var(--rv-radius-pill);
+  border: 1px solid var(--rv-line); background: transparent; color: var(--rv-fg);
+}
+.rv-choice-btns button.primary {
+  background: var(--rv-accent); border-color: var(--rv-accent); color: #fff;
+}
+.rv-choice-hint { margin-top: .35rem; color: var(--rv-dim); font-size: .7rem; opacity: .85; }
+@media (max-width: 460px) {
+  .rv-choice { bottom: calc(max(3px, env(safe-area-inset-bottom)) + 4.4rem); }
+}
+
 .rv-toast {
   position: fixed; left: 50%; bottom: 5.4rem; transform: translateX(-50%); z-index: 70;
   background: rgba(20,20,22,.86); color: #f5f2ea; font-size: .82rem;

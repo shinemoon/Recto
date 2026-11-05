@@ -237,6 +237,16 @@ _READER_HTML = """
   <!-- 右下角云端同步状态 (可在设置页关掉): 只读文字, 不吃指针 -->
   <div class="rv-sync" id="rv-sync" hidden aria-live="off"></div>
 
+  <!-- 云端比本地靠前时问一句: 跳过去, 还是留在本地 (留本地就覆盖云端) -->
+  <div class="rv-choice" id="rv-choice" hidden role="dialog" aria-live="polite">
+    <div class="rv-choice-txt" id="rv-choice-txt"></div>
+    <div class="rv-choice-btns">
+      <button type="button" data-c="local">留在本地</button>
+      <button type="button" data-c="cloud" class="primary">跳到云端</button>
+    </div>
+    <div class="rv-choice-hint">不选就按本地位置继续读, 下次打开再问</div>
+  </div>
+
   <!-- 翻页效果的舞台: 固定盖满整个视口, 不吃指针 -->
   <div class="rv-fxstage" id="rv-fxstage" aria-hidden="true"></div>
 
@@ -398,9 +408,9 @@ def handle(h) -> bool:
             h._json(200, _chapter_payload(doc, int(rest[1])))
             return True
         if method == "GET" and rest[:1] == ["sync"] and len(rest) == 1:
-            # 打开一本书时跟云端对一次 (节流 [sync] pull_gap_sec)。
-            # 云端更靠前 → 写本地并回 anchor, 前端跳过去; 本地更靠前 → 不动。
-            h._json(200, _sync.pull_book(key, force=bool(q.get("force"))))
+            # 打开一本书时**只比不写** (节流 [sync] pull_gap_sec)。
+            # 云端更靠前 → need_choice, 交读者决定跳不跳; 本地更靠前 → local-ahead。
+            h._json(200, _sync.peek_book(key, force=bool(q.get("force"))))
             return True
         if method == "GET" and rest[:1] == ["sync-state"] and len(rest) == 1:
             h._json(200, _sync.sync_state(key))
@@ -423,6 +433,21 @@ def handle(h) -> bool:
             return True
 
         body = _read_json(h) if method == "POST" else {}
+
+        if method == "POST" and rest[:1] == ["sync-choice"] and len(rest) == 1:
+            # 云端比本地靠前时二选一:
+            #   cloud → 把云端位置写进本地库并跳过去
+            #   local → 保留本地位置, 之后按常规节奏覆盖云端
+            choice = str(body.get("choice") or "").strip().lower()
+            if choice == "cloud":
+                out = _sync.apply_cloud(key)
+            elif choice == "local":
+                out = _sync.keep_local(key, push_now=body.get("push", True) is not False)
+            else:
+                h._json(400, {"error": "choice must be cloud|local"})
+                return True
+            h._json(200, out)
+            return True
 
         if method == "POST" and rest[:1] == ["progress"]:
             ch = int(body.get("chapter") or 0)

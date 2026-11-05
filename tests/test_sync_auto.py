@@ -319,9 +319,11 @@ check("后端: 读完只认 end 标记", 'at_end = body.get("end")' in meta_src,
 check("JS: 会话 id", "sid: 's' + Math.random()" in js, "")
 check("JS: 保存带 sid", "sid: S.sid" in js, "")
 check("JS: 打开时先拉一次", "function autoPull()" in js and "syncBoot(meta.sync)" in js, "")
-check("JS: 读者动过就不拽走位置", "if (S.userMoved) {" in js
-      and "把书从手里抢走" in js, "")
-check("JS: 拦下拽走时把真实位置写回去", "saveProgress(true, { force: true })" in js, "")
+# 2026-11-05: 打开时改成"只比不写 + 问读者" —— 自动拽走那条路径整个去掉了,
+# 所以 userMoved 闸门与"写回真实位置"都不再需要 (没有拽走就没有要回补的位置)。
+_auto = js.split("function autoPull()", 1)[1].split("function syncBoot", 1)[0]
+check("JS: 打开时不再自动拽走位置", "jumpTo" not in _auto, _auto[:220])
+check("JS: 云端更靠前交给读者选", "askCloudChoice" in _auto and "need_choice" in _auto, "")
 check("JS: 云端更靠前显示的是云端百分比", "stampPct(s.cloud_pct != null ? s.cloud_pct : s.last_push_pct)" in js, "")
 check("JS: 右下角渲染", "function renderStamp(st)" in js, "")
 check("JS: 定时轮询状态", "function syncPoll()" in js and "'/sync-state'" in js, "")

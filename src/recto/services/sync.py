@@ -48,6 +48,13 @@ _TIME_GAP = 600.0          # 时长拉的节流: 10 分钟内不重复打云端
 #   _PULL_BOOK_AT[key] = 上次自动拉这本的时间
 _PUSH_STATE: dict[str, dict] = {}
 _PULL_BOOK_AT: dict[str, float] = {}
+# 打开书时"只比不写"的结论缓存: key -> {at, res}
+_PEEK_CACHE: dict[str, dict] = {}
+
+# 读者显式选过「留在本地」之后, 多久之内允许把进度写到云端更后面。
+# 这是读者的明确选择, 不是我们擅自回拨; 也不是一劳永逸——
+# 过期后回到默认的只前进, 免得哪天忘了这回事把云端写回旧位置。
+LOCAL_WINS_HOURS = 24.0
 
 
 def _sync_cfg(name: str, default=None):
@@ -441,6 +448,31 @@ def _anchor_for_cloud(key: str, ent: dict) -> tuple[int, int, str]:
     return ch, off, "percent"
 
 
+def _local_wins(book_path: str) -> bool:
+    """读者显式选过「留在本地」吗 (边车 `cloud.local_wins_at`, 24h 内有效)。
+
+    选过一次之后, 本书的推送允许把进度写到云端更后面 —— 否则
+    「云端 32%、本地 15%」会永远卡在 regress, 读者本地怎么读都推不上去。
+    """
+    if not book_path:
+        return False
+    try:
+        link = sidecar.cloud_link(book_path) or {}
+    except Exception:  # noqa: BLE001 — 边车读不出来就当没选过
+        return False
+    ts = link.get("local_wins_at")
+    if not ts:
+        return False
+    try:
+        when = datetime.fromisoformat(str(ts))
+    except ValueError:
+        return False
+    if when.tzinfo is None:
+        when = when.astimezone()
+    age = (datetime.now().astimezone() - when).total_seconds()
+    return 0 <= age < LOCAL_WINS_HOURS * 3600
+
+
 def _int_or_none(v) -> int | None:
     try:
         return int(str(v).strip())
@@ -526,8 +558,12 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
         # 计数方式不同), 不值得为它去改读者眼前的记录。
         meta_stale = (cur.get("total_count") is not None
                       and int(cur["total_count"]) != int(total_count))
+        # 读者显式选过「留在本地」→ 这本书允许把进度写到云端更后面
+        # (那是他自己的选择, 不是我们擅自回拨)。
+        wins = _local_wins(r.get("path") or "")
         allow, why = push_decision(cur_pct, bool(cur.get("finished")), pct, done,
-                                   allow_rewind=allow_rewind, meta_stale=meta_stale)
+                                   allow_rewind=allow_rewind or wins,
+                                   meta_stale=meta_stale)
         if force and not allow:
             allow, why = True, "force"
         if not allow:
@@ -559,8 +595,12 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
                 errs.append(f"{bid[:8]}:{e}")
         if ok_keys:
             pushed += 1
-            sidecar.touch_cloud(r["path"], last_push_at=_now(),
-                                last_push_pct=round(pct, 8), total_count=total_count)
+            _touch = {"last_push_at": _now(),
+                      "last_push_pct": round(pct, 8), "total_count": total_count}
+            if wins:
+                # 覆盖完成 → 解除「本地优先」, 之后照常只前进
+                _touch["local_wins_at"] = ""
+            sidecar.touch_cloud(r["path"], **_touch)
             detail.append({"book": r["title"], "pct": round(pct, 8), "why": why,
                            "chapter": catalog_ch, "total": total_count, "ok": True,
                            "bytes": reader_state.book_bytes(key)})
@@ -632,12 +672,18 @@ def _state_of(key: str) -> dict:
         out["last_pull_pct"] = link.get("last_pull_pct")
         if rec.get("inflight"):
             out["state"] = "pushing"
-        elif rec.get("pending_pct") is not None:
-            out["state"] = "dirty"
-        elif rec.get("ok") is False:
-            out["state"] = "failed"
         elif rec.get("ok") and rec.get("cloud_ahead"):
             out["state"] = "cloud-ahead"
+        elif rec.get("pending_pct") is not None:
+            # 本地比云端靠后 → 推不上去。这时报「同步中…」是谎话:
+            # 每存一次进度又把 pending 填回来, 小字会永远转圈。
+            cp = rec.get("cloud_pct")
+            if cp is not None and float(cp) > float(rec["pending_pct"] or 0) + 1e-6:
+                out["state"] = "cloud-ahead"
+            else:
+                out["state"] = "dirty"
+        elif rec.get("ok") is False:
+            out["state"] = "failed"
         else:
             out["state"] = "synced"
     if not st["auto"]:
@@ -892,6 +938,119 @@ def pull_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
             out["time_error"] = f"{type(e).__name__}: {e}"
             log.warning("阅读时长没拉到 · %s", e)
     return out
+
+
+def peek_book(key: str, *, force: bool = False) -> dict:
+    """打开一本书时**只比不写**: 云端更靠前就交给读者决定 (`need_choice`)。
+
+    和 `pull_book` 的区别只有一个: 云端更靠前时**不动本地库**。
+    以前是直接拉进来再跳过去 —— 读者正在等正文, 突然被拽到别处,
+    而且他原本的位置已经被覆盖, 想留在本地都留不住。
+    """
+    st = sync_settings()
+    base = {"state": sync_state(key), "settings": st}
+    if not st["auto"]:
+        return {"ok": False, "skipped": "auto-off", **base}
+    if not st["pull_on_open"] and not force:
+        return {"ok": False, "skipped": "pull-off", **base}
+    row = _link_by_key(key)
+    if not row:
+        return {"ok": False, "skipped": "no-cloud-link", **base}
+    now = time.time()
+    gap = float(st["pull_gap_sec"] or 120)
+    cached = _PEEK_CACHE.get(key) or {}
+    if not force and cached and now - float(cached.get("at") or 0) < gap:
+        out = dict(cached.get("res") or {})
+        out.update(base)          # 状态/设置每次都取最新
+        return out
+    _PULL_BOOK_AT[key] = now
+    try:
+        res = pull_once(keys=[key], dry_run=True, only_forward=True, with_time=False)
+    except Exception as e:  # noqa: BLE001 — 比不出来就按本地位置读, 不挡打开
+        log.warning("自动比对失败 · %s · %s", key, e)
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", **base}
+    det = (res.get("detail") or [{}])[0]
+    prog = reader_state.get_progress(key) or {}
+    nbytes = reader_state.book_bytes(key) or int(det.get("bytes") or 0)
+    out = {"ok": True, "local_pct": round(float(prog.get("percent") or 0.0), 8),
+           "skipped": det.get("skipped"), "bytes": nbytes}
+    if det.get("dry"):
+        ch, off = int(det.get("chapter") or 0), int(det.get("offset") or 0)
+        out.update({
+            "need_choice": True,
+            "cloud_pct": det.get("pct"),
+            "cloud_chapter": ch,
+            "cloud_offset": off,
+            "basis": det.get("basis"),
+            "anchor": {"chapter": ch, "offset": off,
+                       "percent": float(det.get("pct") or 0.0)},
+        })
+        log.info("云端更靠前 · %s · 云端 %s · 本地 %s · 等读者选择", row["title"],
+                 geometry.format_pct(det.get("pct"), nbytes),
+                 geometry.format_pct(prog.get("percent"), nbytes))
+    elif det.get("skipped") == "local-ahead":
+        out["cloud_pct"] = det.get("cloud")
+    _PEEK_CACHE[key] = {"at": now, "res": out}
+    return out
+
+
+def apply_cloud(key: str) -> dict:
+    """读者选择「跳到云端」→ 这时才真的把云端位置写进本地库。"""
+    row = _link_by_key(key)
+    if not row:
+        return {"ok": False, "skipped": "no-cloud-link", "state": sync_state(key)}
+    try:
+        res = pull_once(keys=[key], only_forward=False, with_time=False)
+    except Exception as e:  # noqa: BLE001
+        log.warning("跳到云端失败 · %s · %s", key, e)
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "state": sync_state(key)}
+    det = (res.get("detail") or [{}])[0]
+    prog = reader_state.get_progress(key) or {}
+    spine_ch = int(prog.get("chapter") or 0)
+    _PEEK_CACHE.pop(key, None)
+    _PUSH_STATE.pop(key, None)
+    log.info("按读者选择跳到云端 · %s · 云端 %s", row["title"],
+             geometry.format_pct(det.get("pct"), reader_state.book_bytes(key)))
+    return {
+        "ok": bool(res.get("updated")),
+        "cloud_pct": det.get("pct"),
+        # chapter 是 spine 下标 (跳转用); catalog 是 App 的目录章号 (显示用),
+        # 两者差一两个前置文档 —— 界面上说"第几章"要用 catalog。
+        "anchor": {"chapter": spine_ch,
+                   "catalog": _catalog_chapter(_geometry_of(row["path"]), spine_ch),
+                   "offset": int(prog.get("offset") or 0),
+                   "percent": float(prog.get("percent") or 0.0)},
+        "state": sync_state(key),
+    }
+
+
+def keep_local(key: str, *, push_now: bool = True) -> dict:
+    """读者选择「留在本地」→ 之后允许按本地进度覆盖更靠前的云端记录。
+
+    标记写进边车 (`cloud.local_wins_at`), 重启服务、换进程都还在;
+    并且**不是只这一次** —— 后续每次常规推送 (节流 / 离开页面) 都能覆盖,
+    覆盖成功一次后自动解除。
+    """
+    row = _link_by_key(key)
+    if not row:
+        return {"ok": False, "skipped": "no-cloud-link", "state": sync_state(key)}
+    sidecar.touch_cloud(row["path"], local_wins_at=_now())
+    _PEEK_CACHE.pop(key, None)
+    res: dict = {}
+    if push_now:
+        try:
+            res = push_once(keys=[key], force=True)
+        except Exception as e:  # noqa: BLE001 — 网络抖也不撤销读者的选择
+            log.warning("按本地覆盖云端失败 · %s · %s", key, e)
+            return {"ok": False, "error": f"{type(e).__name__}: {e}",
+                    "state": sync_state(key)}
+    det = (res.get("detail") or [{}])[0]
+    prog = reader_state.get_progress(key) or {}
+    pct = float(prog.get("percent") or 0.0)
+    log.info("按读者选择覆盖云端 · %s · 本地 %s", row["title"],
+             geometry.format_pct(pct, reader_state.book_bytes(key)))
+    return {"ok": True, "pushed": res.get("pushed"), "why": det.get("why"),
+            "pct": round(pct, 8), "state": sync_state(key)}
 
 
 # --------------------------------------------------------------------------

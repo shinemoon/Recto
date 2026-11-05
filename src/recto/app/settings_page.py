@@ -772,7 +772,7 @@ def page_html(user: str | None = None) -> str:
         '<div class="st-block"><div class="st-h">同步行为</div>'
         '<label class="st-sw"><span>阅读时自动同步<small>翻页就把进度推给云端</small></span>'
         '<input type="checkbox" class="m3" id="sy-auto"></label>'
-        '<label class="st-sw"><span>打开书时先拉取云端进度<small>云端更靠前就直接接着读</small></span>'
+        '<label class="st-sw"><span>打开书时先看云端进度<small>云端更靠前会问你要不要跳过去</small></span>'
         '<input type="checkbox" class="m3" id="sy-pull"></label>'
         '<label class="st-sw"><span>切后台 / 离开页面时立刻推送'
         '<small>关标签页也不丢最后那点进度</small></span>'
