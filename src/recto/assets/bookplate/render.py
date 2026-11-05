@@ -1022,6 +1022,57 @@ def _format_book_title(book: str, max_chars: int = 8) -> str:
     return " ".join(list(book))
 
 
+# 摘录过长时按画框自动缩排: 底栏是绝对定位的, 正文字号固定 (34px / 行高 2) 时
+# 长摘录会直接穿过底栏、被画布裁掉 —— 生成出来的书票既缺尾句也压住日期和印章。
+# 这里在页面内量一次真实高度, 只缩不放: 优先保持 34px 的排版, 装不下才逐级降到
+# 18px; 连 18px 都装不下的极端长文再加硬裁 (overflow:hidden), 不让它溢出画框。
+# 量高度必须等字体就位 —— document.fonts.ready 之后再量, 否则会按回退字体算。
+_ZH_FIT_JS = r"""
+<script>
+(function () {
+  function fit() {
+    var box = document.querySelector('.bp-zh-excerpt');
+    var foot = document.querySelector('.bp-zh-foot');
+    if (!box || !foot) return;
+    var p = box.querySelector('p');
+    if (!p) return;
+    var note = document.querySelector('.bp-note');
+    var limit = foot.getBoundingClientRect().top - 18;
+    function bottom() {
+      var el = note || box;
+      return el.getBoundingClientRect().bottom;
+    }
+    var size = 34;
+    while (size > 18 && bottom() > limit) {
+      size -= 1;
+      p.style.fontSize = size + 'px';
+      p.style.lineHeight = size >= 28 ? '2' : '1.9';
+    }
+    if (bottom() > limit) {
+      // 极端长文: 18px 仍装不下时按超出量硬裁, 至少不要盖住底栏。
+      // 批注块跟在正文后面, 所以按"超出多少"缩正文高度, 批注才会一起上来。
+      var excess = Math.ceil(bottom() - limit);
+      var h = p.getBoundingClientRect().height;
+      var keep = Math.max(60, Math.floor(h - excess - 4));
+      p.style.maxHeight = keep + 'px';
+      p.style.overflow = 'hidden';
+    }
+  }
+  function schedule() {
+    if (window.requestAnimationFrame) requestAnimationFrame(fit);
+    else fit();
+  }
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(schedule).catch(schedule);
+  }
+  document.addEventListener('DOMContentLoaded', schedule);
+  window.addEventListener('load', schedule);
+  setTimeout(schedule, 1200);
+})();
+</script>
+"""
+
+
 def build_zhijian_body(book_name: str, author: str, content: str, bg_data_uri: str = "", palette: dict = None, created_time_ms: int = 0, idea: str = "", chapter: str = "") -> str:
     """纸间书摘 · 纸纹米色 / 黑边 / 朱红印章 / 无配图.
     信息架构: 顶栏品牌 + issue 号 → EX LIBRIS → 书名 (汉字间加空格) → 罗马字 → 国别 + 作者 → 引号+摘录 → 批注块 → 底栏日期+dim + 朱红印章."""
@@ -1093,7 +1144,7 @@ def build_zhijian_body(book_name: str, author: str, content: str, bg_data_uri: s
     </div>
     <div class="bp-zh-seal">{_esc(seal_char)}</div>
   </div>
-"""
+""" + _ZH_FIT_JS
 
 
 def _to_pinyin_book_title(book: str) -> str:

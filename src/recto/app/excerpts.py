@@ -26,6 +26,7 @@ import hmac
 import html
 import importlib
 import json
+import os
 import re
 import secrets
 import sys
@@ -49,6 +50,8 @@ _COOKIE_NAME = legacy.COOKIE_ADMIN
 _COOKIE_NAME_LEGACY = legacy.COOKIE_ADMIN_LEGACY
 _SESSION_TTL = 24 * 3600
 _COOKIE_PATH = "/admin/"
+# 书票渲染 (headless chromium 冷启动 + 截屏) 的硬超时。
+BOOKPLATE_TIMEOUT = 120
 
 
 # ---------- Auth ----------
@@ -1867,18 +1870,25 @@ def _render_bookplate_png(data_dir: Path, excerpt_id, style: str) -> tuple[bytes
         json.dump(target, f, ensure_ascii=False)
         tmp_json = f.name
 
+    # render.py 是包内模块 (要读 recto.core.paths 的书籍票配置), 所以只能
+    # 用 `-m` 起, 不能按脚本路径起 —— 按路径起 sys.path[0] 是它自己所在的目录,
+    # `import recto` 必然失败。素材根 (模板 / node_modules / 输出目录) 全部来自
+    # 配置 [bookplate] asset_root, 与包所在位置无关, 所以 cwd 用包父目录即可。
     from recto.assets.bookplate import render as _render_mod
-    render_py = Path(_render_mod.__file__).resolve()
-    if not render_py.exists():
-        return None, f"render.py 不存在: {render_py}"
+    pkg_root = Path(_render_mod.__file__).resolve().parents[3]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(pkg_root) + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+    )
     try:
         proc = subprocess.run(
-            ["python3", str(render_py), "--no-bg", "--style", style, str(tmp_json)],
-            capture_output=True, text=True, timeout=60,
-            cwd=str(skill_root),
+            [sys.executable, "-m", "recto.assets.bookplate.render",
+             "--no-bg", "--style", style, tmp_json],
+            capture_output=True, text=True, timeout=BOOKPLATE_TIMEOUT,
+            cwd=str(pkg_root), env=env,
         )
     except subprocess.TimeoutExpired:
-        return None, "render.py 超时 (60s)"
+        return None, f"渲染超时 ({BOOKPLATE_TIMEOUT}s)"
     finally:
         try:
             Path(tmp_json).unlink()
@@ -1886,27 +1896,20 @@ def _render_bookplate_png(data_dir: Path, excerpt_id, style: str) -> tuple[bytes
             pass
 
     if proc.returncode != 0:
-        return None, f"render.py 失败 (rc={proc.returncode}):\n{proc.stderr[:500]}"
+        detail = (proc.stderr or proc.stdout or "").strip()
+        return None, f"渲染失败 (rc={proc.returncode}):\n{detail[-800:]}"
 
-    # render.py 写 PNG 到 cfg.output_dir (不一定是 bin/output)。
-    # 优先从 stdout 抽 "out=/path/to.png";抽不到再 fallback 找最新文件。
-    out_png_path = None
-    import re as _re
-    m = _re.search(r"out=(\S+\.png)", proc.stdout)
-    if m:
-        p = Path(m.group(1))
-        if p.exists():
-            out_png_path = p
-    if out_png_path is None:
-        out_dir = skill_root / "bin" / "output"
-        if not out_dir.exists():
-            out_dir = data_dir / "bookplate"
-        if not out_dir.exists() or not any(out_dir.glob("*.png")):
-            return None, f"render.py 似乎没产出 PNG (rc=0)。 stdout: {proc.stdout[:200]}"
-        pngs = sorted(out_dir.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
-        out_png_path = pngs[0]
+    # render.py 自己声明输出路径: "OK style=zhijian out=/.../xxx.png"
+    m = re.search(r"out=(\S+\.png)", proc.stdout or "")
+    if not m:
+        return None, f"渲染器没有报告输出路径。 stdout: {(proc.stdout or '')[:300]}"
+    out_png_path = Path(m.group(1))
+    if not out_png_path.exists():
+        return None, f"渲染器报告了 {out_png_path}, 但文件不存在"
     try:
         data = out_png_path.read_bytes()
-    except Exception as e:
+    except OSError as e:
         return None, f"读 PNG 失败 ({out_png_path}): {e}"
+    if not data.startswith(b"\x89PNG"):
+        return None, f"输出不是 PNG ({out_png_path})"
     return data, None

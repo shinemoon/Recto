@@ -569,7 +569,17 @@ PYTHONPATH=src python3 -m recto.sources.device stop
 
 ### 藏书票（可选）
 
-把一条摘录渲染成 1080×1440 的 PNG。需要 Node + Playwright + `[bookplate] asset_root` 指向模板目录；缺依赖时按钮会明说缺什么，不会静默失败。
+把一条摘录渲染成 1080×1440 的 PNG（`/admin/?pane=excerpts` 的「书票」按钮）。
+
+依赖：Node + Playwright 浏览器 + `[bookplate] asset_root` 指向一套带 `bin/node_modules/playwright` 的素材目录。
+`asset_root` 只提供运行依赖和输出目录，渲染代码在 `src/recto/assets/bookplate/` —— 因此渲染器按模块启动
+（`python3 -m recto.assets.bookplate.render`），由它自己读 `recto.core.paths` 的配置，不按脚本路径起。
+
+输出落在 `[bookplate] output_dir`，路径以渲染器打印的 `out=` 为准（接口不猜目录、不取"最新文件"）。
+缺依赖 / 渲染失败 / 输出不是 PNG 都会把原因带回页面，不静默失败。
+
+摘录超长时文字会按画框自动缩排（34px → 18px，底栏位置不变），不会穿过底栏被画布裁掉；
+18px 仍装不下的极端长文按超出量硬裁，优先保住底栏与印章。
 
 ---
 
