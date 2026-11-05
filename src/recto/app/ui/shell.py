@@ -56,22 +56,44 @@ def _e(s) -> str:
 #   logo-mark.png = 只有图徽 (顶栏, 跟文字品牌并排)
 #   logo-full.png = 图徽 + 文字 (登录卡片, 单独就能认)
 # favicon / apple-touch-icon 同源, 浏览器标签页也用同一个标志。
-LOGO_MARK = ASSET_DIR / "logo-mark.png"          # 346x128 (顶栏显示高 22px)
-LOGO_FULL = ASSET_DIR / "logo-full.png"          # 500x320 (登录卡片显示高 64px)
+LOGO_MARK = ASSET_DIR / "logo-mark.png"          # 179x66 (顶栏显示高 22px, 3x)
+LOGO_FULL = ASSET_DIR / "logo-full.png"          # 300x192 (登录卡片显示高 64px, 3x)
 FAVICON = ASSET_DIR / "favicon.png"
 TOUCH_ICON = ASSET_DIR / "apple-touch-icon.png"
 
 
+def _png_size(path: Path) -> tuple[int, int] | None:
+    """读 PNG 的 IHDR 拿固有尺寸 —— 只为给 <img> 写上 width/height 防加载时跳动。
+
+    故意不依赖 Pillow: 服务运行时不该为了读两个数字去 import 一个图像库。
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(24)
+    except OSError:
+        return None
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    w = int.from_bytes(head[16:20], "big")
+    h = int.from_bytes(head[20:24], "big")
+    return (w, h) if w > 0 and h > 0 else None
+
+
+def _size_attr(path: Path) -> str:
+    wh = _png_size(path)
+    return f' width="{wh[0]}" height="{wh[1]}"' if wh else ""
+
+
 def logo_mark(cls: str = "rc-logo") -> str:
     """顶栏图徽。`alt=""` —— 紧跟着就是文字品牌, 读屏不必念两遍。"""
-    return (f'<img class="{cls}" src="/assets/logo-mark.png" alt="" '
-            'width="346" height="128" decoding="async">')
+    return (f'<img class="{cls}" src="/assets/logo-mark.png" alt=""'
+            f'{_size_attr(LOGO_MARK)} decoding="async">')
 
 
 def logo_full(cls: str = "rc-logo rc-logo-full") -> str:
     """完整标志 (图徽 + 文字)。只用在登录卡片顶部。"""
-    return (f'<img class="{cls}" src="/assets/logo-full.png" alt="{_e(BRAND_FULL)}" '
-            'width="500" height="320" decoding="async">')
+    return (f'<img class="{cls}" src="/assets/logo-full.png" alt="{_e(BRAND_FULL)}"'
+            f'{_size_attr(LOGO_FULL)} decoding="async">')
 
 
 def favicon_links() -> str:

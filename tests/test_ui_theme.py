@@ -453,7 +453,11 @@ def test_logo_in_shell():
     ok('/assets/logo-mark.png' in page, "顶栏用 logo-mark.png")
     ok('alt=""' in page.split('class="rc-brand"')[1].split("</a>")[0],
        "图徽 alt 为空 (文字品牌已读, 不重复念)")
-    ok('width="346" height="128"' in page, "图徽带固有尺寸 (避免加载时跳动)")
+    wh = shell._png_size(shell.LOGO_MARK)
+    ok(wh is not None and abs(wh[0] / wh[1] - 2.7) < 0.06,
+       "图徽比例 ~2.7:1 (宽幅图徽, 不是方形)" + (f" · {wh}" if wh else ""))
+    ok(wh is not None and f'width="{wh[0]}" height="{wh[1]}"' in page,
+       "图徽带固有尺寸 (与文件实际像素一致, 防加载时跳动)")
     ok('rc-brand-en">Recto</span>' in page, "图徽旁边仍是中英文品牌名")
     ok('<link rel="icon" type="image/png" href="/assets/favicon.png">' in page, "顶层页面有 favicon")
     ok('rel="apple-touch-icon"' in page, "顶层页面有 apple-touch-icon")

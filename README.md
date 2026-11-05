@@ -512,8 +512,8 @@ readPercent = ( Σ bytes(spine[0..chapterId]) + f3 ) / Σ bytes(spine)
 
 | 文件 | 用在哪 | 尺寸 |
 |---|---|---|
-| `assets/logo-mark.png` | 顶栏图徽（`云阅 Recto` 文字左边） | 346×128（显示高 22px/20px/18px） |
-| `assets/logo-full.png` | 登录卡片顶部（图徽 + 文字，单独就能认） | 500×320（显示高 64px） |
+| `assets/logo-mark.png` | 顶栏图徽（`云阅 Recto` 文字左边） | 179×66（显示高 22px/20px/18px，3×） |
+| `assets/logo-full.png` | 登录卡片顶部（图徽 + 文字，单独就能认） | 300×192（显示高 64px，3×） |
 | `assets/favicon.png` / `apple-touch-icon.png` | 浏览器标签页 / iOS 主屏 | 64×64 / 180×180 |
 
 ```bash

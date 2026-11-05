@@ -6,8 +6,8 @@
   * 原图四周留白极大 (内容只占 1085×693) → 先按内容裁边, 否则缩到 22px 高时图形只剩几个像素
 
 产出 (全部写进 `src/recto/app/ui/assets/`):
-  logo-mark.png        图徽 (不含文字) —— 顶栏, 高 128px (顶栏显示 22px, 3.5x 够任何 DPR)
-  logo-full.png        完整标志 (图徽 + 文字) —— 登录卡片, 高 320px
+  logo-mark.png        图徽 (不含文字) —— 顶栏, 高 66px (顶栏显示 22px, 正好 3x: 手机上不发虚)
+  logo-full.png        完整标志 (图徽 + 文字) —— 登录卡片, 高 192px (显示 64px, 3x)
   favicon.png          64×64 方图 (完整标志居中)
   apple-touch-icon.png 180×180 方图
 
@@ -30,8 +30,8 @@ ASSETS = ROOT / "src" / "recto" / "app" / "ui" / "assets"
 # 派生图: 文件名 -> (裁切方式, 目标高度; 方图走边长)
 # favicon 只用图徽 —— 16~32px 里文字会糊成一团, 留图形反而更认得出。
 TARGETS = {
-    "logo-mark.png": ("mark", 128),
-    "logo-full.png": ("full", 320),
+    "logo-mark.png": ("mark", 66),
+    "logo-full.png": ("full", 192),
     "favicon.png": ("square-mark", 64),
     "apple-touch-icon.png": ("square", 180),
 }

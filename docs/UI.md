@@ -64,8 +64,9 @@ EPUB2 `<meta name="cover">`，取不到再按文件名带 `cover` 的图兜底�
 
 `logo.png`（仓库根）经 `tools/make_logo.py` 变成两张透明位图：
 
-* `logo-mark.png` — 只有图徽，顶栏用，跟 `云阅 Recto` 文字并排（`shell.brand()`）。
-* `logo-full.png` — 图徽 + 文字，登录卡片顶部用（`shell.login_body()` 的 `.rc-lockup`）。
+* `logo-mark.png` — 只有图徽（179×66，宽高比 2.7:1），顶栏用，跟 `云阅 Recto` 文字并排（`shell.brand()`）。
+* `logo-full.png` — 图徽 + 文字（300×192），登录卡片顶部用（`shell.login_body()` 的 `.rc-lockup`）。
+  两张都是**显示尺寸的 3 倍**，给高 DPR 屏留余量。
 
 规则：
 
