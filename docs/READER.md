@@ -456,7 +456,8 @@ class 上（示例短篇 `.biaoti` = `1.7em + bold`），照抄字号的结果�
 ```bash
 python3 tests/test_reading_mark.py          # 38 项：归一化 / 语料 / 挑语料 / 预算 / 概览
 node tools/probe_reader_kw.mjs              # 21 项：真开阅读器 (命中 / 零 DOM 改动 / 开关 / 翻页)
-node tools/probe_settings_mark.mjs          # 14 项：设置页保存 / 绑定 / 恢复默认
+node tools/probe_settings_mark.mjs          # 15 项：设置页保存 / 绑定 / 恢复默认
+node tools/probe_settings_layout.mjs        # 40 项：两张宽卡排版 / 输入框 / 色板 / 手机
 ```
 
 ## 7. 已知边界

@@ -19,18 +19,65 @@ from recto.core import paths, settings as st
 from .ui import shell
 
 _CSS = """
-.st-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.st-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  align-items:start}
+.st-grid>.sec.wide{grid-column:1/-1}
 .st-fields{display:grid;gap:12px;grid-template-columns:1fr;max-width:360px;margin:2px 0 0}
 .st-field{display:flex;flex-direction:column;gap:6px;min-width:0;max-width:100%}
 .st-field>span{font-size:var(--rc-fs-xs);letter-spacing:.06em;color:var(--rc-mute)}
-.st-field input[type=text],.st-field input[type=password]{
+.st-field input[type=text],.st-field input[type=password],.st-in{
+  -webkit-appearance:none;appearance:none;
   border:0;background:color-mix(in srgb,var(--rc-fg) 6%,var(--rc-surface));
   min-height:40px;padding:0 12px;border-radius:var(--rc-radius-field);
-  color:var(--rc-fg);font:inherit;width:100%;max-width:100%;box-sizing:border-box}
-.st-field input:hover{background:color-mix(in srgb,var(--rc-fg) 9%,var(--rc-surface))}
-.st-field input:focus{outline:none;
+  color:var(--rc-fg);font:inherit;font-size:var(--rc-fs-sm);
+  width:100%;max-width:100%;min-width:0;box-sizing:border-box}
+.st-field input:hover,.st-in:hover{background:color-mix(in srgb,var(--rc-fg) 9%,var(--rc-surface))}
+.st-field input:focus,.st-in:focus{outline:none;
   background:color-mix(in srgb,var(--rc-fg) 11%,var(--rc-surface));
   box-shadow:inset 0 -2px 0 var(--rc-primary)}
+.st-field select,.st-in select{border:0}
+select.st-in{padding-right:28px}
+input.st-in[type=number]{-moz-appearance:textfield;text-align:right;
+  font-variant-numeric:tabular-nums;width:6.4ch;padding:0 8px}
+input.st-in[type=number]::-webkit-outer-spin-button,
+input.st-in[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+
+/* 一行字段: 左侧文字说明, 右侧固定宽控件 */
+.st-row{display:flex;align-items:center;gap:10px;min-height:40px;min-width:0}
+.st-row>span{flex:1 1 auto;min-width:0;font-size:var(--rc-fs-sm);color:var(--rc-dim);
+  display:flex;flex-direction:column;gap:2px}
+.st-row>span small{color:var(--rc-mute);font-size:var(--rc-fs-xs);line-height:1.5}
+.st-row>em{font-style:normal;font-size:var(--rc-fs-xs);color:var(--rc-mute);flex:0 0 auto}
+.st-row>b{font-weight:600;color:var(--rc-fg);font-variant-numeric:tabular-nums}
+
+/* 开关行 (Material 3 switch): 文字在左, 开关在右 */
+.st-sw{display:flex;align-items:center;gap:14px;min-height:46px;padding:8px 0;min-width:0;
+  border-bottom:1px solid var(--rc-line);cursor:pointer}
+.st-sw:last-child{border-bottom:0}
+.st-sw>span{flex:1 1 auto;min-width:0;font-size:var(--rc-fs-sm);color:var(--rc-fg);
+  display:flex;flex-direction:column;gap:2px}
+.st-sw>span small{color:var(--rc-mute);font-size:var(--rc-fs-xs);line-height:1.5}
+input.m3[type=checkbox]{-webkit-appearance:none;appearance:none;
+  width:42px;height:24px;min-height:0;flex:0 0 auto;margin:0;padding:0;border:0;
+  border-radius:999px;cursor:pointer;position:relative;
+  background:color-mix(in srgb,var(--rc-fg) 26%,transparent);
+  transition:background .16s ease}
+input.m3[type=checkbox]::after{content:"";position:absolute;left:2px;top:2px;
+  width:20px;height:20px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 2px rgba(0,0,0,.24);transition:transform .16s ease}
+input.m3[type=checkbox]:checked{background:var(--rc-primary)}
+input.m3[type=checkbox]:checked::after{transform:translateX(18px)}
+input.m3[type=checkbox]:focus-visible{outline:2px solid color-mix(in srgb,var(--rc-primary) 60%,transparent);
+  outline-offset:2px}
+.st-sw.compact{min-height:0;padding:0;border:0;gap:0}
+
+.st-two{display:grid;gap:6px 28px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  margin-top:6px;align-items:start}
+.st-block{min-width:0}
+.st-h{font-size:var(--rc-fs-xs);letter-spacing:.08em;color:var(--rc-mute);
+  margin:16px 0 6px;text-transform:none}
+.st-block>.st-h:first-child{margin-top:0}
+
 .st-note{font-size:var(--rc-fs-xs);color:var(--rc-mute);line-height:1.7}
 .st-note code{font-size:.95em}
 .st-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
@@ -40,34 +87,87 @@ _CSS = """
 .st-msg.ok{color:var(--rc-ok,#2e7d32)}
 .st-msg.err{color:var(--rc-danger)}
 .st-path{font-family:var(--rc-mono);font-size:var(--rc-fs-sm);word-break:break-all}
-.st-checks{display:grid;gap:8px;justify-items:start;margin:2px 0 0}
-.st-check{display:flex;align-items:center;gap:8px;font-size:var(--rc-fs-sm);color:var(--rc-dim)}
-.st-check input{width:16px;height:16px;accent-color:var(--rc-primary)}
 .st-field select,.mk-row select{
   border:0;background:color-mix(in srgb,var(--rc-fg) 6%,var(--rc-surface));
-  min-height:40px;padding:0 10px;border-radius:var(--rc-radius-field);
-  color:var(--rc-fg);font:inherit;max-width:100%}
-.mk-tb{width:100%;border-collapse:collapse;margin-top:12px;font-size:var(--rc-fs-sm)}
-.mk-tb th,.mk-tb td{padding:6px 8px;text-align:left;border-bottom:1px solid var(--rc-line)}
-.mk-tb th{font-size:var(--rc-fs-xs);letter-spacing:.06em;color:var(--rc-mute);font-weight:500}
-.mk-tb input[type=text]{width:11ch;border:0;min-height:32px;padding:0 8px;
-  background:color-mix(in srgb,var(--rc-fg) 6%,var(--rc-surface));
-  border-radius:var(--rc-radius-field);color:var(--rc-fg);font:inherit;font-size:var(--rc-fs-sm)}
-.mk-tb input[type=checkbox]{width:15px;height:15px;accent-color:var(--rc-primary)}
+  min-height:40px;padding:0 28px 0 12px;border-radius:var(--rc-radius-field);
+  color:var(--rc-fg);font:inherit;font-size:var(--rc-fs-sm);max-width:100%}
+
+/* --- 分类配色: 一张分类一张小卡, 颜色用色板点选 --- */
+.mk-styles{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));
+  margin-top:8px}
+.mk-style{border:1px solid var(--rc-line);border-radius:var(--rc-radius-card,12px);
+  padding:10px 12px 8px;min-width:0;background:color-mix(in srgb,var(--rc-fg) 2%,transparent)}
+.mk-style-hd{display:flex;align-items:center;gap:10px;min-height:26px}
+.mk-style-t{flex:1 1 auto;min-width:0;font-size:var(--rc-fs-sm);color:var(--rc-fg);
+  font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk-style-t small{font-weight:400;color:var(--rc-mute);font-size:var(--rc-fs-xs);
+  margin-left:4px;letter-spacing:.04em}
+.mk-col{display:flex;align-items:center;gap:10px;min-height:32px;margin-top:2px;min-width:0}
+.mk-lbl{flex:0 0 auto;min-width:40px;white-space:nowrap;font-size:var(--rc-fs-xs);
+  color:var(--rc-mute)}
+.sw-wrap{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0}
+button.sw{-webkit-appearance:none;appearance:none;
+  width:20px;height:20px;min-height:0;padding:0;flex:0 0 auto;
+  border-radius:50%;border:1px solid color-mix(in srgb,var(--rc-fg) 18%,transparent);
+  background:var(--c,var(--rc-surface));cursor:pointer;position:relative;
+  box-shadow:none;transition:transform .12s ease}
+button.sw:hover{transform:scale(1.12)}
+button.sw[aria-pressed="true"]{box-shadow:0 0 0 2px var(--rc-surface),0 0 0 3.5px var(--rc-primary)}
+button.sw.none{background:var(--rc-surface)}
+button.sw.none::before{content:"";position:absolute;left:-1px;right:-1px;top:50%;height:1.5px;
+  transform:rotate(-45deg);background:color-mix(in srgb,var(--rc-fg) 45%,transparent)}
+button.sw.none[aria-pressed="true"]::after{content:"";position:absolute;left:50%;top:50%;
+  width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:var(--rc-primary)}
+.sw.pick{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  width:20px;height:20px;flex:0 0 auto;border-radius:50%;cursor:pointer;
+  border:1px solid color-mix(in srgb,var(--rc-fg) 18%,transparent);
+  background:var(--c,conic-gradient(#f45b69,#f7b267,#f7e26b,#6fcf97,#56ccf2,#9b8cff,#f45b69))}
+.sw.pick.is-on{box-shadow:0 0 0 2px var(--rc-surface),0 0 0 3.5px var(--rc-primary)}
+.sw.pick input{position:absolute;inset:0;width:100%;height:100%;opacity:0;
+  padding:0;border:0;min-height:0;cursor:pointer}
+.sw-a{-webkit-appearance:none;appearance:none;border:0;height:20px;min-height:20px;padding:0 2px;
+  line-height:1;
+  background:transparent;color:var(--rc-mute);font:inherit;font-size:var(--rc-fs-xs);
+  cursor:pointer;border-radius:6px;flex:0 0 auto}
+.sw-a:hover{background:color-mix(in srgb,var(--rc-fg) 8%,transparent)}
+.mk-val{font-family:var(--rc-mono);font-size:11px;color:var(--rc-mute);
+  margin:0 0 2px 50px;min-height:1.2em;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:100%}
+.mk-under{display:flex;align-items:center;gap:8px;min-height:26px;margin:2px 0 4px 0;
+  font-size:var(--rc-fs-xs);color:var(--rc-dim);cursor:pointer}
+.mk-under input[type=checkbox]{width:15px;height:15px;min-height:0;accent-color:var(--rc-primary)}
+
+.mk-opts{display:grid;gap:6px 22px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+  margin-top:4px;align-items:center}
 .mk-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 0;
   border-bottom:1px solid var(--rc-line);font-size:var(--rc-fs-sm)}
 .mk-row .nm{min-width:180px;flex:1 1 180px;color:var(--rc-fg)}
 .mk-row .nm small{display:block;color:var(--rc-mute);font-size:var(--rc-fs-xs);margin-top:2px}
 .mk-row .st{color:var(--rc-mute);font-size:var(--rc-fs-xs);min-width:90px}
 .mk-row .st.ok{color:var(--rc-ok,#2e7d32)}
-.mk-num{width:9ch;border:0;min-height:36px;padding:0 8px;font:inherit;color:var(--rc-fg);
-  background:color-mix(in srgb,var(--rc-fg) 6%,var(--rc-surface));border-radius:var(--rc-radius-field)}
+.mk-row select{flex:0 1 240px;min-width:0}
+@media (max-width:560px){
+  .mk-lbl{min-width:34px}
+  .mk-val{margin-left:44px}
+  .mk-row select{flex:1 1 100%}
+}
+.st-row>.st-in{flex:0 1 auto;width:auto;min-width:0}
+select.st-in{flex:0 1 200px;min-width:120px}
+.st-h small{font-weight:400;letter-spacing:0;color:var(--rc-mute);font-size:var(--rc-fs-xs);
+  margin-left:6px}
+.mk-opts .st-sw{border-bottom:0;padding:0;min-height:44px}
+@media (max-width:560px){
+  select.st-in{flex:1 1 100%}
+  .st-two{grid-template-columns:1fr}
+}
 """
 
 _JS = r"""
 (function(){
   function $(id){ return document.getElementById(id); }
   function $$(sel, el){ return Array.prototype.slice.call((el || document).querySelectorAll(sel)); }
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+    .replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function msg(id, text, bad){
     var e = $(id); if (!e) return;
     e.textContent = text || '';
@@ -148,7 +248,121 @@ _JS = r"""
     };
   }
 
+  // ---- 颜色 ----
+  // 底色默认都是半透明: 阅读器有浅色/深色两套主题, 半透明在两边都只是"一层淡色"。
+  var BG_SW = [
+    ['rgba(255, 196, 64, .42)', '黄'],
+    ['rgba(88, 166, 255, .30)', '蓝'],
+    ['rgba(74, 200, 138, .32)', '绿'],
+    ['rgba(255, 138, 80, .34)', '橙'],
+    ['rgba(196, 128, 255, .34)', '紫'],
+    ['rgba(64, 210, 210, .30)', '青'],
+    ['rgba(160, 168, 180, .30)', '灰'],
+    ['rgba(255, 110, 150, .30)', '粉']
+  ];
+  var FG_SW = [
+    ['#8a5a00', '棕'], ['#0b5cad', '蓝'], ['#12693f', '绿'], ['#a33a12', '橙'],
+    ['#6b2fb3', '紫'], ['#0d6d6d', '青'], ['#5a5f68', '灰'], ['#b01747', '红']
+  ];
+  var ALPHAS = [0.15, 0.25, 0.35, 0.45, 0.6, 1];
+
+  function parseColor(v){
+    v = String(v || '').trim();
+    if (!v) return null;
+    var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(v);
+    if (m) {
+      var h = m[1];
+      if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+      return {r: parseInt(h.slice(0,2),16), g: parseInt(h.slice(2,4),16),
+              b: parseInt(h.slice(4,6),16), a: 1};
+    }
+    m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)\s*(?:[,\/]\s*([\d.]+%?)\s*)?\)$/i.exec(v);
+    if (m) {
+      var a = m[4] == null ? 1 : (/ %?$/.test(m[4]) && m[4].indexOf('%') > 0
+        ? parseFloat(m[4]) / 100 : parseFloat(m[4]));
+      if (!isFinite(a)) a = 1;
+      return {r: +m[1], g: +m[2], b: +m[3], a: Math.max(0, Math.min(1, a))};
+    }
+    return null;
+  }
+  function hx(n){ var s = Math.round(n).toString(16); return s.length < 2 ? '0' + s : s; }
+  function toHex(c){ return '#' + hx(c.r) + hx(c.g) + hx(c.b); }
+  function toRgba(c, a){
+    if (a == null) a = c.a;
+    a = Math.round(a * 100) / 100;
+    var at = String(a);
+    if (at.indexOf('0.') === 0) at = at.slice(1);
+    return 'rgba(' + Math.round(c.r) + ', ' + Math.round(c.g) + ', ' + Math.round(c.b) +
+      ', ' + at + ')';
+  }
+  function nearAlpha(a){
+    var best = ALPHAS[0], d = 9;
+    ALPHAS.forEach(function(x){ var dd = Math.abs(x - a); if (dd < d) { d = dd; best = x; } });
+    return best;
+  }
+
+  function swatches(kind){
+    return kind === 'bg' ? BG_SW : FG_SW;
+  }
+  function colorCell(kind, val, label){
+    var html = '<div class="mk-col"><span class="mk-lbl">' + label + '</span>' +
+      '<div class="sw-wrap" data-mk="' + kind + '" data-val="' + esc(val) + '">';
+    swatches(kind).forEach(function(it){
+      html += '<button type="button" class="sw" data-v="' + esc(it[0]) + '" title="' + it[1] +
+        '" style="--c:' + it[0] + '" aria-pressed="false"></button>';
+    });
+    html += '<button type="button" class="sw none" data-v="" title="不设颜色" ' +
+      'aria-pressed="false"></button>';
+    html += '<label class="sw pick" title="自定义颜色 (打开调色板)">' +
+      '<input type="color" value="#ffc440" aria-label="自定义颜色"></label>';
+    if (kind === 'bg') {
+      html += '<select class="sw-a" title="不透明度" aria-label="不透明度">' +
+        ALPHAS.map(function(a){
+          return '<option value="' + a + '">' + Math.round(a * 100) + '%</option>';
+        }).join('') + '</select>';
+    }
+    html += '</div></div>';
+    html += '<div class="mk-val" data-mk-val="' + kind + '"></div>';
+    return html;
+  }
+  function paintWrap(wrap){
+    if (!wrap) return;
+    var val = String(wrap.dataset.val || '').trim();
+    var list = swatches(wrap.dataset.mk);
+    var hit = null;
+    list.forEach(function(it){ if (it[0] === val) hit = it[0]; });
+    $$('.sw[data-v]', wrap).forEach(function(b){
+      b.setAttribute('aria-pressed', (b.dataset.v || '') === val ? 'true' : 'false');
+    });
+    var c = parseColor(val);
+    var pick = wrap.querySelector('.sw.pick');
+    if (pick) {
+      var inp = pick.querySelector('input');
+      if (val && !hit && c) {
+        pick.classList.add('is-on');
+        pick.style.setProperty('--c', toRgba(c, c.a));
+        if (inp) inp.value = toHex(c);
+      } else {
+        pick.classList.remove('is-on');
+        pick.style.removeProperty('--c');
+        if (inp) inp.value = hit ? toHex(parseColor(hit)) : '#ffc440';
+      }
+    }
+    var sel = wrap.querySelector('.sw-a');
+    if (sel) sel.value = String(nearAlpha(c ? c.a : 1));
+    var holder = wrap.parentNode;
+    var out = holder ? holder.parentNode.querySelector('.mk-val[data-mk-val="' + wrap.dataset.mk + '"]') : null;
+    if (out) out.textContent = val || '无';
+  }
+  function setCell(card, kind, val){
+    var wrap = card.querySelector('.sw-wrap[data-mk="' + kind + '"]');
+    if (!wrap) return;
+    wrap.dataset.val = val || '';
+    paintWrap(wrap);
+  }
+
   // ---- 阅读高亮 (语料滤镜) ----
+  var CAT_NAME = {};
   function mkNum(id){ var e = $(id); return e ? e.value : ''; }
   function mkPaint(d){
     if (!d) return;
@@ -166,45 +380,52 @@ _JS = r"""
     var sd = $('mk-digits'); if (sd) sd.checked = !!d.skip_digits;
     var path = $('mk-path'); if (path) path.textContent = d.path || '';
 
-    var tb = $('mk-styles');
-    if (tb) {
-      var names = {};
-      (d.categories || []).forEach(function(c){ names[c.id] = c.name; });
-      tb.innerHTML = Object.keys(d.styles || {}).map(function(cid){
+    var box = $('mk-styles');
+    if (box) {
+      CAT_NAME = {};
+      (d.categories || []).forEach(function(c){ CAT_NAME[c.id] = c.name; });
+      box.innerHTML = Object.keys(d.styles || {}).map(function(cid){
         var s = d.styles[cid] || {};
-        return '<tr data-cat="' + cid + '">' +
-          '<td>' + (names[cid] || cid) + ' <small style="color:var(--rc-mute)">' + cid + '</small></td>' +
-          '<td><input type="checkbox" data-mk="enabled"' + (s.enabled ? ' checked' : '') + '></td>' +
-          '<td><input type="text" data-mk="bg" value="' + (s.bg || '') + '"></td>' +
-          '<td><input type="text" data-mk="color" value="' + (s.color || '') + '"></td>' +
-          '<td><input type="checkbox" data-mk="underline"' + (s.underline ? ' checked' : '') + '></td>' +
-          '</tr>';
+        var name = CAT_NAME[cid] || cid;
+        return '<div class="mk-style" data-cat="' + cid + '">' +
+          '<div class="mk-style-hd">' +
+            '<div class="mk-style-t">' + esc(name) + '<small>' + cid + '</small></div>' +
+            '<label class="st-sw compact" title="这个分类是否高亮">' +
+              '<input type="checkbox" class="m3" data-mk="enabled"' +
+              (s.enabled ? ' checked' : '') + ' aria-label="' + esc(name) + ' 启用"></label>' +
+          '</div>' +
+          colorCell('bg', s.bg || '', '底色') +
+          colorCell('color', s.color || '', '文字色') +
+          '<label class="mk-under"><input type="checkbox" data-mk="underline"' +
+            (s.underline ? ' checked' : '') + '> 下划线</label>' +
+          '</div>';
       }).join('');
+      $$('.sw-wrap', box).forEach(paintWrap);
     }
 
     var corp = $('mk-corpora');
     if (corp) corp.textContent = (d.corpora || []).length + ' 份';
-    var box = $('mk-books');
-    if (box) {
+    var books = $('mk-books');
+    if (books) {
       var opts = ['<option value="">自动匹配</option>'].concat((d.corpora || []).map(function(c){
-        return '<option value="' + c.file.replace(/"/g, '&quot;') + '">' +
-          c.title + ' · ' + c.words + ' 词</option>';
+        return '<option value="' + esc(c.file) + '">' +
+          esc(c.title) + ' · ' + c.words + ' 词</option>';
       }));
       var rows = (d.books || []).map(function(b){
         var how = {name:'书名匹配', sidecar:'书库边车', source_epub:'同源文件', bind:'已绑定',
                    bind_path:'已绑定', bind_missing:'绑定失效', none:'未匹配'}[b.how] || b.how || '未匹配';
         var ok = b.file ? ' ok' : '';
-        var sel = b.bound ? '<option value="' + b.bound.replace(/"/g, '&quot;') + '" selected>' +
-                    b.bound + '</option>' : '';
-        return '<div class="mk-row" data-book="' + b.key + '">' +
-          '<div class="nm">' + b.title + '<small>' + (b.author || '') + '</small></div>' +
+        var sel = b.bound ? '<option value="' + esc(b.bound) + '" selected>' +
+                    esc(b.bound) + '</option>' : '';
+        return '<div class="mk-row" data-book="' + esc(b.key) + '">' +
+          '<div class="nm">' + esc(b.title) + '<small>' + esc(b.author || '') + '</small></div>' +
           '<div class="st' + ok + '">' + how + (b.file ? ' · ' + b.words + ' 词' : '') + '</div>' +
           '<select data-mk-bind>' + sel + opts.join('') + '</select></div>';
       });
-      box.innerHTML = rows.length ? rows.join('') :
+      books.innerHTML = rows.length ? rows.join('') :
         '<div class="st-note">书库还是空的。</div>';
       // 选中态: 绑定值或当前解析到的那份
-      $$('.mk-row', box).forEach(function(row){
+      $$('.mk-row', books).forEach(function(row){
         var b = (d.books || []).filter(function(x){ return x.key === row.dataset.book; })[0];
         var sel = row.querySelector('[data-mk-bind]');
         if (!sel || !b) return;
@@ -222,29 +443,69 @@ _JS = r"""
   }
   function mkCollect(){
     var styles = {};
-    $$('#mk-styles tr').forEach(function(tr){
-      var g = function(k){ return tr.querySelector('[data-mk="' + k + '"]'); };
-      styles[tr.dataset.cat] = {
-        enabled: g('enabled').checked,
-        bg: g('bg').value.trim(),
-        color: g('color').value.trim(),
-        underline: g('underline').checked
+    $$('#mk-styles .mk-style').forEach(function(card){
+      var g = function(k){ return card.querySelector('[data-mk="' + k + '"]'); };
+      var wrapOf = function(k){ return card.querySelector('.sw-wrap[data-mk="' + k + '"]'); };
+      var en = g('enabled'), un = g('underline');
+      styles[card.dataset.cat] = {
+        enabled: en ? !!en.checked : true,
+        bg: wrapOf('bg') ? String(wrapOf('bg').dataset.val || '') : '',
+        color: wrapOf('color') ? String(wrapOf('color').dataset.val || '') : '',
+        underline: un ? !!un.checked : false
       };
     });
     return {
-      enabled: $('mk-on').checked,
-      mode: $('mk-mode').value,
-      dirs: ($('mk-dirs').value || '').split(',').map(function(s){ return s.trim(); })
+      enabled: !!($('mk-on') || {}).checked,
+      mode: ($('mk-mode') || {}).value || 'highlight',
+      dirs: String(($('mk-dirs') || {}).value || '').split(',')
+              .map(function(s){ return s.trim(); })
               .filter(function(s){ return s; }),
       min_len: parseInt(mkNum('mk-minlen'), 10) || 2,
       max_terms: parseInt(mkNum('mk-maxterms'), 10) || 6000,
-      skip_digits: $('mk-digits').checked,
+      skip_digits: !!($('mk-digits') || {}).checked,
       styles: styles
     };
   }
 
+  // 色板: 点一下换色 (只是改界面, 点保存才落盘)
+  document.addEventListener('click', function(ev){
+    var btn = ev.target.closest ? ev.target.closest('button.sw[data-v]') : null;
+    if (!btn) return;
+    var wrap = btn.closest('.sw-wrap');
+    if (!wrap) return;
+    ev.preventDefault();
+    wrap.dataset.val = btn.dataset.v || '';
+    paintWrap(wrap);
+  });
+
+  // 自定义颜色: 系统调色板选完即时用 (底色沿用当前不透明度)
+  document.addEventListener('input', function(ev){
+    var inp = ev.target;
+    if (!inp || inp.type !== 'color') return;
+    var wrap = inp.closest('.sw-wrap');
+    if (!wrap) return;
+    var c = parseColor(inp.value);
+    if (!c) return;
+    var sel = wrap.querySelector('.sw-a');
+    var a = sel ? parseFloat(sel.value) : 1;
+    // 文字色不带透明度 (实色更清楚); 只有底色才拼 rgba
+    wrap.dataset.val = wrap.dataset.mk === 'bg' ? toRgba(c, a) : toHex(c);
+    paintWrap(wrap);
+  });
+
   document.addEventListener('change', function(ev){
-    var sel = ev.target.closest ? ev.target.closest('[data-mk-bind]') : null;
+    var t = ev.target;
+    // 不透明度
+    if (t && t.classList && t.classList.contains('sw-a')) {
+      var wrap = t.closest('.sw-wrap');
+      if (wrap) {
+        var c = parseColor(wrap.dataset.val);
+        if (c) { wrap.dataset.val = toRgba(c, parseFloat(t.value)); paintWrap(wrap); }
+      }
+      return;
+    }
+    // 每本书的语料绑定
+    var sel = t && t.closest ? t.closest('[data-mk-bind]') : null;
     if (!sel) return;
     var row = sel.closest('.mk-row');
     if (!row) return;
@@ -319,6 +580,21 @@ _JS = r"""
     }
     done();
   });
+
+  // 排障 / 探针用 (只读 + 设置一个颜色)
+  window.__MK__ = {
+    collect: mkCollect,
+    set: function(cat, kind, val){
+      var card = document.querySelector('#mk-styles .mk-style[data-cat="' + cat + '"]');
+      if (card) setCell(card, kind, val);
+      return !!card;
+    },
+    value: function(cat, kind){
+      var card = document.querySelector('#mk-styles .mk-style[data-cat="' + cat + '"]');
+      var w = card ? card.querySelector('.sw-wrap[data-mk="' + kind + '"]') : null;
+      return w ? String(w.dataset.val || '') : null;
+    }
+  };
 
   // 两张卡各自拉一次, 互不阻塞
   syLoad();
@@ -488,64 +764,80 @@ def page_html(user: str | None = None) -> str:
         + "</div></details>",
 
         # --- 云端同步 (阅读进度) ---
-        '<details class="sec" id="sync"><summary>云端同步 '
+        '<details class="sec wide" id="sync"><summary>云端同步 '
         '<span class="pill mute" id="sy-pill">读取中…</span></summary><div class="sec-body">'
         '<div class="st-note">阅读时把进度推到云端阅读服务（掌阅），打开一本书时先跟云端对一次。'
-        '推送<b>只前进</b>——手机端读得更靠前时不会被网页这边往回拨。</div>'
-        '<div class="st-checks" style="margin-top:12px">'
-        '<label class="st-check"><input type="checkbox" id="sy-auto"> 阅读时自动同步</label>'
-        '<label class="st-check"><input type="checkbox" id="sy-pull"> 打开书时先拉取云端进度</label>'
-        '<label class="st-check"><input type="checkbox" id="sy-flush"> 切后台 / 离开页面时立刻推送</label>'
-        '<label class="st-check"><input type="checkbox" id="sy-stamp"> 阅读页右下角显示同步时间</label>'
-        '<label class="st-check">推送间隔 <input class="mk-num" id="sy-gap" type="number" '
-        'min="3" max="300" step="1"> 秒</label>'
+        '推送<b>只前进</b> —— 手机端读得更靠前时不会被网页这边往回拨。</div>'
+        '<div class="st-two">'
+        '<div class="st-block"><div class="st-h">同步行为</div>'
+        '<label class="st-sw"><span>阅读时自动同步<small>翻页就把进度推给云端</small></span>'
+        '<input type="checkbox" class="m3" id="sy-auto"></label>'
+        '<label class="st-sw"><span>打开书时先拉取云端进度<small>云端更靠前就直接接着读</small></span>'
+        '<input type="checkbox" class="m3" id="sy-pull"></label>'
+        '<label class="st-sw"><span>切后台 / 离开页面时立刻推送'
+        '<small>关标签页也不丢最后那点进度</small></span>'
+        '<input type="checkbox" class="m3" id="sy-flush"></label>'
+        '<label class="st-sw"><span>阅读页右下角显示同步时间'
+        '<small>一眼看出是不是刚推上去了</small></span>'
+        '<input type="checkbox" class="m3" id="sy-stamp"></label>'
         "</div>"
-        '<div class="row" style="margin-top:12px">'
+        '<div class="st-block"><div class="st-h">节奏与状态</div>'
+        '<div class="st-row"><span>推送间隔<small>停手后最多等这么久再推</small></span>'
+        '<input class="st-in" id="sy-gap" type="number" min="3" max="300" step="1">'
+        "<em>秒</em></div>"
+        '<div class="st-row"><span>拉取间隔<small>同一本书两次自动拉取之间</small></span>'
+        '<b id="sy-pullgap">—</b><em>秒</em></div>'
+        '<div class="st-line">来源 <span id="sy-src">—</span></div>'
+        '<div class="st-note" style="margin-top:10px">改完立刻生效（下一次翻页 / 打开书就用新设置），'
+        "不用重启服务。</div>"
+        "</div>"
+        "</div>"
+        '<div class="row" style="margin-top:14px">'
         '<button class="primary" data-st="sync">保存</button>'
         '<button data-st="sync-reset">回到 config.toml</button>'
         '<span id="st-sync-msg" class="st-msg"></span></div>'
-        '<div class="st-note" style="margin-top:10px">来源: <span id="sy-src">—</span>'
-        ' · 拉取间隔 (只读) <b id="sy-pullgap">—</b> 秒</div>'
-        '<div class="st-note" style="margin-top:6px">改完立刻生效（下一次翻页 / 打开书就用新设置），'
-        '不用重启服务。</div>'
         "</div></details>",
 
         # --- 阅读高亮 (语料 → 阅读器) ---
-        '<details class="sec" id="mark"><summary>阅读高亮 '
+        '<details class="sec wide" id="mark"><summary>阅读高亮 '
         '<span class="pill mute" id="mk-pill">读取中…</span></summary><div class="sec-body">'
         '<div class="st-note">把「语料分解 json」里的关键词铺到阅读器做底色。'
         '默认 highlight 模式<b>不改动一个字符</b> —— 阅读进度与划线坐标都不受影响；'
         'span 模式才能加粗/圆角，代价是改 DOM（翻页模式会重排一次）。</div>'
-        '<div class="row" style="margin-top:12px">'
-        '<label class="st-check"><input type="checkbox" id="mk-on"> 启用</label>'
-        '<label class="st-check">渲染方式 '
-        '<select id="mk-mode"><option value="highlight">highlight（不改 DOM）</option>'
-        '<option value="span">span（可加粗/圆角）</option></select></label></div>'
+        '<div class="mk-opts">'
+        '<label class="st-sw"><span>启用</span>'
+        '<input type="checkbox" class="m3" id="mk-on"></label>'
+        '<label class="st-row"><span>渲染方式</span>'
+        '<select class="st-in" id="mk-mode">'
+        '<option value="highlight">highlight（不改 DOM）</option>'
+        '<option value="span">span（可加粗/圆角）</option></select></label>'
+        '<label class="st-row"><span>最短词长</span>'
+        '<input class="st-in" id="mk-minlen" type="number" min="1" max="12" step="1">'
+        "<em>字</em></label>"
+        '<label class="st-row"><span>最多词数</span>'
+        '<input class="st-in" id="mk-maxterms" type="number" min="50" max="6000" step="50">'
+        "</label>"
+        '<label class="st-sw"><span>跳过纯数字词</span>'
+        '<input type="checkbox" class="m3" id="mk-digits"></label>'
+        "</div>"
         '<label class="st-field" style="margin-top:10px"><span>语料目录（多个用逗号分隔；'
         '留空 = config.toml 的 [corpus] dir）</span>'
-        '<input id="mk-dirs" type="text" spellcheck="false"></label>'
-        '<div class="row" style="margin-top:10px">'
-        '<label class="st-check">最短词长 <input class="mk-num" id="mk-minlen" type="number" '
-        'min="1" max="12" step="1"></label>'
-        '<label class="st-check">最多词数 <input class="mk-num" id="mk-maxterms" type="number" '
-        'min="50" max="6000" step="50"></label>'
-        '<label class="st-check"><input type="checkbox" id="mk-digits"> 跳过纯数字词</label></div>'
-        '<div class="st-note" style="margin-top:14px">分类配色（highlight 模式只认底色/文字色/下划线）</div>'
-        '<table class="mk-tb"><thead><tr><th>分类</th><th>启用</th><th>底色</th>'
-        '<th>文字色</th><th>下划线</th></tr></thead><tbody id="mk-styles"></tbody></table>'
+        '<input class="st-in" id="mk-dirs" type="text" spellcheck="false" '
+        'placeholder="例如 /srv/corpora"></label>'
+        '<div class="st-h">分类配色<small>底色默认半透明，深浅主题都不刺眼；最后一格是自定义调色板</small></div>'
+        '<div class="mk-styles" id="mk-styles"><div class="st-note">读取中…</div></div>'
         '<div class="row" style="margin-top:12px">'
         '<button class="primary" data-st="mark">保存</button>'
         '<button data-st="mark-reset">恢复默认</button>'
         '<span id="mk-msg" class="st-msg"></span></div>'
-        '<div class="st-note" style="margin-top:16px">每本书用哪份语料 '
-        '<span class="pill mute" id="mk-corpora">0 份</span></div>'
+        '<div class="st-h">每本书用哪份语料 <span class="pill mute" id="mk-corpora">0 份</span></div>'
         '<div id="mk-books"><div class="st-note">读取中…</div></div>'
         '<div class="st-note" style="margin-top:10px">书名匹配宁可漏也不错配（同一个作者的另一本书'
         '很常见）。匹配不上时在下面给这本书指一份；书库里放 <code>&lt;书名&gt;.keywords.json</code> '
         '也会被自动认出来。</div>'
-        '<div class="st-note" style="margin-top:6px">文件: <span class="st-path" id="mk-path"></span></div>'
+        '<div class="st-note" style="margin-top:6px">文件: '
+        '<span class="st-path" id="mk-path"></span></div>'
         "</div></details>",
-
         "</div>",
         "<script>" + _JS + "</script>",
     ]

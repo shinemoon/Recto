@@ -171,6 +171,35 @@ check("说明了连带影响", "云端同步的下载落点" in page, "")
 check("口三个输入框", page.count('type="password"') == 3, page.count('type="password"'))
 st.update(nickname="")
 
+print("== 云端同步 / 阅读高亮的排版 ==")
+check("两张卡跨整行", page.count('class="sec wide"') == 2, page.count('class="sec wide"'))
+check("宽卡跨列规则在", ".st-grid>.sec.wide{grid-column:1/-1}" in page, "")
+# 6 个页内开关 + 1 处配色卡模板 (每类一个启用开关)
+check("开关用 m3 样式", page.count('class="m3"') == 7, page.count('class="m3"'))
+check("开关有 CSS (轨道 42x24)", "input.m3[type=checkbox]{-webkit-appearance:none" in page
+      and "width:42px;height:24px" in page, "")
+check("数字框不再用 mk-num", 'class="mk-num"' not in page, "")
+check("数字框统一 st-in", page.count('class="st-in" id="sy-gap"') == 1
+      and page.count('class="st-in" id="mk-minlen"') == 1, "")
+check("数字框宽度规则 (不被 flex 压扁)",
+      "input.st-in[type=number]{" in page and "width:6.4ch" in page, "")
+check("数字框隐藏 spin 按钮", "::-webkit-inner-spin-button" in page, "")
+check("下拉与输入框同一套 (无描边)",
+      ".st-field select,.mk-row select{" in page and "select.st-in{" in page, "")
+
+print("== 颜色: 色板而不是输入框 ==")
+check("不再有颜色文本框", 'data-mk="bg" value=' not in page
+      and '<input type="text" data-mk="bg"' not in page, "")
+check("色板容器带 data-val",
+      '<div class="sw-wrap" data-mk="' in page and '" data-val="' in page, "")
+check("自定义调色板入口", 'class="sw pick"' in page, "")
+check("色板 CSS: 圆点 + 选中环", "button.sw{" in page and 'button.sw[aria-pressed="true"]' in page, "")
+check("底色带不透明度选择", 'class="sw-a"' in page or "sw-a" in page, "")
+check("旧配色表样式已删", ".mk-tb" not in page, "")
+check("配色渲染走公开钩子", "window.__MK__" in page and "collect: mkCollect" in page, "")
+check("自定义色取 input[type=color]", "inp.type !== 'color'" in page, "")
+check("保存时读色板的 data-val", "wrapOf('bg')" in page and "dataset.val" in page, "")
+
 print("== 改口令: 只认口令, 不认 cookie 里的用户名 ==")
 # 线上故障复现: 升级前的老 cookie 里存的是当时 Kavita 的登录名, 用它对不上
 # [auth] user, 于是「旧口令永远不对」。会话已认证 -> 只校验口令。

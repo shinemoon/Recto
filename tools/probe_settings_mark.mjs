@@ -33,14 +33,14 @@ await page.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded' });
 // 卡片默认折着, 先展开再量 (visible 才可交互)
 await page.waitForSelector('#mark', { state: 'attached', timeout: 20000 });
 await page.evaluate(() => { const d = document.getElementById('mark'); if (d) d.open = true; });
-await page.waitForSelector('#mk-styles tr', { timeout: 20000 });
+await page.waitForSelector('#mk-styles .mk-style', { state: 'attached', timeout: 20000 });
 await page.waitForTimeout(600);
 
 chk('卡片存在', await page.locator('#mark').count() === 1);
 chk('状态 pill 已填', /已启用|已关闭/.test(await page.locator('#mk-pill').innerText()),
   await page.locator('#mk-pill').innerText());
-chk('8 类配色行', await page.locator('#mk-styles tr').count() === 8,
-  String(await page.locator('#mk-styles tr').count()));
+chk('8 类配色行', await page.locator('#mk-styles .mk-style').count() === 8,
+  String(await page.locator('#mk-styles .mk-style').count()));
 chk('书库两本都列出来', await page.locator('#mk-books .mk-row').count() === 2);
 chk('语料份数正确', /[1-9] 份/.test(await page.locator('#mk-corpora').innerText()),
   await page.locator('#mk-corpora').innerText());
@@ -55,9 +55,9 @@ chk('短书显示未匹配', rows.some(r => RE_SHORT.test(r.title) && /未匹配
 
 /* ---- 保存配色 ---- */
 await page.evaluate(() => {
-  const tr = document.querySelector('#mk-styles tr[data-cat="person"]');
-  tr.querySelector('[data-mk="bg"]').value = 'rgba(255, 0, 0, .5)';
-  tr.querySelector('[data-mk="underline"]').checked = true;
+  // 颜色现在只能用色板设置, 探针走同一份公开钩子
+  window.__MK__.set('person', 'bg', 'rgba(255, 0, 0, .5)');
+  document.querySelector('#mk-styles .mk-style[data-cat="person"] [data-mk="underline"]').checked = true;
 });
 await page.click('[data-st="mark"]');
 await page.waitForTimeout(900);
@@ -66,6 +66,7 @@ chk('保存有回执', /已保存/.test(msg), msg);
 const saved = await page.evaluate(async () => (await fetch('/api/mark')).json());
 chk('配色落盘', saved.styles.person.bg === 'rgba(255, 0, 0, .5)' && saved.styles.person.underline === true,
   JSON.stringify(saved.styles.person));
+chk('色板不写死输入框', await page.locator('#mk-styles input[type=text]').count() === 0);
 
 /* ---- 绑定一份语料给短书 ---- */
 const file = saved.corpora[0].file;
