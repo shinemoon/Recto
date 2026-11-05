@@ -1,0 +1,600 @@
+/* 内置阅读器 —— 自成一套（不依赖书库前端，只借用 --rc-* token 作为兜底） */
+
+/* body 在 .rv 外层, 拿不到 .rv 上的变量 —— 直接用皮肤 token */
+.rv-body { background: var(--rc-bg, #f6f2e8); color: var(--rc-fg, #26221d); }
+.rv-body .rc-main { max-width: none; padding: 0; }
+/* 阅读页是沉浸模式: 站点顶栏让位给 rv-bar (返回入口在 rv-bar 左侧) */
+.rv-body .rc-top { display: none; }
+
+/* ---- 滚动条: 隐藏 (仍可滚动) ----
+ * 沉浸阅读里那条竖条只在打断排版: 段落宽度、居中、页边热区都得为它让位。
+ * 做法是"藏条不藏滚动": scrollbar-width:none 对 Firefox, ::-webkit-scrollbar 宽高 0 对 Chromium。
+ * 注意两点:
+ * ① 不能只靠 overlay 滚动条 —— 定制 ::-webkit-scrollbar 后 Chromium 会切成占位式,
+ *    所以要显式把宽高置 0 并把 thumb 涂成透明, 才会真的不占布局。
+ * ② 曾经用 scrollbar-gutter: stable 给条子留位, 藏条之后必须去掉, 否则右侧白留一条 10px 的沟。
+ *    相应地 .rv-bar 右侧的滚动条让位也一并收回 (见下)。 */
+html:has(body.rv-body) { background: var(--rc-bg, #f6f2e8); }
+html:has(body.rv-body),
+.rv-body {
+  scrollbar-width: none;      /* Firefox */
+  -ms-overflow-style: none;   /* 老 Edge/IE */
+}
+html:has(body.rv-body)::-webkit-scrollbar,
+.rv-body::-webkit-scrollbar,
+.rv-body ::-webkit-scrollbar { width: 0; height: 0; display: none; }
+html:has(body.rv-body)::-webkit-scrollbar-thumb,
+.rv-body::-webkit-scrollbar-thumb,
+.rv-body ::-webkit-scrollbar-thumb { background: transparent; }
+html:has(body.rv-body)::-webkit-scrollbar-track,
+.rv-body::-webkit-scrollbar-track,
+.rv-body ::-webkit-scrollbar-track,
+html:has(body.rv-body)::-webkit-scrollbar-corner,
+.rv-body::-webkit-scrollbar-corner { background: transparent; }
+
+.rv {
+  /* 默认跟随外壳皮肤 (Material); data-theme 才是读者自选的四套配色 */
+  --rv-bg: var(--rc-bg, #f6f2e8);
+  --rv-fg: var(--rc-fg, #26221d);
+  --rv-dim: var(--rc-dim, #7a7266);
+  --rv-line: var(--rc-outline-variant, #ddd3c0);
+  --rv-panel: var(--rc-surface, #fffdf7);
+  --rv-accent: var(--rc-primary, #8a5a2b);
+  --rv-fs: 19px;
+  --rv-lh: 1.95;
+  --rv-para: 1.05em;      /* 段间距 */
+  --rv-pad: 1.4rem;       /* 上下页边距 */
+  --rv-w: 44rem;          /* 阅读宽度 */
+  --rv-font: inherit;     /* 正文字体 (排版面板里选) */
+  --rv-radius: var(--rc-radius, 0px);
+  --rv-radius-lg: var(--rc-radius-lg, 0px);
+  --rv-radius-pill: var(--rc-radius-pill, 0px);
+  min-height: 100vh;
+  background: var(--rv-bg);
+  color: var(--rv-fg);
+}
+.rv[data-theme="auto"] { /* 跟随外壳皮肤 (Material) */
+  --rv-bg: var(--rc-bg, #f6f2e8); --rv-fg: var(--rc-fg, #26221d);
+  --rv-dim: var(--rc-dim, #7a7266); --rv-line: var(--rc-outline-variant, #ddd3c0);
+  --rv-panel: var(--rc-surface, #fffdf7); --rv-accent: var(--rc-primary, #8a5a2b); }
+.rv[data-theme="light"] { --rv-bg:#ffffff; --rv-fg:#1d1d1f; --rv-dim:#6e6e73; --rv-line:#e3e3e6; --rv-panel:#ffffff; --rv-accent:#2f6fb3; }
+.rv[data-theme="sepia"] { --rv-bg:#f6f2e8; --rv-fg:#26221d; --rv-dim:#7a7266; --rv-line:#ddd3c0; --rv-panel:#fffdf7; --rv-accent:#8a5a2b; }
+.rv[data-theme="dark"]  { --rv-bg:#14161a; --rv-fg:#d8d4cc; --rv-dim:#8b8880; --rv-line:#2a2e35; --rv-panel:#1b1f25; --rv-accent:#c39b6a; }
+.rv[data-theme="green"] { --rv-bg:#e9f0e4; --rv-fg:#22301f; --rv-dim:#66735f; --rv-line:#cfdbc7; --rv-panel:#f4f8f0; --rv-accent:#4a6b3a; }
+
+/* ---- 顶栏 ----
+ * 顶栏是**浮层**, 不占版面: 正文的上下边距只由 --rv-pad 决定, 与顶栏高度无关。
+ * 于是阅读区在视口里是真正垂直居中的 (上边距 == 下边距), 顶栏显示时会盖住正文顶部
+ * (点正文中间可以随时收起, 阅读时一般也是收起的)。 */
+.rv-bar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+  display: flex; align-items: center; gap: .55rem;
+  /* 滚动条已隐藏, 右侧只留 4px 呼吸 (按钮组自己还有 margin-right) */
+  padding: .5rem calc(.8rem + 4px) .5rem .8rem;
+  padding-top: max(.5rem, env(safe-area-inset-top));
+  padding-right: max(calc(.8rem + 4px), calc(.8rem + env(safe-area-inset-right)));
+  background: color-mix(in srgb, var(--rv-panel) 92%, var(--rv-bg));
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--rc-elev-2, 0 1px 3px rgba(0,0,0,.14));
+  transition: transform .24s ease, box-shadow .24s ease;
+}
+/* 下滑阅读时自动收起；上滑 / 回到顶部 / 点正文中间再出来 */
+.rv-bar.is-hidden { transform: translateY(-105%); box-shadow: none; pointer-events: none; }
+
+/* 顶栏藏起来时, 用顶部一条 2px 细线代替进度 */
+.rv-prog {
+  position: fixed; top: 0; left: 0; height: 2px; width: 0; z-index: 31;
+  background: var(--rv-accent); opacity: 0;
+  transition: opacity .22s ease, width .12s linear; pointer-events: none;
+}
+.rv.is-immersive .rv-prog { opacity: .7; }
+
+/* 左右页边: 点击翻页 (桌面落在正文两侧留白里, 手机上是一条窄边) */
+.rv-turn {
+  position: fixed; top: 0; bottom: 0; z-index: 20;
+  width: clamp(44px, 10vw, 220px);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0; padding: 0; border: 0; background: transparent;
+  color: var(--rv-dim); font: inherit; font-size: 2rem; line-height: 1;
+  cursor: pointer; opacity: 0; transition: opacity .18s ease;
+  touch-action: pan-y; -webkit-tap-highlight-color: transparent;
+  user-select: none; -webkit-user-select: none;
+}
+.rv-turn-l { left: 0; }
+.rv-turn-r { right: 0; }
+@media (min-width: 780px) {
+  /* 正文列之外才算"页边", 不许压字 —— 宽度跟着排版面板的阅读宽度走 */
+  .rv-turn { width: max(44px, calc(50vw - var(--rv-w) / 2 - 1.4rem)); }
+}
+/* 页边热区始终不可见: 只改鼠标指针, 不出现箭头, 不变色 */
+.rv-turn:hover, .rv-turn:active { opacity: 0; color: var(--rv-dim); background: transparent; }
+.rv-turn:focus-visible { opacity: 0; outline: 2px solid var(--rv-accent); outline-offset: -3px; }
+
+.rv-back { display: inline-flex; align-items: center; justify-content: center;
+  width: 2rem; height: 2rem; padding: 0; color: var(--rv-dim); text-decoration: none;
+  border-radius: var(--rv-radius-pill); transition: background-color .15s ease, color .15s ease; }
+.rv-back svg { width: 1.15rem; height: 1.15rem; display: block; }
+.rv-back:hover { background: color-mix(in srgb, var(--rv-accent) 12%, transparent); color: var(--rv-fg); }
+.rv-meta { min-width: 0; flex: 1 1 auto; }
+.rv-title { font-weight: 600; font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-sub { color: var(--rv-dim); font-size: .76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-pct { color: var(--rv-dim); font-size: .82rem; font-variant-numeric: tabular-nums; }
+/* 顶栏右侧留出滚动条 + 呼吸位: 按钮组始终离右边框一格, 不贴着滚动条 */
+.rv-btns { display: flex; align-items: center; gap: .15rem; flex-wrap: wrap;
+  justify-content: flex-end; margin-right: .55rem; }
+.rv-btns button {
+  /* 设计系统的 button 有 min-height:40px (给页面表单用), 顶栏按钮要按自己的尺寸走 */
+  font: inherit; font-size: .78rem; font-weight: 500; padding: .3rem .7rem; cursor: pointer;
+  min-height: 0;
+  color: var(--rv-fg); background: transparent; border: 0;
+  border-radius: var(--rv-radius-pill); transition: background-color .15s ease, color .15s ease;
+}
+.rv-btns button:hover {
+  background: color-mix(in srgb, var(--rv-accent) 12%, transparent);
+  color: var(--rv-accent);
+}
+/* 顶栏按钮全部图标化: 统一 2rem 方块, 只留图标 (名称走 title / aria-label) */
+.rv-btns button.rv-ico {
+  padding: 0; width: 2rem; height: 2rem; min-height: 2rem;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.rv-btns button svg { width: 1.15rem; height: 1.15rem; display: block; }
+.rv-btns button[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--rv-accent) 14%, transparent); color: var(--rv-accent);
+}
+
+/* ---- 排版面板 ---- */
+.rv-typo {
+  position: fixed; right: .7rem; top: 3.6rem; z-index: 45;
+  width: min(92vw, 21rem); padding: .8rem .9rem 1rem;
+  background: var(--rv-panel); color: var(--rv-fg);
+  border: 1px solid var(--rv-line); border-radius: var(--rv-radius-lg);
+  box-shadow: 0 10px 30px rgba(0,0,0,.2), 0 2px 6px rgba(0,0,0,.12);
+  font-size: .84rem;
+}
+.rv-typo[hidden] { display: none !important; }
+.rv-typo-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: .55rem; }
+.rv-typo-h strong { font-size: .88rem; font-weight: 600; }
+.rv-typo-h button {
+  font: inherit; font-size: .76rem; padding: .22rem .5rem; cursor: pointer;
+  color: var(--rv-dim); background: transparent; border: 0; border-radius: var(--rv-radius-pill);
+}
+.rv-typo-h button:hover { background: color-mix(in srgb, var(--rv-accent) 12%, transparent); color: var(--rv-accent); }
+.rv-typo-row {
+  display: grid; grid-template-columns: 4.4rem 1fr 3.1rem; align-items: center;
+  gap: .5rem; margin: .42rem 0;
+}
+.rv-typo-row > span { color: var(--rv-dim); font-size: .79rem; white-space: nowrap; }
+.rv-typo-row > b { text-align: right; font-weight: 500; font-size: .75rem; color: var(--rv-dim);
+  font-variant-numeric: tabular-nums; }
+.rv-typo-row.rv-wide { grid-template-columns: 4.4rem 1fr; }
+/* 字体行: 下拉 + 一个"重新读取本机字体"的圆形小钮 */
+.rv-typo-row.rv-font { grid-template-columns: 4.4rem 1fr 1.9rem; }
+.rv-typo .rv-scan {
+  padding: 0; width: 1.9rem; height: 1.9rem; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--rv-dim); background: transparent; border: 1px solid var(--rv-line);
+  border-radius: var(--rv-radius-pill);
+  transition: color .15s ease, background-color .15s ease, border-color .15s ease;
+}
+.rv-typo .rv-scan svg { width: .95rem; height: .95rem; display: block; }
+.rv-typo .rv-scan:hover { color: var(--rv-accent); border-color: var(--rv-accent);
+  background: color-mix(in srgb, var(--rv-accent) 10%, transparent); }
+.rv-typo .rv-scan.is-busy svg { animation: rv-spin .9s linear infinite; }
+@keyframes rv-spin { to { transform: rotate(360deg); } }
+.rv-typo-foot.rv-font-note { margin-top: .5rem; padding-top: .45rem; color: var(--rv-accent); }
+.rv-typo input[type="range"] {
+  width: 100%; height: 1.15rem; margin: 0; padding: 0; accent-color: var(--rv-accent); cursor: pointer;
+}
+.rv-typo select {
+  width: 100%; min-width: 0; font: inherit; font-size: .8rem; padding: .32rem .45rem;
+  /* 设计系统的 select 有 44px 触控高度, 这里跟「阅读模式」那一行对齐 (35px) */
+  min-height: 0; height: 2.2rem;
+  color: var(--rv-fg); background: var(--rv-bg);
+  border: 1px solid var(--rv-line); border-radius: var(--rv-radius);
+  box-sizing: border-box;
+}
+/* ---- 字体选择: 无边框填充式输入 + 自绘下拉 ----
+ * 原生 <datalist> 的弹层是浏览器自己的, 颜色/圆角/密度都改不了, 跟面板割裂;
+ * 这里换成 <div class="rv-combo">: 输入框只留一条"填充底", 候选清单由我们自己画
+ * (面板底 + 一条描边 + 悬停走强调色), 跟排版面板其它行同一个视觉语言。 */
+.rv-combo { position: relative; display: flex; align-items: center; min-width: 0; }
+.rv-combo > input[type="text"] {
+  width: 100%; min-width: 0; font: inherit; font-size: .8rem; cursor: text;
+  /* 全局 input 有 44px 触控高度, 这里跟「阅读模式」那一行对齐 (35px), 不再比别人高一头 */
+  min-height: 2.2rem;
+  padding: 0 1.5rem 0 .5rem; box-sizing: border-box;
+  color: var(--rv-fg); border: 0; border-radius: var(--rv-radius);
+  background: color-mix(in srgb, var(--rv-fg) 7%, transparent);
+  transition: background-color .15s ease, box-shadow .15s ease;
+}
+.rv-combo > input[type="text"]:hover { background: color-mix(in srgb, var(--rv-fg) 10%, transparent); }
+.rv-combo > input[type="text"]:focus,
+.rv-combo.is-open > input[type="text"] {
+  outline: none; background: color-mix(in srgb, var(--rv-fg) 11%, transparent);
+  box-shadow: inset 0 -2px 0 var(--rv-accent);
+}
+.rv-combo > input[type="text"]::placeholder { color: color-mix(in srgb, var(--rv-dim) 80%, transparent); }
+.rv-combo-btn {
+  position: absolute; right: .1rem; top: 50%; transform: translateY(-50%);
+  padding: 0; width: 1.4rem; height: 1.4rem; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--rv-dim); background: transparent; border: 0; border-radius: var(--rv-radius);
+}
+.rv-combo-btn svg { width: .88rem; height: .88rem; display: block; transition: transform .18s ease; }
+.rv-combo-btn:hover { color: var(--rv-accent); }
+.rv-combo.is-open .rv-combo-btn { color: var(--rv-accent); }
+.rv-combo.is-open .rv-combo-btn svg { transform: rotate(180deg); }
+.rv-combo-menu {
+  /* 靠右对齐输入框: 字体名普遍偏长, 往左伸展才装得下, 也不会溢出面板 */
+  position: absolute; z-index: 4; right: 0; left: auto; top: calc(100% + 5px);
+  width: max(100%, 13.5rem); max-height: 12.4rem; overflow-y: auto; overscroll-behavior: contain;
+  margin: 0; padding: .18rem;
+  background: var(--rv-panel); border: 1px solid var(--rv-line); border-radius: var(--rv-radius-lg);
+  box-shadow: 0 12px 26px rgba(0,0,0,.18);
+}
+.rv-combo-menu[hidden] { display: none !important; }
+.rv-combo-opt {
+  /* 设计系统的 button 有 40px 触控高度, 候选行要按清单密度走 */
+  display: flex; align-items: center; gap: .35rem; width: 100%;
+  height: 1.9rem; min-height: 0; padding: 0 .45rem;
+  cursor: pointer; text-align: left;
+  font: inherit; font-size: .8rem; color: var(--rv-fg);
+  background: transparent; border: 0; border-radius: var(--rv-radius);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rv-combo-opt small { line-height: 1; }
+.rv-combo-opt:hover, .rv-combo-opt.is-on {
+  background: color-mix(in srgb, var(--rv-accent) 12%, transparent); color: var(--rv-accent);
+}
+.rv-combo-opt.is-cur { color: var(--rv-accent); }
+.rv-combo-opt.is-cur::before { content: "✓"; font-size: .72rem; }
+.rv-combo-opt small { margin-left: auto; color: var(--rv-dim); font-size: .7rem; font-weight: 400; }
+.rv-combo-empty { padding: .45rem .5rem; color: var(--rv-dim); font-size: .76rem; line-height: 1.5; }
+.rv-typo-foot { margin-top: .6rem; padding-top: .55rem; border-top: 1px solid var(--rv-line);
+  color: var(--rv-dim); font-size: .72rem; line-height: 1.5; }
+/* 分段按钮: 滚动 / 左右翻页 */
+.rv-seg { display: flex; gap: 2px; padding: 2px; margin: 0;
+  border: 1px solid var(--rv-line); border-radius: var(--rv-radius); background: var(--rv-bg); }
+.rv-seg button {
+  flex: 1 1 0; min-width: 0; min-height: 0; font: inherit; font-size: .78rem;
+  padding: .26rem .3rem; cursor: pointer; white-space: nowrap;
+  color: var(--rv-dim); background: transparent; border: 0; border-radius: var(--rv-radius);
+  transition: color .15s ease, background-color .15s ease;
+}
+.rv-seg button:hover { color: var(--rv-fg); background: color-mix(in srgb, var(--rv-accent) 8%, transparent); }
+.rv-seg button[aria-pressed="true"] {
+  color: var(--rv-accent); font-weight: 600;
+  background: color-mix(in srgb, var(--rv-accent) 16%, transparent);
+}
+
+/* ---- 正文 ----
+ * 中文版式参考 W3C《中文排版需求》(clreq)：
+ *   1. 两端对齐 + 末行左对齐        —— 汉字等宽, 伸缩只发生在标点处 (3.1.2)
+ *   2. 禁则处理 line-break: strict  —— 行首/行尾禁排标点靠浏览器排版引擎
+ *   3. 西文整词不拆 word-break: normal，中文仍可逐字断行
+ *   4. 中西文自动间距 text-autospace: normal (3.2.4, Chrome 123+)
+ *   5. 行首标点压缩 text-spacing-trim: space-first (3.2.5, 保留首行缩进)
+ *   6. 行末标点悬挂 hanging-punctuation: allow-end (3.1.3, Safari 支持)
+ *   7. 首行缩进 2 字符只加给中文段落 (.rv-cjk)，且由读者在排版面板开关
+ * 支持的浏览器生效，不支持的按普通规则排 —— 全部是渐进增强。 */
+.rv-main { padding: var(--rv-pad) 1rem calc(var(--rv-pad) + 3.4rem); }
+/* 滚动模式下「上下边距」也只看 --rv-pad: 顶栏是浮层不计入版面。
+ * 底部那 3.4rem 是文档收尾留白 (放"继续下滑"提示, 不属于正文边距)。 */
+.rv-page { max-width: var(--rv-w); margin: 0 auto; font-size: var(--rv-fs); line-height: var(--rv-lh);
+  font-family: var(--rv-font, inherit);
+  text-align: justify; text-justify: inter-ideograph;
+  line-break: strict; word-break: normal; overflow-wrap: break-word; hyphens: none;
+  text-spacing-trim: space-first; text-autospace: normal;
+  hanging-punctuation: allow-end last; font-kerning: normal;
+}
+.rv-page .rv-ch { margin: 0 0 2.2rem; }
+.rv-page .rv-ch + .rv-ch { border-top: 1px solid var(--rv-line); padding-top: 2.2rem; }
+.rv-ch-title { font-size: .82em; color: var(--rv-dim); font-weight: 500; letter-spacing: .04em; margin: 0 0 1.4rem; }
+.rv-page p { margin: 0 0 var(--rv-para, 1.05em); text-align: justify; text-align-last: left; text-wrap: pretty; }
+/* 首行缩进 2 字符 = 中文版式的段落标记 (clreq 3.1.6)；西文不分段缩进 */
+.rv-page .rv-ch.rv-cjk p:not(.rv-figblk):not(.rv-sep) { text-indent: var(--rv-indent, 2em); }
+.rv-page h1, .rv-page h2, .rv-page h3, .rv-page h4, .rv-page h5, .rv-page h6 {
+  margin: 1.6em 0 .8em; line-height: 1.45; font-weight: 600;
+  text-indent: 0; text-align: left; text-wrap: balance;
+}
+.rv-page h1 { font-size: 1.22em; } .rv-page h2 { font-size: 1.12em; } .rv-page h3 { font-size: 1.04em; }
+.rv-page blockquote {
+  margin: 1.1em 0; padding: .2em 0 .2em 1em; border-left: 3px solid var(--rv-line);
+  color: color-mix(in srgb, var(--rv-fg) 82%, var(--rv-bg));
+  text-indent: 0;
+}
+.rv-page li { margin: .3em 0 .3em 1.3em; text-indent: 0; }
+.rv-page li > p { text-indent: 0; }
+.rv-page pre { overflow-x: auto; padding: .7em .9em; background: var(--rv-panel); border-radius: var(--rv-radius-lg); }
+/* ---- 图文混排 ----
+ * .rfig       独占一行的插图（版心内居中，最大宽度不越界，最大高度不越页）
+ * .rfig-inl   段内行内小图（脚注标记、装饰图标）—— 尺寸来自书内 CSS，
+ *             没写尺寸的按 1 个多字高兜底，绝不允许它按原始像素铺满一行
+ * 原始像素动辄 500px, 这是"注里的图几乎全宽"的根因。 */
+.rv-page .rfig {
+  display: block; max-width: 100%; height: auto; margin: 1em auto;
+  /* 竖长的整页图 (封面/插页) 在滚动阅读时也别高过一屏, 否则一屏只看得见半张 */
+  max-height: 90svh;
+}
+/* 只有图没有字的段落: 不参与首行缩进 (否则整幅图被推右两个字符) */
+.rv-page .rv-ch p.rv-figblk { text-indent: 0; }
+/* ---- 装饰分隔符 (◎ / * / ——) ----
+ * 书内 CSS 常把它们挂在与标题同一个 class 上 (例: 示例短篇 .biaoti = 1.7em + bold),
+ * 一个满 em 的实心圆放到 1.7em 会比正文重得多, 看着"过大"。
+ * 分隔符是版面停顿而不是标题: 尺寸/字重/颜色统一在这里定 (书内声明已被丢弃),
+ * 字距 .4em 让多字符分隔符散得开; 末字后面也会跟一份字距, 用 -.4em 右外边距抵掉,
+ * 否则居中的单字会偏左半个字距。
+ * text-align-last 必须一起写: 正文那条规则是 `text-align-last:left` (末行左对齐),
+ * 单字符分隔符整段就是"最后一行", 只写 text-align:center 会原地左对齐。 */
+.rv-page .rv-sep {
+  text-align: center; text-align-last: center; text-indent: 0;
+  font-size: .9em; font-weight: 400; font-style: normal;
+  letter-spacing: 0;                       /* 单字符不散开: 字距会跟在末字之后, 居中就偏了 */
+  margin: .25em 0 calc(var(--rv-para, 1.05em) + .25em);
+  color: color-mix(in srgb, var(--rv-fg) 58%, var(--rv-bg));
+}
+/* 多字符分隔符 (※※ / **): 散开一点才像排开的点线; 末字后多出的那份字距
+ * 用负右边距抵一半, 视觉居中 */
+.rv-page .rv-sep-multi { letter-spacing: .4em; margin-right: -.2em; }
+/* 破折号串 (——): 连成一条线, 不能散开 */
+.rv-page .rv-sep-dash { letter-spacing: 0; }
+.rv-page .rfig-inl {
+  display: inline-block; width: auto; height: auto;
+  max-height: 1.35em; max-width: 100%;
+  margin: 0 .12em; vertical-align: -.12em;
+}
+.rv.is-paged .rv-page .rfig { max-height: calc(var(--rv-page-h, 80vh) - 7em); object-fit: contain; }
+.rv-page .rfig-ref, .rv-page span.rfig { display: inline-block; color: var(--rv-dim); font-size: .85em; }
+.rv-page figcaption, .rv-page .caption {
+  margin: .35em 0 1.2em; text-align: center; text-indent: 0;
+  font-size: .82em; line-height: 1.6; color: var(--rv-dim);
+}
+.rv-page table { border-collapse: collapse; margin: 1em 0; font-variant-numeric: tabular-nums; }
+.rv-page td, .rv-page th { padding: .28em .6em; border: 1px solid var(--rv-line); text-indent: 0; }
+.rv-page em, .rv-page i { font-style: italic; }
+.rv-page a { color: var(--rv-accent); }
+.rv-foot { max-width: var(--rv-w); margin: 2rem auto 0; text-align: center; color: var(--rv-dim); font-size: .78rem; }
+.rv-foot.is-link { cursor: pointer; color: var(--rv-accent); text-decoration: underline; text-underline-offset: 3px; }
+.rv-foot.is-link:hover { opacity: .85; }
+
+/* ---- 左右翻页 (分栏分页) ----
+ * 正文列宽 = 阅读宽度, 页高 = **整个视口高** (顶栏是浮层, 不占版面)。
+ * 多出来的内容自动流进"下一列"(横向溢出), 翻页只是把 #rv-content 横向平移一列 ——
+ * DOM 结构不变, 选区 / 高亮 / 字节坐标全部照旧。
+ * .rv-view 是唯一的裁切窗口, 居中且定高。顶栏收起/展开时它**不动**
+ * (页高只跟视口有关, 也不重排) —— 阅读区不跟着跳。 */
+.rv-pageind {
+  position: fixed; left: 0; right: 0; bottom: max(4px, env(safe-area-inset-bottom));
+  z-index: 22; text-align: center; pointer-events: none;
+  color: var(--rv-dim); font-size: .72rem; font-variant-numeric: tabular-nums;
+  letter-spacing: .05em; opacity: .85;
+}
+.rv-pageind[hidden] { display: none !important; }
+
+.rv.is-paged .rv-main { padding: 0 .8rem; }
+/* 页高 = 整个视口高 (顶栏浮在上面, 不扣它的高度) → 上下边距相等 = 正文在视口里垂直居中。
+ * 刘海/安全区不参与"边距"的语义, 但也不能让字压进去 —— 上下取同一个值
+ * max(边距, 顶部安全区, 底部安全区), 保证仍然对称。 */
+.rv.is-paged .rv-view {
+  width: min(var(--rv-w), 100%);
+  height: var(--rv-page-h, 100dvh);
+  margin: 0 auto;
+  /* overflow: clip (无 overflow 容器) —— 页外内容只裁不滚;
+     用 hidden 的话它是可编程滚动容器, Tab 聚焦页外链接会被浏览器滚走 */
+  overflow: clip;
+  padding: max(var(--rv-pad), env(safe-area-inset-top, 0px), env(safe-area-inset-bottom, 0px)) 0;
+  box-sizing: border-box;
+  position: relative;
+}
+.rv.is-paged .rv-page {
+  max-width: none; width: 100%; height: 100%; margin: 0;
+  column-fill: auto; column-gap: 2rem;
+  transform: translate3d(0, 0, 0);
+  transition: transform .26s cubic-bezier(.22,.61,.36,1);
+  will-change: transform;
+}
+.rv.is-paged.rv-no-anim .rv-page { transition: none; }
+
+/* ---- 翻页效果 (只作用于左右翻页) ----
+ * 位移永远由 JS 瞬时切到位; 这里的动画只做"入场", 不参与分页测量。
+ * slide = 现在这套 (CSS transition 跟着 transform 走, 默认)
+ * none / fade / ripple / flip = 位移瞬时, 由 Web Animations 播一段入场效果
+ *
+ * 效果**盖满整个视口** (含顶栏、页边留白、页码), 不是只作用在正文那一列:
+ * 所有视觉层都放进 .rv-fxstage 这张固定满屏的舞台上, 加在层级里但不吃指针。 */
+.rv-fx-none .rv-page { transition: none; }
+.rv-fxstage {
+  position: fixed; inset: 0; z-index: 32;   /* 顶栏 30 / 进度条 31 之上, 抽屉 40 之下 */
+  overflow: hidden; pointer-events: none; contain: paint;
+}
+.rv-fxl { position: absolute; inset: 0; will-change: opacity, transform; }
+/* 淡入: 整页底色盖住 → 揭开 (新页面从整屏里"显影"), 连顶栏一起 */
+.rv-fxl-veil { background: var(--rv-bg); }
+/* 水波纹: 圆心贴在转页那一侧的屏幕边缘, 一路漫过整屏 */
+.rv-fxl-wave i {
+  position: absolute; top: 50%; width: 220vmax; aspect-ratio: 1; border-radius: 50%;
+  transform: translate(-50%, -50%) scale(.2); opacity: .5;
+  background: radial-gradient(circle,
+    color-mix(in srgb, var(--rv-accent) 26%, transparent) 0%,
+    color-mix(in srgb, var(--rv-accent) 11%, transparent) 40%,
+    transparent 66%);
+  will-change: transform, opacity;
+}
+/* 翻卷: 整页绕转页那一侧的边缘掀起 (±12deg), 配一道掠过整屏的纸页高光 */
+.rv-fxl-sweep {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--rv-fg) 9%, transparent) 46%,
+    color-mix(in srgb, var(--rv-fg) 4%, transparent) 58%,
+    transparent 100%);
+}
+/* 每章另起一页; 标题不落在页脚; 图不跨页 */
+.rv.is-paged .rv-ch { margin: 0; }
+.rv.is-paged .rv-ch + .rv-ch { break-before: column; border-top: 0; padding-top: 0; }
+.rv.is-paged .rv-ch-title { break-after: avoid; margin-top: 0; }
+.rv.is-paged .rv-page h1, .rv.is-paged .rv-page h2, .rv.is-paged .rv-page h3,
+.rv.is-paged .rv-page h4, .rv.is-paged .rv-page h5, .rv.is-paged .rv-page h6 { break-after: avoid; }
+.rv.is-paged .rv-page .rfig, .rv.is-paged .rv-page img { break-inside: avoid; }
+.rv.is-paged .rv-page p { orphans: 2; widows: 2; }
+.rv.is-paged .rv-foot { display: none; }
+
+/* 高亮（CSS Custom Highlight API）—— 用 ::highlight 上色，零 DOM 改动 */
+::highlight(rv-hl-yellow) { background-color: #ffe89a; color: #1b1a17; }
+::highlight(rv-hl-green)  { background-color: #c9edc2; color: #1b1a17; }
+::highlight(rv-hl-blue)   { background-color: #bcd8f5; color: #1b1a17; }
+::highlight(rv-hl-pink)   { background-color: #f6c6d8; color: #1b1a17; }
+::highlight(rv-hl-underline) { text-decoration: underline; text-decoration-color: #c0392b; text-decoration-thickness: 2px; }
+.rv[data-theme="dark"] ::highlight(rv-hl-yellow) { background-color: #6b5b1f; color: #f3efe6; }
+.rv[data-theme="dark"] ::highlight(rv-hl-green) { background-color: #2f5233; color: #f3efe6; }
+.rv[data-theme="dark"] ::highlight(rv-hl-blue) { background-color: #24415e; color: #f3efe6; }
+.rv[data-theme="dark"] ::highlight(rv-hl-pink) { background-color: #5c2b40; color: #f3efe6; }
+
+/* 我们的 DOM 兜底高亮（浏览器不支持 Highlight API 时用） */
+.rv mark.rv-mark { background: #ffe89a; color: inherit; padding: 0; border-radius: 0; }
+.rv mark.rv-mark[data-color="green"] { background: #c9edc2; }
+.rv mark.rv-mark[data-color="blue"] { background: #bcd8f5; }
+.rv mark.rv-mark[data-color="pink"] { background: #f6c6d8; }
+
+/* ---- 抽屉 ---- */
+.rv-drawer {
+  position: fixed; top: 0; bottom: 0; left: 0; width: min(84vw, 22rem); z-index: 40;
+  background: var(--rv-panel); border-right: 1px solid var(--rv-line);
+  transform: translateX(-102%); transition: transform .22s ease;
+  display: flex; flex-direction: column;
+}
+.rv-drawer.rv-on { transform: none; }
+.rv-drawer-h { display: flex; align-items: center; justify-content: space-between;
+  padding: .8rem 1rem; border-bottom: 1px solid var(--rv-line); font-size: .9rem; }
+.rv-drawer-h button { background: none; border: 0; font-size: 1.2rem; color: var(--rv-dim);
+  cursor: pointer; border-radius: var(--rv-radius-pill); padding: 0 .4rem; }
+.rv-drawer-h button:hover { background: color-mix(in srgb, var(--rv-accent) 12%, transparent); }
+.rv-drawer-acts { display: flex; align-items: center; gap: .15rem; }
+.rv-drawer-h .rv-add { font-size: .78rem; padding: .22rem .6rem; border: 1px solid var(--rv-line);
+  border-radius: var(--rv-radius-pill); color: var(--rv-fg); background: transparent; }
+.rv-drawer-h .rv-add:hover { background: color-mix(in srgb, var(--rv-accent) 12%, transparent);
+  color: var(--rv-accent); }
+.rv-cnt { color: var(--rv-dim); font-weight: 400; font-size: .78rem; }
+.rv-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: .4rem .6rem 2rem; }
+.rv-toc { list-style: none; margin: 0; padding: .5rem 0 2rem; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.rv-toc li { margin: 0; }
+.rv-toc a {
+  display: block; padding: .5rem 1rem; color: var(--rv-fg); text-decoration: none;
+  font-size: .86rem; line-height: 1.4; border-left: 3px solid transparent;
+}
+.rv-toc a:hover { background: color-mix(in srgb, var(--rv-accent) 8%, transparent); }
+.rv-toc a.rv-cur { border-left-color: var(--rv-accent); color: var(--rv-accent); font-weight: 600; }
+.rv-toc .rv-toc-n { color: var(--rv-dim); font-size: .74rem; margin-right: .35rem; }
+
+/* 分层目录 (多卷合订本): 卷 = 可折叠分组, 章按层级缩进 */
+.rv-toc-all { font-size: .74rem; padding: .18rem .5rem; background: transparent;
+  border: 1px solid var(--rv-line); border-radius: var(--rv-radius-pill);
+  color: var(--rv-dim); cursor: pointer; }
+.rv-toc-all:hover { color: var(--rv-accent);
+  border-color: color-mix(in srgb, var(--rv-accent) 45%, var(--rv-line)); }
+.rv-toc-sec > summary {
+  display: flex; align-items: center; gap: .1rem;
+  padding: .55rem .9rem .5rem .55rem; cursor: pointer; list-style: none;
+  font-size: .87rem; font-weight: 600; color: var(--rv-fg);
+  border-left: 3px solid transparent;
+}
+.rv-toc-sec > summary::-webkit-details-marker { display: none; }
+.rv-toc-sec > summary::marker { content: ''; }
+.rv-toc-sec > summary:hover { background: color-mix(in srgb, var(--rv-accent) 8%, transparent); }
+.rv-toc-caret {
+  flex: 0 0 auto; width: .95rem; height: .95rem; margin-right: .05rem;
+  background: currentColor; opacity: .4;
+  clip-path: polygon(35% 18%, 62% 50%, 35% 82%, 26% 74%, 46% 50%, 26% 26%);
+  transition: transform .16s ease;
+}
+.rv-toc-sec[open] > summary .rv-toc-caret { transform: rotate(90deg); }
+.rv-toc-sec[open] > summary { border-left-color: var(--rv-accent); }
+.rv-toc-sec > summary.rv-cur { border-left-color: var(--rv-accent); color: var(--rv-accent); }
+.rv-toc-kids { list-style: none; margin: 0; padding: 0 0 .2rem; }
+.rv-toc-kids a { font-size: .82rem; padding-top: .4rem; padding-bottom: .4rem; }
+.rv-toc-row.d1 a { padding-left: 2.2rem; }
+.rv-toc-row.d2 a { padding-left: 3.2rem; }
+.rv-toc-row.d3 a { padding-left: 4.2rem; }
+.rv-toc-row.d4 a { padding-left: 5.2rem; }
+
+.rv-note-item { padding: .6rem .5rem; border-bottom: 1px solid var(--rv-line); font-size: .84rem; }
+.rv-note-item .q { color: var(--rv-fg); line-height: 1.55; }
+.rv-note-item .r { color: var(--rv-dim); margin-top: .3rem; line-height: 1.5; white-space: pre-wrap; }
+.rv-note-item .m { display: flex; gap: .5rem; color: var(--rv-dim); font-size: .74rem; margin-top: .35rem; align-items: center; }
+.rv-note-item .m a { color: var(--rv-accent); text-decoration: none; }
+.rv-note-item .m button { margin-left: auto; background: none; border: 0; color: var(--rv-dim); cursor: pointer; font-size: .78rem; }
+/* 抽屉里的删除 = 破坏性动作, 给红字 (编辑仍走中性色) */
+.rv-note-item .m button[data-delnote], .rv-note-item .m button[data-delmark] { color: var(--rc-err, #b3261e); }
+.rv-note-item .dot { width: .6rem; height: .6rem; border-radius: 0; display: inline-block; }
+.rv-empty { padding: 1.4rem 1rem; color: var(--rv-dim); font-size: .84rem; text-align: center; }
+
+/* ---- 选区工具条 ---- */
+.rv-sel {
+  position: fixed; left: 50%; bottom: max(1.4rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%); z-index: 50;
+  display: flex; gap: .2rem; padding: .3rem; border-radius: var(--rv-radius-lg);
+  background: color-mix(in srgb, var(--rv-panel) 96%, transparent);
+  box-shadow: 0 6px 24px rgba(0,0,0,.18); border: 1px solid var(--rv-line);
+}
+.rv-sel button {
+  font: inherit; font-size: .82rem; padding: .4rem .7rem; border: 0; border-radius: var(--rv-radius);
+  background: transparent; color: var(--rv-fg); cursor: pointer;
+}
+.rv-sel button:hover { background: color-mix(in srgb, var(--rv-accent) 14%, transparent); color: var(--rv-accent); }
+
+/* ---- 笔记编辑 ---- */
+.rv-noteedit {
+  position: fixed; inset: auto 0 0 0; z-index: 60; padding: 1rem;
+  background: var(--rv-panel); border-top: 1px solid var(--rv-line);
+  box-shadow: 0 -8px 30px rgba(0,0,0,.16); max-height: 70vh; overflow-y: auto;
+}
+.rv-noteedit-q { font-size: .85rem; color: var(--rv-dim); line-height: 1.55; margin-bottom: .6rem;
+  max-height: 5.2em; overflow: hidden; }
+.rv-noteedit textarea {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: .92rem; line-height: 1.6;
+  padding: .6rem .7rem; border: 1px solid var(--rv-line); border-radius: var(--rv-radius-lg);
+  background: var(--rv-bg); color: var(--rv-fg); resize: vertical;
+}
+.rv-noteedit-b { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .6rem; }
+.rv-noteedit-b button { font: inherit; font-size: .86rem; font-weight: 500; padding: .45rem 1.1rem;
+  border-radius: var(--rv-radius-pill); border: 1px solid var(--rv-line); background: transparent;
+  color: var(--rv-fg); cursor: pointer; }
+.rv-noteedit-b button.primary { background: var(--rv-accent); border-color: var(--rv-accent); color: #fff; }
+
+.rv-toast {
+  position: fixed; left: 50%; bottom: 5.4rem; transform: translateX(-50%); z-index: 70;
+  background: rgba(20,20,22,.86); color: #f5f2ea; font-size: .82rem;
+  padding: .45rem .8rem; border-radius: var(--rv-radius-lg); max-width: 80vw; text-align: center;
+}
+.rv-toast[hidden], .rv-sel[hidden], .rv-noteedit[hidden] { display: none !important; }
+
+/* ---- 手机 ---- */
+@media (max-width: 620px) {
+  .rv { --rv-fs: 17.5px; --rv-lh: 1.9; --rv-pad: 1rem; }
+  .rv-bar { gap: .25rem; padding: .45rem calc(.5rem + 3px) .45rem .5rem; }
+  .rv-title { font-size: .88rem; }
+  /* 一行放得下: 不再折行 (折了就吃掉两行屏高) */
+  .rv-btns { gap: .1rem; flex-wrap: nowrap; margin-right: .2rem; }
+  .rv-btns button { font-size: .7rem; padding: .24rem .34rem; white-space: nowrap; }
+  .rv-btns button.rv-ico { padding: 0; width: 1.85rem; height: 1.85rem; min-height: 1.85rem; }
+  .rv-btns button svg { width: 1.05rem; height: 1.05rem; }
+  .rv-pct { font-size: .76rem; }
+  .rv-main { padding-left: .8rem; padding-right: .8rem; }
+  .rv-typo { left: .5rem; right: .5rem; width: auto; }
+}
+@media (max-width: 380px) {
+  .rv-btns [data-act="theme"] { display: none; }
+}
+
+/* ---- 关键词高亮 (语料滤镜) ------------------------------------------
+   highlight 模式: 配色由 JS 按设置动态注入 (::highlight(rv-kw-<cat>)), 一个
+   字符都不改 DOM。span 模式才需要下面这些类的静态兜底 (配置里没给颜色时)。 */
+.rv-kw { box-decoration-break: clone; }
+.rv-kw-person { background-color: rgba(255, 196, 64, .42); }
+.rv-kw-place  { background-color: rgba(88, 166, 255, .30); }
+.rv-kw-org    { background-color: rgba(74, 200, 138, .32); }
+.rv-kw-object { background-color: rgba(255, 138, 80, .34); }
+.rv-kw-event  { background-color: rgba(196, 128, 255, .34); }
+.rv-kw-time   { background-color: rgba(64, 210, 210, .30); }
+.rv-kw-term   { background-color: rgba(160, 168, 180, .30); }
+.rv-kw-work   { background-color: rgba(255, 110, 150, .30); }

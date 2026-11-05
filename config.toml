@@ -1,0 +1,74 @@
+# 云阅 Recto 运行时配置
+#
+# 这份是**可以入库的默认配置**：不含任何机器专有路径，clone 下来直接跑就落到
+# <项目根>/data 与 <项目根>/library。
+#
+# 想换到别处有三种方式（优先级从低到高）:
+#   1. 直接改本文件（注意别把机器路径提交上去）
+#   2. 写一份 config.toml.local（同名同格式，逐键覆盖本文件，**不入库**，推荐）
+#   3. 环境变量（见 src/recto/core/config.py 的 _apply_env，容器化主要靠这个）
+#
+# 云阅 Recto 是独立服务: 不依赖本地书库容器, 也不读写任何外部书目数据库。
+
+[recto]
+host = "0.0.0.0"
+port = 5015
+data_dir = ""                     # 空 = <项目根>/data
+
+# --- 书库 (Recto 自己的目录) ---
+# 只放原书 (epub / txt)。扫描递归。
+# 每本书的 JSON 默认跟原书同目录: <书名>.recto.json (云端映射 / 处理状态)
+# 选项: [library] 也可以写 dirs = [ ... ] 配多个根目录
+[library]
+dir = ""                          # 空 = <项目根>/library
+
+# --- 云端阅读服务 (掌阅) ---
+[cloud]
+auth_file = ""                    # 空 = <项目根>/config/secrets/cloud.json
+state_dir = ""                    # 空 = <data_dir>/state
+download_subdir = ""              # 空 = 直接下到 library.dir 根下
+
+# --- 墨水屏设备接入 ---
+# 协议与端口都不能变 (设备固件写死了), 但实现并入云阅 Recto 同一进程
+[device]
+port = 8080
+data_dir = ""                     # 空 = <data_dir>
+
+# --- 术语语料 (外部服务, 只读消费) ---
+[corpus]
+dir = ""                          # 空 = <data_dir>/corpus
+ui_url = "http://127.0.0.1:5013"  # /corpus/* 反代到这里 (同一套外壳与皮肤)
+start_hint = ""                   # 上游没起时, 503 页上显示的一句启动提示
+
+# --- 阅读高亮 (语料分解 json → 阅读器里的关键词滤镜) ---
+# 这里是**部署默认值**; 用的人在设置页「阅读高亮」卡里改的覆盖项存在
+# <data_dir>/reading_mark.json, 缺的键就跟随这里。
+[reader.mark]
+enabled = true
+mode = "highlight"        # highlight = 不改一个字符 (只上色) | span = 包 <span>, 可加粗/圆角
+dirs = []                 # 空 = 用上面 [corpus] dir
+min_len = 2               # 词里至少几个字母/汉字才高亮
+max_terms = 6000          # 最多下发多少词 (按分类公平分配, 不会让人名吃光)
+skip_digits = true        # 纯数字词 (1981 / 13) 不高亮
+
+# --- 藏书票渲染 (可选组件) ---
+# asset_root 要指向一套带模板与前端依赖的目录 (templates/ + bin/node_modules/)。
+# 空 = <data_dir>/assets/bookplate —— 没有这套素材时藏书票会明确报错, 其它功能不受影响。
+[bookplate]
+asset_root = ""
+output_dir = ""                   # 空 = <data_dir>/bookplate/out
+node_dirs = []                    # 找 node 时额外的 nvm 根目录, 例如 ["/opt/node/.nvm"]
+
+# --- 控制台登录 ---
+[auth]
+mode = "password"                 # password | none
+user = "root"                     # 登录用户名 (首次启动的默认值)
+password = ""                     # 空 = 读环境 RECTO_AUTH_PASSWORD 或 <data_dir>/admin-password (首次生成)
+shared_dir = ""                   # 空 = <项目根>/config/webauth (同机多服务共享会话密钥时指到同一目录)
+ttl_days = 7
+
+# --- 同步策略 ---
+[sync]
+auto = true
+push_debounce_sec = 8
+pull_gap_sec = 120
