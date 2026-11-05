@@ -44,6 +44,9 @@ from typing import Any, Callable
 # needed here.
 from recto.core import legacy  # noqa: E402
 from recto.assets.bookplate import render as _render  # noqa: E402
+from recto.core import sidecar as _sidecar  # noqa: E402
+from recto.services import reader_state as _reader_state  # noqa: E402
+from recto.services import sessions as _sessions  # noqa: E402
 
 # Cookie name + lifetime
 _COOKIE_NAME = legacy.COOKIE_ADMIN
@@ -1079,12 +1082,20 @@ def _render_tools(handler, data_dir: Path, flash: str = "") -> str:
         '    <label>最多推送 (安全上限, 命中更多就先收紧筛选)</label>'
         f'    <input type="number" name="safety_cap" min="0" step="1" value="{len(excerpts) + 50}" '
         '           title="0 = 不限">'
+        '    <label style="display:flex;align-items:center;gap:6px;margin:2px 0 6px">'
+        '      <input type="checkbox" name="include_time" value="1" checked style="width:auto;margin:0">'
+        '      <span>附带阅读时长 (<code>preciseReadingDurations</code>, 随书一起进纸间)</span>'
+        '    </label>'
         '    <div class="btn-row">'
         '      <button type="submit">推送 (浏览器转发)</button>'
         '      <span style="color:var(--muted);font:11px var(--sans)" id="zh-status">就绪</span>'
         '    </div>'
         '    <div id="zh-log" class="out" style="display:none"></div>'
         '  </form>'
+        '  <div class="note" style="font:11px var(--sans);color:var(--muted);margin-top:6px;line-height:1.5">'
+        '    阅读时长 = 本阅读器的会话区间 + 掌阅云端每日分钟 (没有时段, 补成 19:00–23:59 的一段)。'
+        '书库里没有这本书 (或从未读过) 就不带时长。'
+        '  </div>'
         '</div>'
         '<script>'
         # CORS 警告: 检测 origin 是不是公网域名,是则显示横幅
@@ -1124,6 +1135,7 @@ def _render_tools(handler, data_dir: Path, flash: str = "") -> str:
         '    ev.preventDefault();'
         '    var f=ev.target,status=document.getElementById("zh-status"),log=document.getElementById("zh-log");'
         '    var fd=new FormData(f);'
+        '    if(!fd.get("include_time"))fd.set("include_time","0");'
         '    var host=(fd.get("host")||"").toString().trim();'
         '    var port=(fd.get("port")||"8080").toString().trim();'
         '    if(!host){status.textContent="请填手机 IP";return;}'
@@ -1140,9 +1152,10 @@ def _render_tools(handler, data_dir: Path, flash: str = "") -> str:
         '    var sent=0,failed=[];'
         '    for(var i=0;i<j.payloads.length;i++){'
         '      var p=j.payloads[i];'
-        '      var line="▸ 《"+p.title+"》"+p.entries.length+" 条…";'
+        '      var line="▸ 《"+p.title+"》"+p.entries.length+" 条"+(p.timeMinutes?(" + "+p.timeMinutes+" 分钟/"+(p.preciseReadingDurations||[]).length+" 段时长"):"")+"…";'
         '      log.textContent+=line+"\\n";'
         '      var bodyObj={title:p.title,author:p.author,type:p.type||1,locationUnit:p.locationUnit||0,entries:p.entries};'
+        '      if(p.preciseReadingDurations&&p.preciseReadingDurations.length)bodyObj.preciseReadingDurations=p.preciseReadingDurations;'
         '      var txt=JSON.stringify(bodyObj);'
         '      var okone=false,how="";'
         # ① 先由 server 代发: 浏览器跨源 POST JSON 会先发 OPTIONS 预检, 纸间 App
@@ -1671,6 +1684,9 @@ def handle_admin(handler, data_dir: Path, path: str, query: str) -> bool:
             safety_cap = int(form.get("safety_cap", "200") or "200")
         except ValueError:
             safety_cap = 200
+        # 勾选框缺省 = 带上 (与旧实现一致); 显式传 0/false/off 才不带
+        include_time = (form.get("include_time", "1") or "1").strip().lower() not in (
+            "0", "false", "no", "off", "")
         if not host:
             _send_json(handler, {"ok": False, "error": "手机 IP 必填 (host)"}, status=400)
             return True
@@ -1678,6 +1694,7 @@ def handle_admin(handler, data_dir: Path, path: str, query: str) -> bool:
             result = _build_zhijian_payloads(
                 data_dir, host, port, source, book_name, author,
                 day_from, day_to, text_q, safety_cap,
+                include_time=include_time,
             )
         except Exception as exc:  # 不许把 traceback 当 JSON 吐给前端
             _send_json(handler, {"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=500)
@@ -1860,6 +1877,74 @@ def _entry_page_pct(e: dict) -> int:
     return max(0, min(100, pct))
 
 
+def _norm_title(s: str) -> str:
+    """书名归一 —— 只用于匹配, 不做展示。
+
+    摘录库里的书名来自阅读器/设备上报 ("剑来（1-54册）完结精校版"),
+    书库里的来自文件名或 epub 元数据, 标点与括号写法常有差异。
+    """
+    s = (s or "").strip().lower()
+    s = re.sub(r"[\s　]+", "", s)
+    s = re.sub(r"[（(].*?[)）]", "", s)
+    s = re.sub(r"[《》「」『』\"'“”‘’·・:：,，.。!！?？\-–—_/\\]+", "", s)
+    return s
+
+
+_TITLE_MAP_CACHE: dict[str, Any] = {"at": 0.0, "map": {}}
+
+
+def _reader_key_map(ttl: float = 60.0) -> dict[str, str]:
+    """书库里的书 -> {归一书名: 阅读器 book key}。
+
+    两个来源: 阅读器自己的书名, 以及边车里的云端书名 (下载时写下的原名)。
+    只读 rbook + 每本边车, 不扫库 (扫描是几秒级, 导出时不该付这个成本)。
+    """
+    now = time.time()
+    if now - float(_TITLE_MAP_CACHE.get("at") or 0) < ttl and _TITLE_MAP_CACHE.get("map"):
+        return _TITLE_MAP_CACHE["map"]  # type: ignore[return-value]
+    out: dict[str, str] = {}
+    try:
+        rows = _reader_state.list_books()
+    except Exception:
+        rows = []
+    for b in rows:
+        key = str(b.get("key") or "")
+        if not key:
+            continue
+        title = str(b.get("title") or "")
+        path = str(b.get("path") or "")
+        for nm in (title, Path(path).stem if path else ""):
+            n = _norm_title(nm)
+            if n:
+                out.setdefault(n, key)
+        if path:
+            try:
+                link = _sidecar.cloud_link(path) or {}
+            except Exception:
+                link = {}
+            n = _norm_title(str(link.get("name") or ""))
+            if n:
+                out.setdefault(n, key)
+    _TITLE_MAP_CACHE.update({"at": now, "map": out})
+    return out
+
+
+def _reader_key_for(title: str, tmap: dict[str, str]) -> str:
+    """书名 -> 阅读器 book key。先精确归一, 再单向包含 (书库那本更短/更长)。"""
+    n = _norm_title(title)
+    if not n:
+        return ""
+    hit = tmap.get(n)
+    if hit:
+        return hit
+    for k, key in tmap.items():
+        if not k:
+            continue
+        if len(k) >= 3 and (k in n or n in k):
+            return key
+    return ""
+
+
 def _build_zhijian_payloads(
     data_dir: Path,
     host: str,
@@ -1871,6 +1956,7 @@ def _build_zhijian_payloads(
     day_to: str,
     text_q: str,
     safety_cap: int,
+    include_time: bool = True,
 ) -> dict:
     """从 aggregate 摘录按 filter 选, 按书分组造 xmnote /send payload.
 
@@ -1928,6 +2014,18 @@ def _build_zhijian_payloads(
         title = b.get("name") or f"book#{bid}"
         by_book.setdefault(title, []).append(e)
 
+    # 6.5 阅读时长: 书名 -> 阅读器 book key -> 本地会话区间
+    #     匹配不到 (摘录来自 M5Paper 独有书 / 书库里没这本) 就留空, 不报错 ——
+    #     时长是附加信息, 不该挡推送。
+    tmap: dict[str, str] = {}
+    time_error = ""
+    if include_time:
+        try:
+            tmap = _reader_key_map()
+        except Exception as exc:                    # noqa: BLE001
+            time_error = f"{type(exc).__name__}: {exc}"
+            tmap = {}
+
     payloads: list[dict] = []
     for title, es in by_book.items():
         bid0 = es[0].get("bookId")
@@ -1942,22 +2040,42 @@ def _build_zhijian_payloads(
                 "chapter": e.get("chapter", "") or "未分章",
                 "time": int(ms),
             })
-        payloads.append({
+        pl = {
             "title": title,
             "author": author_v,
             "type": 1,           # 纸间 /send: int, 0/1 都合法, 1=book
             "locationUnit": 0,   # page 字段当 0-100 百分比解释
             "entries": entries,
-        })
+        }
+        if include_time and tmap:
+            rkey = _reader_key_for(title, tmap)
+            if rkey:
+                try:
+                    rec = _sessions.book_time(rkey, day_from, day_to)
+                except Exception as exc:            # noqa: BLE001
+                    rec = {}
+                    time_error = time_error or f"{type(exc).__name__}: {exc}"
+                pl["timeMinutes"] = rec.get("minutes", 0)
+                pl["timeSessions"] = rec.get("sessions", 0)
+                pl["readerKey"] = rkey
+                if rec.get("durations"):
+                    # 纸间 /send 顶层字段: 精确阅读时长明细 (开始/结束 Unix 秒)
+                    pl["preciseReadingDurations"] = rec["durations"]
+        payloads.append(pl)
 
-    return {
+    out = {
         "ok": True,
         "host": host,
         "port": port,
         "total": len(excerpts),
         "book_count": len(payloads),
+        "time_minutes": round(sum((p.get("timeMinutes") or 0) for p in payloads), 1),
+        "time_books": sum(1 for p in payloads if p.get("preciseReadingDurations")),
         "payloads": payloads,
     }
+    if time_error:
+        out["time_error"] = time_error
+    return out
 
 
 def _render_bookplate_png(data_dir: Path, excerpt_id, style: str) -> tuple[bytes | None, str | None]:

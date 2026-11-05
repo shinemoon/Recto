@@ -557,6 +557,24 @@ PYTHONPATH=src python3 -m recto.sources.device stop
 先在服务器上 `curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"title":"t","entries":[]}' http://<手机>:8080/send`，
 通了才说明是前端问题；端口能连但无响应 = App 被系统冻结（亮屏再试）。
 
+#### 随书带上的阅读时长
+
+勾上「附带阅读时长」（默认勾选）后，每本书的 payload 会多两样东西：
+`timeMinutes`/`timeSessions`（我们自己的汇总）和纸间真正认的
+`preciseReadingDurations: [{startTime, endTime}]`（Unix 秒）。
+
+时长来自两条源，都换算成"什么时候在读"的区间：
+
+- **本地 `rsession`**：阅读器自己的会话，精确到秒。心跳会把一次阅读切成很多行，
+  所以先按 300 秒间隔合并、丢掉 < 20 秒的碎片、单本最多 400 段（`services/sessions.book_time`）。
+- **云端逐日分钟**（`rtime.cloud_minutes`）：别的设备读的，只有每天总数、没有时段，
+  于是在那天补一段 `19:00 → 23:59` 往前推。补它是为了让总量跟 Recto 界面对得上 ——
+  界面显示的本来就是 `max(本地, 云端)`。
+
+书名是唯一的桥梁：摘录库的 `bookId`（M5Paper 数字 id / `kavita_xxx`）跟书库的 book key
+没有任何对应关系，只能按书名归一键匹配（去括号/标点，允许子串）。
+**书库里没有这本书就不带时长**，也不会因此让导出失败（出错只记 `time_error`）。
+
 
 ### 语料服务 + 阅读高亮（:5013，可选）
 

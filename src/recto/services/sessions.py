@@ -483,3 +483,158 @@ def stats(days: int = 30) -> dict:
             "local_total": int(local["total"]),
             "cloud_total": sum(cloud.values()),
             "total": sum(r["minutes"] for r in rows)}
+
+
+# --------------------------------------------------------------------------
+# 纸间精确阅读时长 (preciseReadingDurations)
+# --------------------------------------------------------------------------
+#
+# 纸间 /send 的 `preciseReadingDurations` = [{"startTime": 秒, "endTime": 秒}]。
+# 它要的是"什么时候在读"的连续区间，不是我们内部的分钟位图 —— 位图只能算出
+# 每天读了多少分钟，还原不出跨度。所以这里直接用 rsession 的 start_ts/end_ts。
+#
+# 三条口径 (与旧 echopaper 的 kv_time.durations 一致):
+#   1. 相邻间隔 <= gap(300s) 的会话并成一段 —— 翻页/切后台把一次阅读切得很碎;
+#   2. 丢掉 < 20s 的片段 (点一下就走, 不是阅读);
+#   3. 单本最多 400 段 (纸间是手机端解析, 太多会卡), 超出取最近的部分。
+
+MERGE_GAP_SEC = 300
+MAX_DURATIONS = 400
+MIN_SESSION_SEC = 20
+
+
+def _merge_spans(pairs: Iterable[tuple[float, float]], gap: float = MERGE_GAP_SEC) -> list[tuple[float, float]]:
+    """把相邻 (间隔 <= gap) 的区间并起来, 输入顺序无关。"""
+    out: list[list[float]] = []
+    for a, b in sorted(pairs, key=lambda x: x[0]):
+        if b <= a:
+            continue
+        if out and a - out[-1][1] <= gap:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return [(a, b) for a, b in out]
+
+
+def local_spans(key: str, day_from: str | None = None, day_to: str | None = None,
+                *, gap: float = MERGE_GAP_SEC) -> list[tuple[float, float]]:
+    """本地阅读器的会话区间 (已合并)。日窗按 `rsession.day` (本地日期) 过滤。"""
+    if not key:
+        return []
+    c = reader_state.conn()
+    sql = "SELECT start_ts, end_ts FROM rsession WHERE book=?"
+    args: list[Any] = [key]
+    if day_from:
+        sql += " AND day>=?"
+        args.append(str(day_from)[:10])
+    if day_to:
+        sql += " AND day<=?"
+        args.append(str(day_to)[:10])
+    try:
+        rows = c.execute(sql + " ORDER BY start_ts", args).fetchall()
+    except sqlite3.Error:
+        return []
+    return _merge_spans([(float(r["start_ts"]), float(r["end_ts"])) for r in rows], gap)
+
+
+def _day_bounds(day_s: str) -> tuple[float, float]:
+    d = datetime.strptime(day_s[:10], "%Y-%m-%d")
+    start = d.timestamp()
+    return start, start + 86400.0
+
+
+def _span_seconds_in_day(a: float, b: float, day_s: str) -> float:
+    ds, de = _day_bounds(day_s)
+    lo, hi = max(a, ds), min(b, de)
+    return max(0.0, hi - lo)
+
+
+def _filler_span(day_s: str, minutes: float) -> tuple[float, float] | None:
+    """给"云端有分钟、本地没有"的那天造一段区间 (只用于时长总量对齐)。
+
+    云端只给"当天读了几分钟", 没有时段。放在 19:00 起, 超过 23:59 就往前挪,
+    仍然放不下就把剩余部分丢掉 (会被 cloud_filled_minutes 记下来)。
+    """
+    if minutes <= 0:
+        return None
+    ds, de = _day_bounds(day_s)
+    end = ds + 23 * 3600 + 59 * 60          # 23:59
+    start = max(ds, end - minutes * 60)
+    if end - start < 60:
+        return None
+    return (start, end)
+
+
+def book_time(key: str, day_from: str | None = None, day_to: str | None = None,
+              *, gap: float = MERGE_GAP_SEC, limit: int = MAX_DURATIONS,
+              min_sec: float = MIN_SESSION_SEC, include_cloud: bool = True) -> dict:
+    """单本书的时长明细 —— 纸间 payload 用。
+
+    两条来源, 都落到"什么时候在读"的区间:
+      * 本地 `rsession` (真实区间, 精确到秒) —— 阅读器自己读的;
+      * 云端逐日分钟 (`rtime.cloud_minutes`) —— 别的设备读的, 只有每天的
+        总分钟数, 没有时段, 于是在那天补一段 (19:00→23:59 往前推)。
+
+    补云端是为了"总量对得上" —— Recto 界面显示的时长本来就是
+    `max(本地, 云端)`; 只发本地区间会让纸间少掉大半 (人在手机 / 别的设备上读的)。
+
+    返回 {minutes, sessions, days, durations[, cloud_minutes, truncated]}。
+    """
+    spans = local_spans(key, day_from, day_to, gap=gap)
+    spans = [(a, b) for a, b in spans if (b - a) >= min_sec]
+
+    cloud_added = 0.0
+    cloud_days = 0
+    if include_cloud and key:
+        try:
+            c = reader_state.conn()
+            sql = "SELECT day, minutes, COALESCE(cloud_minutes,0) cl FROM rtime WHERE book=?"
+            args: list[Any] = [key]
+            if day_from:
+                sql += " AND day>=?"
+                args.append(str(day_from)[:10])
+            if day_to:
+                sql += " AND day<=?"
+                args.append(str(day_to)[:10])
+            rows = c.execute(sql + " ORDER BY day", args).fetchall()
+        except sqlite3.Error:
+            rows = []
+        for r in rows:
+            day_s = str(r["day"])[:10]
+            target = max(int(r["minutes"] or 0), int(r["cl"] or 0))    # = 界面上的有效分钟
+            if target <= 0:
+                continue
+            covered = sum(_span_seconds_in_day(a, b, day_s) for a, b in spans)
+            extra_min = target - covered / 60.0
+            if extra_min < 1:
+                continue
+            filler = _filler_span(day_s, extra_min)
+            if not filler:
+                continue
+            spans.append(filler)
+            cloud_added += (filler[1] - filler[0]) / 60.0
+            cloud_days += 1
+        if cloud_days:
+            spans = _merge_spans(spans, gap=gap)
+
+    truncated = False
+    if limit and len(spans) > limit:
+        spans = spans[-limit:]
+        truncated = True
+    durations = [{"startTime": int(a), "endTime": int(b)} for a, b in spans if b > a]
+    days = sorted({
+        datetime.fromtimestamp(a).strftime("%Y-%m-%d") for a, _ in spans
+    })
+    total_sec = sum(b - a for a, b in spans)
+    out = {
+        "minutes": round(total_sec / 60.0, 1),
+        "sessions": len(spans),
+        "days": len(days),
+        "durations": durations,
+    }
+    if include_cloud:
+        out["cloudMinutes"] = round(cloud_added, 1)
+        out["cloudDays"] = cloud_days
+    if truncated:
+        out["truncated"] = True
+    return out
