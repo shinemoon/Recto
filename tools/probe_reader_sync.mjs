@@ -63,7 +63,7 @@ async function open(width, height) {
 }
 
 // 小字有三种正常形态: 已同步 / 更靠前 (云端领先, 不往回拨) / 尚未同步 / 同步中
-const TEXT_OK = /^掌阅 (\d\d:\d\d 已同步 [\d.]+%|更靠前 [\d.]+%|尚未同步|同步中…)$/;
+const TEXT_OK = /^掌阅 (\d\d:\d\d 已同步 [\d.]+%|更靠前 [\d.]+%|已按本地覆写 [\d.]+%|尚未同步|同步中…)$/;
 
 /* ---------- 桌面 ---------- */
 const snapCtx = await browser.newContext({ viewport: { width: 900, height: 700 } });
@@ -79,6 +79,11 @@ await snapCtx.close();
   chk('打开书时对过一次云端 (/sync)',
     reqs.some((r) => r.path === 'sync' && r.method === 'GET'), JSON.stringify(reqs.map((r) => r.path)));
 
+  // 小字要等 /sync 回来才渲染 (正文先出来), 给它 3 秒
+  await page.waitForFunction(() => {
+    const el = document.getElementById('rv-sync');
+    return el && !el.hidden && el.textContent.trim() !== '';
+  }, null, { timeout: 3000 }).catch(() => {});
   const st = await page.evaluate(() => {
     const el = document.getElementById('rv-sync');
     if (!el) return null;

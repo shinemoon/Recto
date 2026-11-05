@@ -727,6 +727,7 @@ const WHY = {
   "finish": "记为读完",
   "no-baseline": "首次推送",
   "cloud-already-done": "云端已读完，不往回拨",
+  "rewind": "按本地覆写云端",
   "cloud-empty": "云端还没有这本书的进度",
   "local-ahead": "本地更新，不用拉",
   "no-progress": "还没开始读",
@@ -738,8 +739,12 @@ const WHY = {
 
 function whyText(w) {
   if (!w) return "";
-  const m = /^regress\(([-\d.eE+]+)<([-\d.eE+]+)\)$/.exec(String(w));
+  let m = /^regress\(([-\d.eE+]+)<([-\d.eE+]+)\)$/.exec(String(w));
   if (m) return "云端更靠前（" + pct(+m[1]) + " > " + pct(+m[2]) + "），不回拨";
+  m = /^rewind\(([-\d.eE+]+)<([-\d.eE+]+)\)$/.exec(String(w));
+  if (m) return "按本地覆写云端（" + pct(+m[1]) + " < " + pct(+m[2]) + "）";
+  m = /^cloud-newer\(([-\d.eE+]+)<([-\d.eE+]+)\)$/.exec(String(w));
+  if (m) return "云端刚读过（" + pct(+m[2]) + "），这次先不覆盖";
   return WHY[w] || String(w);
 }
 

@@ -68,7 +68,11 @@
     // 读者在这一页里真的动过没有 (滚轮/触摸/按键/点击)。
     // 没动过就不写进度: 刚打开时正文还在排版, 量到的锚点可能是恢复前的位置,
     // 写回去就会把"读到 90%"变成"停在章首" —— 这是老用户报过的现象。
-    userMoved: false
+    userMoved: false,
+    // 读者刚刚**主动跳**过 (目录 / 上一章 / 笔记跳转)。这一次保存要带 jump=1:
+    // 「我就是想回去」的意图得让服务端的"旧会话不许回退"闸门放行,
+    // 否则在新标签页里往回跳一章会被当成别处读得更远的旧页面挡下来。
+    jumpIntent: false
   };
 
   // ---------- 基础 ----------
@@ -206,7 +210,7 @@
     a.innerHTML = '<span class="rv-toc-n">' + (c.i + 1) + '</span>' + escapeHtml(name);
     a.addEventListener('click', function (ev) {
       ev.preventDefault();
-      openChapter(c.i, { offset: 0 });
+      jumpTo(c.i, 0);
       closeDrawer('toc');
     });
     li.appendChild(a);
@@ -798,10 +802,15 @@
     if (ch === S.lastCh && off === S.lastOff && !opts.force) return;
     var moved = (ch !== S.lastCh || off !== S.lastOff);
     S.lastCh = ch; S.lastOff = off;
+    var jump = !!(opts.jump || S.jumpIntent);
+    S.jumpIntent = false;
     api('/progress', {
       method: 'POST',
       body: { chapter: ch, offset: off, sid: S.sid,
-              flush: !!opts.flush, jump: !!opts.jump, end: atEnd() }
+              flush: !!opts.flush, jump: jump, end: atEnd(),
+              // user=1: 这是读者自己动出来的位置 (翻页 / 跳转 / 关页面),
+              // 云端按"最后写入者胜"被覆写 —— 包括比云端更靠后的位置。
+              user: opts.user === false ? 0 : 1 }
     }).then(function (r) {
       if (!r) return;
       if (r.stale) {
@@ -850,8 +859,11 @@
     } else if (s.state === 'failed') {
       txt = '掌阅 同步失败';
     } else if (s.state === 'cloud-ahead') {
-      // 云端读得更靠前: 我们不会把云端往回拨, 下次打开这本书会对齐过去
+      // 云端读得更靠前, 这一推还在节流窗口里; 读者一动就按本地覆写
       txt = '掌阅 更靠前 ' + stampPct(s.cloud_pct != null ? s.cloud_pct : s.last_push_pct);
+    } else if (s.rewound) {
+      // 读者自己往回读了 —— 云端跟着覆写, 小字直说
+      txt = '掌阅 已按本地覆写 ' + stampPct(s.last_push_pct);
     } else {
       var t = clockOf(s.last_push_at);
       txt = t ? ('掌阅 ' + t + ' 已同步 ' + stampPct(s.last_push_pct))
@@ -878,14 +890,14 @@
     // 节流窗口里可能还有一次没推上去 —— 离开页面时补上 (服务端 flush 绕过节流)。
     // 用 keepalive fetch 而不是 sendBeacon: 同样的"页面走了还发得出去", 但
     // 请求体是普通 JSON, 排查时看得见 (beacon 的 body 在日志里往往是空的)。
-    var payload = JSON.stringify({ chapter: a.ch, offset: a.off, sid: S.sid, flush: 1 });
+    var payload = JSON.stringify({ chapter: a.ch, offset: a.off, sid: S.sid, flush: 1, user: 1 });
     try {
       fetch(API + '/progress', {
         method: 'POST', keepalive: true,
         headers: { 'Content-Type': 'application/json' }, body: payload
       }).catch(function () {});
     } catch (e) {
-      beacon('/progress', { chapter: a.ch, offset: a.off, sid: S.sid, flush: 1 });
+      beacon('/progress', { chapter: a.ch, offset: a.off, sid: S.sid, flush: 1, user: 1 });
     }
   }
 
@@ -1573,6 +1585,7 @@
   });
 
   function jumpTo(ch, off) {
+    S.jumpIntent = true;          // 读者主动跳转: 允许把进度写回/覆写云端
     if (isPaged()) {
       if (S.loaded[ch] && blockForAnchor(ch, off)) {
         S.cur = ch; markToc();
@@ -2215,7 +2228,7 @@
   function pageStep(dir) {
     var p = S.page + dir;
     if (p < 0) {
-      if (S.cur > 0) { openChapter(S.cur - 1, { tail: true }); return; }
+      if (S.cur > 0) { S.jumpIntent = true; openChapter(S.cur - 1, { tail: true }); return; }
       p = 0;
     }
     if (p > S.pageCount - 1) {

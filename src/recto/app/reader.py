@@ -455,7 +455,8 @@ def handle(h) -> bool:
             ch = max(0, min(ch, len(doc.chapters) - 1))
             pct = doc.percent(ch, off)
             pos = doc.position(ch, off)
-            # sid = 这个阅读器页面实例的随机 id; jump = 目录跳转这类"我就是想回去"的动作。
+            # sid = 这个阅读器页面实例的随机 id; jump = 目录跳转这类"我就是想回去"的动作;
+            # user = 这次写入来自读者的真实动作 (前端在用户动过之后才会保存)。
             # 两者合起来挡住"早上没关的旧标签页把进度写回上午的位置"。
             # 「读完」只认读者真的到了末尾 (at_end), 不认百分比:
             # 最后一章的块粒度可能把 99.76% 抬到 99.9997%, 那不是读完。
@@ -475,7 +476,10 @@ def handle(h) -> bool:
             try:
                 out["library"] = _sync.mirror_reader_progress(
                     key, pct, finished=bool(out.get("complete")),
-                    flush=bool(body.get("flush"))) or None
+                    flush=bool(body.get("flush")),
+                    # 读者自己动出来的位置 (翻页 / 跳转 / 关页面) 可以覆写云端;
+                    # 系统补写 (user=0) 仍旧只前进。
+                    user=bool(body.get("user", 1))) or None
                 out["sync"] = (out["library"] or {}).get("state") or _sync.sync_state(key)
             except Exception:
                 out["library"] = None

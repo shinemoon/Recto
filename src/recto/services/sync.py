@@ -473,6 +473,35 @@ def _local_wins(book_path: str) -> bool:
     return 0 <= age < LOCAL_WINS_HOURS * 3600
 
 
+def _local_progress_ts(prog: dict) -> float:
+    """本地这条进度的写入时刻 (epoch 秒)。"""
+    ts = str((prog or {}).get("updated_at") or "")
+    if not ts:
+        return 0.0
+    try:
+        when = datetime.fromisoformat(ts)
+    except ValueError:
+        return 0.0
+    if when.tzinfo is None:
+        when = when.astimezone()
+    return when.timestamp()
+
+
+# 云端/本地写入时刻的对比容差: 手机与本机时钟不可能完全一致
+CLOCK_SKEW = 180.0
+
+
+def _cloud_is_newer(cur: dict, prog: dict) -> bool:
+    """云端那条记录是否比本地这条**明显**更新 (手机那边刚读过)。"""
+    cloud_ts = float((cur or {}).get("ts") or 0.0)
+    if cloud_ts > 1e12:            # 毫秒
+        cloud_ts /= 1000.0
+    local_ts = _local_progress_ts(prog)
+    if not cloud_ts or not local_ts:
+        return False
+    return cloud_ts > local_ts + CLOCK_SKEW
+
+
 def _int_or_none(v) -> int | None:
     try:
         return int(str(v).strip())
@@ -496,12 +525,22 @@ def audit(msg: str, *args) -> None:
 def push_decision(cur_pct: float | None, cur_done: bool, new_pct: float,
                   new_done: bool, *, tol: float = 0.0005,
                   allow_rewind: bool = False,
-                  meta_stale: bool = False) -> tuple[bool, str]:
+                  meta_stale: bool = False,
+                  cloud_newer: bool = False) -> tuple[bool, str]:
     """要不要把本地进度写到云端。
 
-    云端 (手机) 才是读者眼前那一端: 本地落后时该 pull 拉上来, 而不是
-    把云端往下拨。所以默认只前进。`meta_stale` 允许在进度不变时修一次
-    元信息 (totalCount / chapterId), 但绝不借机回退。
+    两条规则并存:
+
+    * **读者自己动了** (`allow_rewind`, 翻页 / 目录跳转 / 划线跳转) —— 本地就是
+      他眼前的真实位置, 如实覆写云端, 哪怕比云端更靠后。掌阅 App 自己也
+      是这个语义 (退出书把本地位置回写云端, 最后写入者胜)。
+    * **没人动** (定时 / 打开书对齐 / 别处的旧会话) —— 只前进, 绝不擅自把
+      云端往回拨。`meta_stale` 允许进度不变时修一次元信息 (totalCount),
+      但也不借机回退。
+
+    `cloud_newer` = 云端记录的写入时刻比本地这条更新 (手机刚读过) —— 这时
+    连"读者自己动"也先让别人一次: 人家那边是更新的现场, 我们这边只是旧页
+    在回翻。等本地真的再读一页, 时间就翻过来了。
     """
     if cur_pct is None:
         return True, "no-baseline"
@@ -509,13 +548,25 @@ def push_decision(cur_pct: float | None, cur_done: bool, new_pct: float,
         return False, "cloud-already-done"
     if new_done and not cur_done:
         return True, "finish"
+    behind = new_pct < cur_pct - tol
     if not allow_rewind:
-        if new_pct < cur_pct - tol:
+        if behind:
+            if cloud_newer:
+                return False, f"cloud-newer({new_pct:.4f}<{cur_pct:.4f})"
             return False, f"regress({new_pct:.4f}<{cur_pct:.4f})"
         if abs(new_pct - cur_pct) <= tol * 0.5:
             if meta_stale and new_pct >= cur_pct - 1e-6:
                 return True, "meta"
             return False, "noop"
+        return True, "forward"
+    if behind:
+        if cloud_newer:
+            return False, f"cloud-newer({new_pct:.4f}<{cur_pct:.4f})"
+        return True, f"rewind({new_pct:.4f}<{cur_pct:.4f})"
+    if abs(new_pct - cur_pct) <= tol * 0.5:
+        if meta_stale and new_pct >= cur_pct - 1e-6:
+            return True, "meta"
+        return False, "noop"
     return True, "forward"
 
 
@@ -561,9 +612,12 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
         # 读者显式选过「留在本地」→ 这本书允许把进度写到云端更后面
         # (那是他自己的选择, 不是我们擅自回拨)。
         wins = _local_wins(r.get("path") or "")
+        # 云端那条记录是不是比本地这条更新 (手机刚读过) —— 是的话这次先让一让
+        cloud_newer = _cloud_is_newer(cur, prog)
         allow, why = push_decision(cur_pct, bool(cur.get("finished")), pct, done,
                                    allow_rewind=allow_rewind or wins,
-                                   meta_stale=meta_stale)
+                                   meta_stale=meta_stale,
+                                   cloud_newer=cloud_newer and not wins)
         if force and not allow:
             allow, why = True, "force"
         if not allow:
@@ -604,6 +658,9 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
             detail.append({"book": r["title"], "pct": round(pct, 8), "why": why,
                            "chapter": catalog_ch, "total": total_count, "ok": True,
                            "bytes": reader_state.book_bytes(key)})
+            if str(why).startswith("rewind"):
+                log.info("按本地进度覆写云端 · %s · 本地 %s 比云端靠前一条更旧的位置",
+                         r["title"], geometry.format_pct(pct, reader_state.book_bytes(key)))
             log.info("推送成功 · %s · 进度 %s · 第 %s 章（共 %s 章）", r["title"],
                      geometry.format_pct(pct, reader_state.book_bytes(key)),
                      int(catalog_ch) + 1, total_count)
@@ -648,7 +705,7 @@ def _state_of(key: str) -> dict:
       synced    本地最后位置已经推上去
       dirty     本地动过, 还在等节流窗口
       pushing   正在推
-      cloud-ahead  云端更靠前 (本地的位置落后), 不往回拨 —— 下次打开会对齐
+      cloud-ahead  云端更靠前, 这一推还没轮到 (节流窗口内)。读者一动就会覆写
       failed    上一次推失败了
     """
     st = sync_settings()
@@ -662,6 +719,8 @@ def _state_of(key: str) -> dict:
         "pending_pct": rec.get("pending_pct"),
         "cloud_ahead": bool(rec.get("cloud_ahead")),
         "cloud_pct": rec.get("cloud_pct"),
+        # 上一次推送是"按本地覆盖云端"(读者自己动的) —— 小字要说实话
+        "rewound": str(rec.get("why") or "").startswith("rewind"),
     }
     row = _link_light(key)
     if row:
@@ -707,14 +766,18 @@ def _push_worker(key: str) -> None:
         pct = None
         rec_cloud = None
         ahead = False
+        with _PUSH_LOCK:
+            rec0 = _PUSH_STATE.setdefault(key, {})
+            user_driven = bool(rec0.get("user"))
+            rec0["user"] = False
         try:
-            res = push_once(keys=[key])
+            res = push_once(keys=[key], allow_rewind=user_driven)
             det = (res.get("detail") or [{}])[0]
             ok = int(res.get("pushed") or 0) > 0
             why = str(det.get("why") or det.get("skipped") or "")
             err = det.get("error")
             pct = det.get("pct")
-            if why.startswith("regress("):
+            if why.startswith(("regress(", "cloud-newer(")):
                 # 「云端比本地靠前」时我们没写 —— 把小字要显示的**云端**百分比留出来
                 try:
                     rec_cloud = float(str(why).split("<", 1)[1].rstrip(")"))
@@ -763,12 +826,17 @@ def _delayed_push(key: str) -> None:
 
 
 def mirror_reader_progress(key: str, pct: float, *, finished: bool = False,
-                           flush: bool = False) -> dict:
+                           flush: bool = False, user: bool = True) -> dict:
     """阅读器存进度后顺手推云端 —— **放到后台线程, 不阻塞翻页**。
 
     节流 = `[sync] push_debounce_sec`; `flush=True` 绕过节流 (离开页面时的最后一推)。
-    节流只决定"多久打一次云端", 推送本身仍然只前进 (`push_decision`),
-    所以手机端读得更靠前时不会被这里往回拨。
+
+    `user=True` (默认) = 这次进度是**读者自己动出来的** (翻页 / 目录跳转 /
+    划线跳转 / 关页面时的最后一推)。这种推送允许把云端写到更靠后的位置 ——
+    本地就是他眼前的位置, 该如实覆写; 不这样的话"云端 32.8%、本地 31.9%"
+    会永远卡在 regress, 读者在本地怎么读云端都不动, 下次打开又被拽回去。
+
+    `user=False` = 系统性的对齐/补写 (打开书后的对齐、CLI 批量), 仍旧只前进。
     """
     st = sync_settings()
     if not st["auto"]:
@@ -781,6 +849,9 @@ def mirror_reader_progress(key: str, pct: float, *, finished: bool = False,
     with _PUSH_LOCK:
         rec = _PUSH_STATE.setdefault(key, {})
         rec["pending_pct"] = round(float(pct), 8)
+        if user:
+            # 一次性标记: 消费完就清, 别让一次读者动作永久打开回拨
+            rec["user"] = True
         if rec.get("inflight"):
             rec["again"] = True          # 这一推跑完再补一次, 不丢最后位置
             return {"ok": True, "queued": True, "inflight": True, "state": _state_of(key)}
