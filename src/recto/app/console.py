@@ -638,7 +638,10 @@ function bookCard(b) {
   const cover = b.cover
     ? `<img loading="lazy" alt="" src="/read/api/book/${key}/asset?p=${encodeURIComponent(b.cover)}">`
     : `<span class="bk-ph">${esc(String(b.title || "?").slice(0, 1))}</span>`;
-  return `<a class="bk" href="/read/b/${key}" title="${esc(b.title)}">
+  /* 删除按钮不能放在 <a> 里面 (交互元素不能嵌套), 所以卡片外面套一层定位容器;
+     .bk 仍然是那张卡片, 只是不再自己占网格位置。 */
+  return `<div class="bk-cell">
+    <a class="bk" href="/read/b/${key}" title="${esc(b.title)}">
     <div class="bk-cover">${badge}${cover}</div>
     <div class="bk-body">
       <div class="bk-title">${esc(b.title)}</div>
@@ -646,7 +649,40 @@ function bookCard(b) {
       <div class="bk-prog"><i style="width:${(pctv * 100).toFixed(1)}%"></i></div>
       <div class="bk-meta"><span class="p">${pct(b.percent, b.bytes)}</span>
         <span>${b.notes || 0} 划线 · ${fmtMin(b.minutes)}</span></div>
-    </div></a>`;
+    </div></a>
+    <button class="bk-del" data-del="${esc(b.key)}" data-title="${esc(b.title)}"
+            data-notes="${Number(b.notes) || 0}" data-marks="${Number(b.marks) || 0}"
+            aria-label="删除《${esc(b.title)}》" title="从书架删除">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 7h16"/><path d="M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7"/>
+        <path d="M6.4 7l.8 11.3A1.7 1.7 0 0 0 8.9 20h6.2a1.7 1.7 0 0 0 1.7-1.7L17.6 7"/>
+        <path d="M10.4 11v5"/><path d="M13.6 11v5"/>
+      </svg>
+    </button></div>`;
+}
+
+/* 删一本书: 文件搬到回收站 (data/trash), 书架立刻少一张卡。
+ * 进度 / 划线 / 书签留在库里 —— 文件放回书库原位就都还在。 */
+async function deleteBook(btn) {
+  const key = btn.getAttribute("data-del") || "";
+  if (!key) return;
+  const title = btn.getAttribute("data-title") || "这本书";
+  const notes = Number(btn.getAttribute("data-notes")) || 0;
+  const marks = Number(btn.getAttribute("data-marks")) || 0;
+  const extra = notes || marks
+    ? `\n\n本机的 ${notes} 条划线 / ${marks} 个书签会保留 —— 把文件放回书库就能再看到。` : "";
+  if (!window.confirm(`从书架删除《${title}》?\n\n文件会移到 data/trash/ (不是彻底删除)。${extra}`)) return;
+  btn.disabled = true;
+  const r = await api(`/read/api/book/${encodeURIComponent(key)}/delete`, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"
+  });
+  btn.disabled = false;
+  if (!r || r.error) { toast("删除失败：" + ((r && r.error) || "未知错误"), true); return; }
+  LIB = LIB.filter((b) => b.key !== key);
+  renderShelf(); renderShelfStats();
+  toast(`已删除《${r.title || title}》`);
+  if (typeof loadState === "function") loadState();
 }
 
 function renderShelf() {
@@ -1149,6 +1185,14 @@ document.addEventListener("click", (e) => {
   e.preventDefault();
   setShelfSort(btn.getAttribute("data-sort"), true);
   renderShelf();
+});
+document.addEventListener("click", async (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest(".bk-del") : null;
+  if (!btn) return;
+  // 阻止冒泡到卡片 (按钮不在 <a> 内, 但祖先里若有链接/委托也别误触)
+  e.preventDefault();
+  e.stopPropagation();
+  if (!btn.disabled) deleteBook(btn);
 });
 document.addEventListener("click", async (e) => {
   const btn = e.target && e.target.closest ? e.target.closest("#shelf-rescan") : null;

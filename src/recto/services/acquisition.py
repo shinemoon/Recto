@@ -208,6 +208,37 @@ def _record(key: str, rec: dict | None) -> None:
     _save_index(doc)
 
 
+def forget_path(path: str) -> bool:
+    """把"这个文件"从下载索引里摘掉 (删书时用)。
+
+    索引按云端 key 记, 一个路径可能被登记在一本 (偶尔两本) 之下 —— 按路径找,
+    找不到就是没登记过 (手放进书库的书), 返回 False 而不是报错。
+    """
+    target = str(path or "")
+    if not target:
+        return False
+    try:
+        target = str(Path(target).resolve())
+    except OSError:
+        pass
+    doc = _read_index()
+    hit = False
+    for k, rec in list(doc.items()):
+        rp = str((rec or {}).get("path") or "")
+        if not rp:
+            continue
+        try:
+            rp = str(Path(rp).resolve())
+        except OSError:
+            pass
+        if rp == target:
+            doc.pop(k, None)
+            hit = True
+    if hit:
+        _save_index(doc)
+    return hit
+
+
 def dl_dir() -> str:
     """下载落点 = 书库目录 (可选子目录)。配置改, 不在这里改。"""
     return str(paths.PATHS.download_dir)

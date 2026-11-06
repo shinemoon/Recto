@@ -22,6 +22,7 @@ import base64
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -29,7 +30,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
-from recto.core import bookfile
+from recto.core import bookfile, sidecar
 from recto.core.config import get_config
 from recto.core.paths import PATHS
 
@@ -296,6 +297,87 @@ def _under(path: str, roots: list[str]) -> bool:
         if p == r or p.startswith(r + "/"):
             return True
     return False
+
+
+def trash_dir() -> Path:
+    """删书时的回收站根目录 —— `<data_dir>/trash`。
+
+    删书默认**不真删**: 文件搬到这儿, 想恢复就搬回书库。磁盘要彻底回收时
+    自己清空这个目录 (服务不自动删, 免得"删错了"无处可捞)。
+    """
+    return get_config().data_dir / "trash"
+
+
+def _rel_under(path: Path, roots: list[Path]) -> str | None:
+    """path 相对某个书库根的路径 (回收站里保留原来的目录层级)。"""
+    try:
+        rp = path.resolve()
+    except OSError:
+        rp = path
+    for r in roots:
+        try:
+            return str(rp.relative_to(r))
+        except ValueError:
+            continue
+    return None
+
+
+def delete_book(key: str, *, keep_file: bool = False) -> dict:
+    """把一本书从书架移除。
+
+    默认把文件 (连同 `.recto.json` / `.keywords.json` 边车) 移到
+    `<data_dir>/trash/<时间戳>/` —— 删错了搬回来就行。
+
+    **只删 `rbook` 那一行**: 进度 / 书签 / 划线 / 阅读时长留在库里, 同一份文件
+    放回原位 (路径不变 ⇒ key 不变) 时这些记录还在。删书要的是"从书架消失",
+    不是抹掉读者写过的东西。
+    """
+    c = conn()
+    row = c.execute("SELECT * FROM rbook WHERE key=?", (key,)).fetchone()
+    if row is None:
+        raise FileNotFoundError("这本书不在书库里")
+    row = dict(row)
+    path = Path(str(row.get("path") or ""))
+    roots = [r.resolve() for r in book_roots()]
+    out: dict = {"ok": True, "key": key, "title": row.get("title") or path.stem,
+                 "path": str(path), "trash": "", "file_removed": False,
+                 "sidecars": [], "index_removed": False}
+
+    if not keep_file and path.exists():
+        rel = _rel_under(path, roots)
+        if rel is None:
+            raise PermissionError(f"只能删书库目录里的书: {path}")
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = trash_dir() / stamp / rel
+        n = 1
+        while dest.exists():          # 同一秒连删两本同名书
+            n += 1
+            dest = trash_dir() / f"{stamp}-{n}" / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), str(dest))
+        out["file_removed"] = True
+        out["trash"] = str(dest)
+        # 边车 / 术语表跟着书走, 不留在书库当孤儿文件
+        for sc in (sidecar.sidecar_path(path), sidecar.keywords_path(path)):
+            if not sc.exists():
+                continue
+            tgt = dest.with_name(sc.name)
+            try:
+                shutil.move(str(sc), str(tgt))
+                out["sidecars"].append(str(tgt))
+            except OSError:
+                continue
+
+    c.execute("DELETE FROM rbook WHERE key=?", (key,))
+    c.commit()
+    # 下载索引若登记过这个文件, 一并清掉 (否则「已下载」列表还指着不存在的路径)
+    try:
+        from recto.services import acquisition
+
+        out["index_removed"] = bool(acquisition.forget_path(str(path)))
+    except Exception:  # noqa: BLE001 — 索引坏了不该挡住删书
+        out["index_removed"] = False
+    return out
 
 
 def list_books(q: str = "") -> list[dict]:

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import html as _html
 import json
+import logging
 import re
 import time
 import traceback
@@ -33,6 +34,8 @@ from recto.core import bookfile
 from recto.services import sync as _sync
 from recto.services import reader_state as rs
 from recto.app.ui import shell
+
+_log = logging.getLogger("recto.reader")
 
 _DOCS: dict[str, tuple[float, bookfile.BookDoc]] = {}
 _DOC_MAX = 4
@@ -395,12 +398,27 @@ def handle(h) -> bool:
             h._json(404, {"error": "not found"})
             return True
         key = parts[1]
+        rest = parts[2:]
+        if method == "POST" and rest[:1] == ["delete"] and len(rest) == 1:
+            # 从书架删掉一本书: 文件搬到 <data_dir>/trash/, 库里只删 rbook 那一行
+            # (进度 / 书签 / 划线 / 时长留在库里, 文件放回原位就还在)。
+            payload = _read_json(h)
+            try:
+                out = rs.delete_book(key, keep_file=bool(payload.get("keep_file")))
+            except FileNotFoundError as e:
+                h._json(404, {"error": str(e)})
+                return True
+            except PermissionError as e:
+                h._json(403, {"error": str(e)})
+                return True
+            _log.info("删书 · %s · 文件→%s", out.get("title"), out.get("trash") or "(保留)")
+            h._json(200, out)
+            return True
         doc = _doc(key)
         if doc is None:
             h._json(404, {"error": "book not found"})
             return True
 
-        rest = parts[2:]
         if method == "GET" and not rest:
             h._json(200, _meta(key, doc))
             return True
