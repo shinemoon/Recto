@@ -244,6 +244,45 @@ def test_console_pull_no_duplicate_time():
     ok("notes.pull" in seg, "划线/书签仍然一起拉")
 
 
+# ------------------------------------------------------------ 4 书架排列顺序
+@case
+def test_shelf_sort_control():
+    body = console._page_html(None)
+    ok('class="shelf-sort"' in body, "书架有排列顺序开关组")
+    ok('data-sort="recent"' in body and 'data-sort="title"' in body, "两个开关: 最近阅读 / 书名")
+    ok('data-sort="recent" aria-pressed="true"' in body, "默认选中「最近阅读」")
+    ok('role="group"' in body and 'aria-label="书架排列顺序"' in body, "开关组有无障碍语义")
+    css = (ASSETS / "recto.css").read_text("utf-8")
+    ok(".shelf-sort .chip" in css, "开关走 chip 样式")
+    ok('.shelf-sort .chip[aria-pressed="true"]' in css, "选中态由 aria-pressed 驱动 (不用 JS 加类判断)")
+
+
+@case
+def test_shelf_sort_logic():
+    js = console._JS
+    ok("function sortShelf(" in js, "有独立的排序函数 (搜索/排列互不干扰)")
+    ok("renderShelf" in js and "sortShelf(list)" in js, "渲染前先排序")
+    ok("function setShelfSort(" in js, "有统一的状态刷新入口")
+    ok('"recto.shelf.sort"' in js, "选择逐设备记在 localStorage")
+    ok('new Intl.Collator("zh-Hans-CN", { numeric: true' in js, "书名按中文拼音 + 数值序")
+    ok("updated_at || b.added_at || b.seen_at" in js,
+       "最近阅读 = 进度时间 > 入库时间 (seen_at 是全库同一刻, 不能当依据)")
+    ok("|| cmpText(a.title, b.title)" in js, "时间相同按书名兜底 (顺序稳定可复现)")
+    # 这页的 <script> 在 <head>, 首屏执行时 body 还没解析 → 选中态必须再刷一次
+    seg = js[js.index("function renderShelf("):js.index("function renderShelfStats(")]
+    ok("setShelfSort(SORT, false)" in seg, "渲染书架时同步开关选中态 (head 脚本的时序坑)")
+    ok('addEventListener("DOMContentLoaded"' in js, "DOM 就绪后再刷一次, 兜住首屏")
+
+
+@case
+def test_shelf_sort_click_wiring():
+    js = console._JS
+    seg = js[js.index('closest("[data-sort]")') - 120:]
+    ok('closest("[data-sort]")' in js, "点击委托识别排序开关")
+    ok("setShelfSort(btn.getAttribute(\"data-sort\"), true)" in js, "点击后保存选择")
+    ok(seg.index("renderShelf()") < 400, "点击后立刻重排 (不刷新页面)")
+
+
 print()
 if FAIL:
     print(f"{FAIL} FAILED")

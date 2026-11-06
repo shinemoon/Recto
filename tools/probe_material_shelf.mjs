@@ -49,8 +49,10 @@ const ok = (cond, name, extra) => {
   // 搜索过滤
   await page.fill('#shelf-q', '狐');
   await page.waitForTimeout(200);
-  const filtered = await page.locator('#shelf .bk').count();
-  ok(filtered === 1, '搜索即时过滤', { filtered });
+  const hits = await page.evaluate(() =>
+    [...document.querySelectorAll('#shelf .bk-title')].map((e) => e.textContent.trim()));
+  // 书库里可能有同名不同文件 (同一本书的两个版本), 所以只断言"命中的都在关键词上"
+  ok(hits.length >= 1 && hits.every((t) => t.indexOf('狐') >= 0), '搜索即时过滤', { hits });
   await page.fill('#shelf-q', '');
   await page.waitForTimeout(150);
 

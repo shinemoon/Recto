@@ -60,6 +60,23 @@ EPUB2 `<meta name="cover">`，取不到再按文件名带 `cover` 的图兜底�
 卡片与按钮的事件统一走 **document 委托** —— 脚本在 `<head>` 里, 不保证执行时
 元素已解析完 (曾经因此"搜索框不响应")。
 
+## 1.2.1 排列顺序
+
+搜索框右侧是 `.shelf-sort` 两个 filter chip (`aria-pressed` 即选中态, 选中实心):
+
+| 值 | 文案 | 顺序 |
+|---|---|---|
+| `recent` (默认) | 最近阅读 | `updated_at`（阅读进度时间）倒序, 没读过退到 `added_at`（入库时间） |
+| `title` | 书名 | `Intl.Collator("zh-Hans-CN", {numeric:true})` —— 中文按拼音, 数字按数值 |
+
+* `seen_at` **不能**当排序依据: 它是"上次扫描看到这本书"的时间, 全库同一刻。
+* 时间相同的书按书名兜底 —— 否则每次刷新卡片顺序会跳。
+* 选择逐设备记在 `localStorage["recto.shelf.sort"]`（桌面按书名找书 / 手机接着上次读, 互不覆盖）。
+* 排序纯前端（`sortShelf()` 在 `renderShelf()` 里、搜索之后）, 不动服务端 `ORDER BY`。
+* **时序坑**: 本页 `<script>` 挂在 `<head>`（`head_extra`）, 首屏执行时 `<body>` 还没解析完 →
+  `setShelfSort()` 查不到 chip。所以 `renderShelf()` 开头会再刷一次选中态,
+  另有一条 `DOMContentLoaded` 兜底。
+
 ## 1.3 标志 ( `.rc-logo` / `.rc-lockup` )
 
 `logo.png`（仓库根）经 `tools/make_logo.py` 变成两张透明位图：

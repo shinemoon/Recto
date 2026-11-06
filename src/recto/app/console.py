@@ -570,6 +570,56 @@ function setPill(id, text, ok) {
 
 let LIB = [];
 
+/* 书架排列顺序 —— recent = 最近阅读（有进度用进度时间，没读过退到入库时间）,
+ * title = 按书名（中文走拼音序，数字按数值）。选择逐设备记在 localStorage:
+ * 桌面习惯按书名找书, 手机习惯接着上次读, 不该互相覆盖。 */
+const SORT_KEY = "recto.shelf.sort";
+const SORTS = ["recent", "title"];
+let SORT = (() => {
+  try {
+    const v = localStorage.getItem(SORT_KEY);
+    return SORTS.indexOf(v) >= 0 ? v : "recent";
+  } catch (e) { return "recent"; }
+})();
+
+const collator = (() => {
+  try { return new Intl.Collator("zh-Hans-CN", { numeric: true, sensitivity: "base" }); }
+  catch (e) { return null; }
+})();
+
+function cmpText(a, b) {
+  const x = String(a == null ? "" : a), y = String(b == null ? "" : b);
+  return collator ? collator.compare(x, y) : (x < y ? -1 : x > y ? 1 : 0);
+}
+
+/* 「最近阅读」的时间: 有阅读进度就用进度时间, 没读过退到入库时间。
+ * seen_at 是"上次扫描看到它"的时间 —— 全库同一刻, 当排序依据没有意义。 */
+function lastReadAt(b) { return String(b.updated_at || b.added_at || b.seen_at || ""); }
+
+function sortShelf(list) {
+  const arr = list.slice();
+  if (SORT === "title") {
+    arr.sort((a, b) => cmpText(a.title, b.title) || cmpText(a.author, b.author));
+  } else {
+    /* 同一刻按书名兜底, 保证顺序稳定（否则每次刷新卡片会跳位） */
+    arr.sort((a, b) => {
+      const x = lastReadAt(a), y = lastReadAt(b);
+      return (y > x ? 1 : y < x ? -1 : 0) || cmpText(a.title, b.title);
+    });
+  }
+  return arr;
+}
+
+function setShelfSort(v, save) {
+  SORT = SORTS.indexOf(v) >= 0 ? v : "recent";
+  if (save) { try { localStorage.setItem(SORT_KEY, SORT); } catch (e) {} }
+  document.querySelectorAll("[data-sort]").forEach((btn) => {
+    const on = btn.getAttribute("data-sort") === SORT;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
 const fmtMin = (m) => {
   const v = Math.round(Number(m) || 0);
   if (!v) return "—";
@@ -600,10 +650,14 @@ function bookCard(b) {
 
 function renderShelf() {
   const el = $("shelf"); if (!el) return;
+  /* 这页的 <script> 挂在 <head> 里, 首屏执行时 body 还没解析完 —— 开关的选中态
+   * 必须在"确实拿到 DOM"之后再刷一次, 否则只留 HTML 里的初始值。 */
+  setShelfSort(SORT, false);
   const q = (($("shelf-q") && $("shelf-q").value) || "").trim().toLowerCase();
   const list = q ? LIB.filter((b) => ((b.title || "") + " " + (b.author || ""))
     .toLowerCase().indexOf(q) >= 0) : LIB;
-  el.innerHTML = list.length ? list.map(bookCard).join("")
+  const sorted = sortShelf(list);
+  el.innerHTML = sorted.length ? sorted.map(bookCard).join("")
     : `<div class="empty" style="grid-column:1/-1">${q
       ? "没有匹配的书" : "书库还是空的 —— 去「云端同步」下载掌阅云书，或把 epub / txt 放进书库目录"}</div>`;
 }
@@ -1064,6 +1118,13 @@ document.addEventListener("click", (e) => {
 document.addEventListener("input", (e) => {
   if (e.target && e.target.id === "shelf-q") renderShelf();
 });
+document.addEventListener("click", (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest("[data-sort]") : null;
+  if (!btn) return;
+  e.preventDefault();
+  setShelfSort(btn.getAttribute("data-sort"), true);
+  renderShelf();
+});
 document.addEventListener("click", async (e) => {
   const btn = e.target && e.target.closest ? e.target.closest("#shelf-rescan") : null;
   if (!btn || btn.disabled) return;
@@ -1078,6 +1139,8 @@ document.addEventListener("click", async (e) => {
   await loadState();
   btn.disabled = false; btn.classList.remove("is-busy"); setLabel("重扫书库");
 });
+setShelfSort(SORT, false);
+document.addEventListener("DOMContentLoaded", () => setShelfSort(SORT, false));
 loadState(); loadCloud(); loadAuth(); loadLog();
 """
 
@@ -1124,6 +1187,10 @@ def _page_html(user: str | None) -> str:
   <div class="shelf-head">
     <div class="shelf-search">
       <input id="shelf-q" type="search" placeholder="搜书名 / 作者" aria-label="搜书名或作者">
+    </div>
+    <div class="shelf-sort" role="group" aria-label="书架排列顺序">
+      <button class="chip" data-sort="recent" aria-pressed="true">最近阅读</button>
+      <button class="chip" data-sort="title" aria-pressed="false">书名</button>
     </div>
     <div class="shelf-stat" id="shelf-stat">
       <div class="s"><b>…</b><span>本</span></div>

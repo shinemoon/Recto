@@ -628,6 +628,16 @@ pre:empty::before { content: "—"; color: var(--rc-mute); }
 }
 .shelf-search { display: flex; gap: 8px; align-items: center; flex: 1 1 260px; }
 .shelf-search input { flex: 1 1 auto; }
+
+/* 排列顺序 = Material filter chip (选中实心, 与二级导航区分开: 这是开关不是链接) */
+.shelf-sort { display: flex; gap: 8px; align-items: center; }
+.shelf-sort .chip {
+  cursor: pointer; font: inherit; font-size: var(--rc-fs-xs); font-weight: 500;
+  padding: 6px 12px; min-height: 32px;
+}
+.shelf-sort .chip[aria-pressed="true"] {
+  background: var(--rc-primary); border-color: transparent; color: var(--rc-on-primary);
+}
 .shelf-stat {
   display: flex; gap: 22px; flex-wrap: wrap;
 }
