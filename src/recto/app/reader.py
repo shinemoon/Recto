@@ -400,7 +400,7 @@ def handle(h) -> bool:
         key = parts[1]
         rest = parts[2:]
         if method == "POST" and rest[:1] == ["delete"] and len(rest) == 1:
-            # 从书架删掉一本书: 文件搬到 <data_dir>/trash/, 库里只删 rbook 那一行
+            # 从书架删掉一本书: 文件直接删除, 库里只删 rbook 那一行
             # (进度 / 书签 / 划线 / 时长留在库里, 文件放回原位就还在)。
             payload = _read_json(h)
             try:
@@ -411,7 +411,8 @@ def handle(h) -> bool:
             except PermissionError as e:
                 h._json(403, {"error": str(e)})
                 return True
-            _log.info("删书 · %s · 文件→%s", out.get("title"), out.get("trash") or "(保留)")
+            _log.info("删书 · %s · %s", out.get("title"),
+                      "文件已删除" if out.get("file_removed") else "文件保留")
             h._json(200, out)
             return True
         doc = _doc(key)

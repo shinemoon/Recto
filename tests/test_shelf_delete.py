@@ -3,8 +3,8 @@
 跑法: cd <仓库根> && PYTHONPATH=src python3 tests/test_shelf_delete.py
 
 验的事:
-  * 删书默认**搬到回收站** (`<data_dir>/trash/<时间戳>/`), 不是真删
-  * `.recto.json` / `.keywords.json` 边车跟着书走, 不留在书库当孤儿
+  * 删书默认**直接删除文件** (不进回收站), `.recto.json` / `.keywords.json`
+    边车一起删, 不留在书库当孤儿
   * 只删 rbook 那一行: 进度 / 书签 / 划线 / 时长留在库里 (文件放回原位就还在)
   * 下载索引里的登记一并摘掉
   * 拒绝删书库目录之外的文件 (403), 不存在的书 404
@@ -139,13 +139,12 @@ rs.add_bookmark(key, 0, 6, "记一下", "第一章")
 
 out = rs.delete_book(key)
 ok("返回 ok", out.get("ok") is True)
-ok("文件已搬走", not book.exists())
-ok("回收站里能找到", bool(out.get("trash")) and Path(out["trash"]).exists())
-ok("回收站保留层级 (<trash>/<ts>/<name>)",
-   Path(out["trash"]).parent.name and Path(out["trash"]).name == book.name, out.get("trash"))
-ok("边车跟着走", not sidecar.sidecar_path(book).exists())
-ok("术语表也跟着走", not (book.parent / (book.stem + ".keywords.json")).exists())
-ok("边车在回收站", Path(out["trash"]).with_name(book.stem + ".recto.json").exists())
+ok("文件已删除", not book.exists())
+ok("file_removed 标记", out.get("file_removed") is True)
+ok("没有再生成 trash 目录", not (TMP / "data" / "trash").exists())
+ok("边车跟着删", not sidecar.sidecar_path(book).exists())
+ok("术语表也跟着删", not (book.parent / (book.stem + ".keywords.json")).exists())
+ok("sidecars 里记了删除路径", len(out.get("sidecars") or []) == 2, str(out.get("sidecars")))
 ok("书架上没了", "要删的书" not in {b["title"] for b in rs.list_books()})
 ok("另一本还在", "要留的书" in {b["title"] for b in rs.list_books()})
 ok("rbook 行已删", rs.get_book(key) is None)
@@ -162,7 +161,7 @@ except FileNotFoundError:
 
 key2 = bookfile.book_key(keep)
 out2 = rs.delete_book(key2, keep_file=True)
-ok("keep_file 不搬文件", keep.exists() and out2["file_removed"] is False)
+ok("keep_file 不删文件", keep.exists() and out2["file_removed"] is False)
 ok("keep_file 也从书架消失", rs.get_book(key2) is None)
 
 outside = TMP / "outside.epub"
@@ -202,7 +201,7 @@ key4 = bookfile.book_key(b4)
 st, j, _ = req(f"/read/api/book/{key4}/delete", "POST", {}, cookie)
 ok("200", st == 200, f"{st} {j}")
 ok("返回书名", j.get("title") == "接口删的书", str(j))
-ok("文件搬走了", not b4.exists())
+ok("文件已删除", not b4.exists())
 ok("书架查询里没有它", key4 not in {b["key"] for b in rs.list_books()})
 st, j, _ = req(f"/read/api/book/{key4}/delete", "POST", {}, cookie)
 ok("再删一次 404", st == 404 and "不在书库" in str(j.get("error")), f"{st} {j}")
@@ -218,7 +217,7 @@ ok("有删除键", 'class="bk-del"' in page or "bk-del" in page)
 ok("删除键带书 key", 'data-del="' in page)
 ok("删除键不在 <a class=\"bk\" ...> 里面", '<a class="bk"' in page and
    page.index('class="bk-cell"') < page.index('data-del='))
-ok("提示写了回收站", "data/trash" in page)
+ok("提示写了直接删除", "直接删除" in page and "data/trash" not in page)
 ok("二次确认 (confirm)", "window.confirm" in page and "从书架删除" in page)
 ok("路线存在", "\"delete\"" in Path(reader.__file__).read_text("utf-8"))
 css = (ROOT / "src" / "recto" / "app" / "ui" / "assets" / "recto.css").read_text("utf-8")
@@ -231,7 +230,8 @@ ok("CSS: 悬停变红", "var(--rc-err)" in css.split(".bk-del {", 1)[1][:900])
 print("== 6. 删完重扫不会复活 ==")
 rs.scan(force=True)
 ok("重扫后仍不在书架", key4 not in {b["key"] for b in rs.list_books()})
-ok("回收站里那份还在", any(True for _ in (TMP / "data" / "trash").rglob("*.epub")))
+ok("删掉的文件没复活", not b4.exists() and
+   not (TMP / "data" / "trash").exists())
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

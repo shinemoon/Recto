@@ -22,7 +22,6 @@ import base64
 import hashlib
 import json
 import os
-import shutil
 import sqlite3
 import threading
 import time
@@ -299,34 +298,11 @@ def _under(path: str, roots: list[str]) -> bool:
     return False
 
 
-def trash_dir() -> Path:
-    """删书时的回收站根目录 —— `<data_dir>/trash`。
-
-    删书默认**不真删**: 文件搬到这儿, 想恢复就搬回书库。磁盘要彻底回收时
-    自己清空这个目录 (服务不自动删, 免得"删错了"无处可捞)。
-    """
-    return get_config().data_dir / "trash"
-
-
-def _rel_under(path: Path, roots: list[Path]) -> str | None:
-    """path 相对某个书库根的路径 (回收站里保留原来的目录层级)。"""
-    try:
-        rp = path.resolve()
-    except OSError:
-        rp = path
-    for r in roots:
-        try:
-            return str(rp.relative_to(r))
-        except ValueError:
-            continue
-    return None
-
-
 def delete_book(key: str, *, keep_file: bool = False) -> dict:
     """把一本书从书架移除。
 
-    默认把文件 (连同 `.recto.json` / `.keywords.json` 边车) 移到
-    `<data_dir>/trash/<时间戳>/` —— 删错了搬回来就行。
+    默认**直接删除文件** (连同 `.recto.json` / `.keywords.json` 边车) —— 不进回收站,
+    删了就没了。`keep_file=True` 只摘书架记录, 文件留在原地。
 
     **只删 `rbook` 那一行**: 进度 / 书签 / 划线 / 阅读时长留在库里, 同一份文件
     放回原位 (路径不变 ⇒ key 不变) 时这些记录还在。删书要的是"从书架消失",
@@ -338,35 +314,29 @@ def delete_book(key: str, *, keep_file: bool = False) -> dict:
         raise FileNotFoundError("这本书不在书库里")
     row = dict(row)
     path = Path(str(row.get("path") or ""))
-    roots = [r.resolve() for r in book_roots()]
     out: dict = {"ok": True, "key": key, "title": row.get("title") or path.stem,
-                 "path": str(path), "trash": "", "file_removed": False,
+                 "path": str(path), "file_removed": False,
                  "sidecars": [], "index_removed": False}
 
     if not keep_file and path.exists():
-        rel = _rel_under(path, roots)
-        if rel is None:
+        roots = [str(r.resolve()) for r in book_roots()]
+        try:
+            real = path.resolve()
+        except OSError:
+            real = path
+        if not _under(str(real), roots):
             raise PermissionError(f"只能删书库目录里的书: {path}")
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        dest = trash_dir() / stamp / rel
-        n = 1
-        while dest.exists():          # 同一秒连删两本同名书
-            n += 1
-            dest = trash_dir() / f"{stamp}-{n}" / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(path), str(dest))
-        out["file_removed"] = True
-        out["trash"] = str(dest)
-        # 边车 / 术语表跟着书走, 不留在书库当孤儿文件
+        # 边车 / 术语表跟着书一起删, 不留在书库当孤儿文件
         for sc in (sidecar.sidecar_path(path), sidecar.keywords_path(path)):
             if not sc.exists():
                 continue
-            tgt = dest.with_name(sc.name)
             try:
-                shutil.move(str(sc), str(tgt))
-                out["sidecars"].append(str(tgt))
+                sc.unlink()
+                out["sidecars"].append(str(sc))
             except OSError:
                 continue
+        path.unlink()
+        out["file_removed"] = True
 
     c.execute("DELETE FROM rbook WHERE key=?", (key,))
     c.commit()

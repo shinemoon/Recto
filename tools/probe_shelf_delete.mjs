@@ -106,7 +106,7 @@ if (!target) {
   await del.click();
   await page.waitForTimeout(400);
   ok('先弹二次确认', asked.includes('从书架删除') && asked.includes(TITLE), asked);
-  ok('确认框提到回收站', asked.includes('data/trash'), asked);
+  ok('确认框提到直接删除', asked.includes('直接删除'), asked);
   const afterCancel = await page.$$eval('.bk-cell', (e) => e.length);
   ok('取消后卡片还在', afterCancel === before, `${before}->${afterCancel}`);
 

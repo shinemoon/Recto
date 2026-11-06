@@ -70,13 +70,14 @@ EPUB2 `<meta name="cover">`，取不到再按文件名带 `cover` 的图兜底�
 | 桌面 (有 hover) | 默认透明 + `pointer-events: none`; 悬停卡片才淡入 (`:focus-within` 也给键盘) |
 | 触屏 / 窄窗口 | 常显 (`@media (hover: none)` 与 `@media (max-width:860px)` 两条兜底) |
 
-点一下先弹二次确认 (原生 `confirm`, 跟语料/摘录那边一致), 文案写明"文件会移到
-`data/trash/`, 不是彻底删除", 并报出这本书已有的划线 / 书签数量。
+点一下先弹二次确认 (原生 `confirm`, 跟语料/摘录那边一致), 文案写明"文件会被直接删除、
+不进回收站、无法恢复", 并报出这本书已有的划线 / 书签数量。
 
 删的语义 (`reader_state.delete_book`, 路由 `POST /read/api/book/<key>/delete`):
 
-* 文件搬到 `<data_dir>/trash/<时间戳>/<书库内相对路径>` —— **不是真删**, 搬回去就复活
-* `.recto.json` / `.keywords.json` 边车跟着书一起搬走, 不在书库留孤儿
+* 文件 (含 `.recto.json` / `.keywords.json` 边车) **直接删除**, 不进回收站
+  (`keep_file=true` 时只摘书架记录, 文件留在原地)
+* `.recto.json` / `.keywords.json` 边车跟着书一起删掉, 不在书库留孤儿
 * **只删 `rbook` 那一行**: 进度 / 书签 / 划线 / 时长留在库里 → 文件放回原位 (路径不变 ⇒ key 不变) 时都还在
 * 下载索引 (云书目录) 里登记过的路径一并摘掉; 书库目录之外的文件直接拒 (403)
 * 删完立刻把卡片从本地列表摘掉并回执, 不等下次重扫 (重扫也不会复活)

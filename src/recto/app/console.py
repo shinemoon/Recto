@@ -662,7 +662,7 @@ function bookCard(b) {
     </button></div>`;
 }
 
-/* 删一本书: 文件搬到回收站 (data/trash), 书架立刻少一张卡。
+/* 删一本书: 文件直接删除, 书架立刻少一张卡。
  * 进度 / 划线 / 书签留在库里 —— 文件放回书库原位就都还在。 */
 async function deleteBook(btn) {
   const key = btn.getAttribute("data-del") || "";
@@ -672,7 +672,7 @@ async function deleteBook(btn) {
   const marks = Number(btn.getAttribute("data-marks")) || 0;
   const extra = notes || marks
     ? `\n\n本机的 ${notes} 条划线 / ${marks} 个书签会保留 —— 把文件放回书库就能再看到。` : "";
-  if (!window.confirm(`从书架删除《${title}》?\n\n文件会移到 data/trash/ (不是彻底删除)。${extra}`)) return;
+  if (!window.confirm(`从书架删除《${title}》?\n\n书库里的文件会被直接删除，不进回收站，无法恢复。${extra}`)) return;
   btn.disabled = true;
   const r = await api(`/read/api/book/${encodeURIComponent(key)}/delete`, {
     method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"
