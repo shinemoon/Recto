@@ -927,6 +927,14 @@
     return (Math.floor((+p || 0) * 1000) / 10).toFixed(1) + '%';
   }
 
+  // 上一次成功同步的样子 (没有记录就是「尚未同步」)。既用于常规渲染,
+  // 也用于「正在推送」时保留旧信息 —— 那时不刷新文本, 只在这行还空着时铺一次。
+  function lastStampText(s) {
+    var t = clockOf(s && s.last_push_at);
+    return t ? ('掌阅 ' + t + ' 已同步 ' + stampPct(s.last_push_pct))
+             : '掌阅 尚未同步';
+  }
+
   function renderStamp(st) {
     if (!stampEl) return;
     var cfg = (st && st.settings) || (S.sync && S.sync.settings) || {};
@@ -935,7 +943,11 @@
     if (s.state === 'no-link' || s.state === 'off') { stampEl.hidden = true; return; }
     var txt;
     if (s.state === 'pushing' || s.state === 'dirty') {
-      txt = '掌阅 同步中…';
+      // 正在推 / 排队中: 不打扰读者 —— 保留上一次的同步信息
+      // (节流窗口里 dirty 会持续十几秒, 反复刷那行只是噪声)。
+      // 还没有任何历史文本时, 才按 last_push_* 铺一次同样的「已同步 x%」。
+      if (!stampEl.hidden && stampEl.textContent) return;
+      txt = lastStampText(s);
     } else if (s.state === 'failed') {
       txt = '掌阅 同步失败';
     } else if (s.state === 'cloud-ahead') {
@@ -945,9 +957,7 @@
       // 读者自己往回读了 —— 云端跟着覆写, 小字直说
       txt = '掌阅 已按本地覆写 ' + stampPct(s.last_push_pct);
     } else {
-      var t = clockOf(s.last_push_at);
-      txt = t ? ('掌阅 ' + t + ' 已同步 ' + stampPct(s.last_push_pct))
-              : '掌阅 尚未同步';
+      txt = lastStampText(s);
     }
     stampEl.textContent = txt;
     stampEl.hidden = false;

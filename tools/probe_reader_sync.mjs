@@ -62,8 +62,9 @@ async function open(width, height) {
   return { page, ctx, errors, reqs };
 }
 
-// 小字有三种正常形态: 已同步 / 更靠前 (云端领先, 不往回拨) / 尚未同步 / 同步中
-const TEXT_OK = /^掌阅 (\d\d:\d\d 已同步 [\d.]+%|更靠前 [\d.]+%|已按本地覆写 [\d.]+%|尚未同步|同步中…)$/;
+// 小字只有四种形态: 已同步 / 更靠前 (云端领先, 不往回拨) / 已按本地覆写 / 尚未同步
+// (推送进行中不再显示「同步中…」, 保持上一次信息不动)
+const TEXT_OK = /^掌阅 (\d\d:\d\d 已同步 [\d.]+%|更靠前 [\d.]+%|已按本地覆写 [\d.]+%|尚未同步)$/;
 
 /* ---------- 桌面 ---------- */
 const snapCtx = await browser.newContext({ viewport: { width: 900, height: 700 } });
@@ -79,11 +80,14 @@ await snapCtx.close();
   chk('打开书时对过一次云端 (/sync)',
     reqs.some((r) => r.path === 'sync' && r.method === 'GET'), JSON.stringify(reqs.map((r) => r.path)));
 
-  // 小字要等 /sync 回来才渲染 (正文先出来), 给它 3 秒
+  // 小字要等 /sync 回来才渲染 (正文先出来)。云端慢时要几秒 —— 12 秒兜住,
+  // 超时就不静默了: 下面的断言会把它报成 FAIL, 而不是含着石头过去。
   await page.waitForFunction(() => {
     const el = document.getElementById('rv-sync');
     return el && !el.hidden && el.textContent.trim() !== '';
-  }, null, { timeout: 3000 }).catch(() => {});
+  }, null, { timeout: 12000, polling: 200 }).catch((e) => {
+    errors.push('rv-sync 未在 12s 内出现');
+  });
   const st = await page.evaluate(() => {
     const el = document.getElementById('rv-sync');
     if (!el) return null;

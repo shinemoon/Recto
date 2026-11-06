@@ -375,7 +375,8 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
 .rv-pageind[hidden] { display: none !important; }
 
 /* 右下角的云端同步状态 (设置页可关; 只读, 不吃指针)
- * 内容: 「掌阅 15:37 已同步 32.4%」/「掌阅 同步中…」/「掌阅 尚未同步」
+ * 内容: 「掌阅 15:37 已同步 32.4%」/「掌阅 尚未同步」/「掌阅 更靠前 41.0%」/「掌阅 同步失败」
+ * 推送进行中不刷「同步中…」: 保持上一次同步信息不动 (节流窗口十几秒, 反复刷只是噪声)。
  * 断网/失败时只变色不改布局 —— 这是提示, 不是错误面板。 */
 .rv-sync {
   position: fixed; right: max(8px, env(safe-area-inset-right));

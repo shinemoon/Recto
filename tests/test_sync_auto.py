@@ -330,6 +330,15 @@ check("JS: 定时轮询状态", "function syncPoll()" in js and "'/sync-state'" 
 check("JS: 离开页面立刻推", "function flushProgress()" in js
       and "flushProgress();" in js, "")
 check("JS: 显示格式 掌阅 HH:MM 已同步", "'掌阅 ' + t + ' 已同步 '" in js, "")
+# 2026-11-06: 读者要求「不要显示『掌阅 同步中…』, 保持上一次同步的信息」——
+# 推送进行中 (pushing / dirty) 只在这行还空着时铺一次 last_push_*, 否则原样不动。
+check("JS: 推送中不再显示「同步中」", "同步中" not in js, "")
+check("JS: 推送中保留上一次同步信息",
+      "if (!stampEl.hidden && stampEl.textContent) return;" in js, "")
+check("JS: 上一次同步信息有统一出口", "function lastStampText(s)" in js, "")
+_pushing = js.split("s.state === 'pushing' || s.state === 'dirty'", 1)
+check("JS: pushing/dirty 分支不写死文案", len(_pushing) == 2
+      and "txt = lastStampText(s);" in _pushing[1].split("}", 1)[0], "")
 
 css = (ROOT / "src/recto/app/ui/assets/reader.css").read_text("utf-8")
 check("CSS: 右下角定位 + 不吃指针", ".rv-sync {" in css
