@@ -32,8 +32,10 @@ class LLMReasoningUnavoidable(LLMError):
     """端点明确表示"这个模型必须思考" (关不掉).
 
     实测: MiniMax-M3.1-Flash 的 anthropic 端点对 thinking.type=disabled 直接 400
-    ("requires adaptive thinking"). 这种模型在严格模式下不该继续 —— 抽取会
-    把 token 烧在思考里, 而且 max_tokens 一不够就只回 thinking.
+    ("requires adaptive thinking").
+
+    只在**严格模式** (strict_no_reasoning=True) 下抛. 默认 (放宽) 的行为是
+    "关不掉就允许它思考照跑", 记 meta["think_off"]="forced", 由调用方决定是否提示.
     """
 
 
@@ -126,7 +128,11 @@ def _is_quota_error(msg: str) -> bool:
 #   1. 识别: looks_reasoning_model() — 名字命中已知推理家族
 #   2. 关闭: 按协议/家族发 "不要思考" 参数 (端点不支持就退一步, 记住别再发)
 #   3. 核实: 每次响应检查 reasoning_content / thinking 块 / reasoning_tokens,
-#      真的出现过就标记出来 — 严格模式下整轮中止 (不烧 48 个块的冤枉钱)
+#      真的出现过就标记出来 — 只有严格模式 (strict_no_reasoning) 才整轮中止.
+#
+# 默认策略 = **放宽**: 思考默认关 (这一步照做), 但如果端点根本关不掉, 就允许它
+# 思考继续跑 (meta["think_off"] = "forced"), 不把整轮拦死. 想要"一发现就停"的人
+# 可以在「LLM 配置」勾上「严格避免推理」.
 
 # 名字里出现这些 = 推理家族 (保守: 只列已知会思考的)
 _REASONING_NAME_MARKERS = (
@@ -462,12 +468,19 @@ def chat(
             remembered = dict(_THINK_OFF_LEVEL.get(key) or {})
             forced = key in _THINKING_REQUIRED
         if forced:
-            raise LLMReasoningUnavoidable(
-                f"{model} 要求自适应思考, 该端点不允许关闭 (已实测 {base_url}). "
-                f"抽取请换非推理模型; 确实要用它, 就在「模型库」把该模型的「思考」设为开启"
-                f" (但会慢很多、token 成倍)."
-            )
-        if remembered:
+            # 已知这个端点关不掉思考. 放宽路径 = 允许它思考照跑 (仍然不发关闭参数,
+            # 免得再吃一个 400); 严格模式才一进门就判死, 不必等第一块跑完.
+            if strict_reasoning:
+                raise LLMReasoningUnavoidable(
+                    f"{model} 要求自适应思考, 该端点不允许关闭 (已实测 {base_url}). "
+                    f"严格模式已开启, 本轮中止. 想让它带着思考跑完, 就在「LLM 配置」"
+                    f"关掉「严格避免推理」(或把该模型的「思考」设为允许) —— 会慢很多、"
+                    f"token 成倍, 必要时把 max_tokens 调大."
+                )
+            think_off_state = "forced"
+            _bump("thinking_forced")
+            think_off = {}
+        elif remembered:
             think_off = remembered
             think_off_state = "downgraded"
         elif blocked:
@@ -548,12 +561,12 @@ def chat(
 def _post_with_think_off(url: str, payload: dict, headers: dict, timeout: float,
                          think_off: dict, base_url: str, model: str,
                          strict: bool = False, provider: str = "openai") -> dict:
-    """发请求; 若"关闭思考"的参数不被接受, 按档位降级或直接判死.
+    """发请求; 若"关闭思考"的参数不被接受, 按档位降级或放行.
 
     三层走向, 顺序不能换:
       1. 端点说"这个模型必须思考" -> 换更弱但合法的档位 (openai 兼容才有);
-         没有档位可换 -> 记住 _THINKING_REQUIRED 并抛 LLMReasoningUnavoidable.
-         **绝不裸发请求**: 裸发 = 模型开始自适应思考, 一个块挂十几分钟.
+         没有档位可换 -> 记住 _THINKING_REQUIRED. 严格模式抛
+         LLMReasoningUnavoidable; 否则**允许它思考**裸发一次 (硬墙钟兜住挂死的风险).
       2. 端点只是"不认识这个参数名" -> 去掉参数重发, 记住别再加.
       3. 其它错误 -> 原样抛出 (交给 chat() 的重试逻辑).
     """
@@ -579,10 +592,15 @@ def _post_with_think_off(url: str, payload: dict, headers: dict, timeout: float,
                     _THINKING_REQUIRED.add(key)
                     _THINK_OFF_UNSUPPORTED.discard(key)
                     _THINK_OFF_LEVEL.pop(key, None)
-                raise LLMReasoningUnavoidable(
-                    f"端点拒绝关闭思考, 该模型无法在抽取中禁用推理 "
-                    f"(已试 {len(cands)} 档): {msg[:300]}"
-                ) from e
+                if strict:
+                    raise LLMReasoningUnavoidable(
+                        f"端点拒绝关闭思考, 该模型无法在抽取中禁用推理 "
+                        f"(已试 {len(cands)} 档): {msg[:300]}"
+                    ) from e
+                # 放宽: 关不掉就让它思考. 不带任何关闭参数重发一次, 由硬墙钟
+                # (_post_json 的 Timer) 兜住"自适应思考挂很久"的风险.
+                _bump("thinking_forced")
+                return _post_json(url, payload, headers, timeout)
             if not _param_unsupported(msg):
                 raise
             # 纯"参数名不认识": 去掉参数重发 (此时模型本身不需要思考, 是安全的)

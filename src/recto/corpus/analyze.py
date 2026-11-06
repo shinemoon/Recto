@@ -121,7 +121,8 @@ class ReasoningAborted(RuntimeError):
     """模型在输出推理内容 (thinking) -> 严格模式下整轮中止.
 
     跟 QuotaAborted 一样"本轮结果不可用", 但原因不同: 是模型选错了.
-    调用方要保住旧产物, 并提示用户把模型的「思考」关掉或换非推理模型.
+    **只有严格模式 (strict_no_reasoning=True) 才会抛**; 默认放宽时不抛,
+    模型带着思考照跑 (慢/token 多).
     """
 
 
@@ -293,7 +294,7 @@ def analyze_epub(
     errors_out: list[dict[str, Any]] | None = None,
     cache: dict[str, dict[str, Any]] | None = None,
     on_chunk_done=None,
-    strict_no_reasoning: bool = True,
+    strict_no_reasoning: bool = False,
     stats_out: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """跑完整分析. 返回合并后的 categories 结构.
@@ -305,6 +306,7 @@ def analyze_epub(
         on_chunk_done: `(idx, fp, items)` — 每块成功立刻回调, 用于落盘断点.
             必须在块结束**当时**写盘, 否则进程一挂整轮白跑 (这是原来最大的坑).
         strict_no_reasoning: 响应里真出现 thinking 就整轮中止.
+            默认 False (放宽): 出现 thinking 记一笔照跑, 慢/token 多但不拦.
         stats_out: 出参, 填 {"resumed": n, "ran": n, "reasoning_blocks": n}.
     """
     total = len(blocks)
@@ -356,11 +358,13 @@ def analyze_epub(
                 on_error(idx, total, e)
             items = []
         except llm.LLMReasoningUnavoidable as e:
-            # 端点明说"这个模型关不掉思考" -> 立刻停, 不必等它跑完再发现
+            # 只有严格模式才会走到这里 (放宽模式在 llm.chat 内部就放行了)。
+            # 立刻停, 不必等它跑完再发现。
             _err(idx, e)
             with lock:
                 reasoning_blocks.append(idx)
-            abort_evt.set()
+            if strict_no_reasoning:
+                abort_evt.set()
             if on_error:
                 on_error(idx, total, e)
             items = []

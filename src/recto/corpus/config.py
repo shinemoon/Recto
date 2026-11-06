@@ -129,8 +129,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_concurrency": 2,
         # 思考开关: off(默认, 抽取不该用推理) / on(允许) / auto(视作 off)
         "thinking": "off",
-        # 严格避免推理: 响应里真出现 thinking 就整轮中止, 不烧后面的块
-        "strict_no_reasoning": True,
+        # 严格避免推理: **默认关** —— 关不掉思考的端点允许它思考照跑 (慢/费 token,
+        # 但不会被拦死); 只有打开它才"响应里出现 thinking 就整轮中止".
+        "strict_no_reasoning": False,
     },
     "parse": {
         "max_chars_per_chunk": 8000,

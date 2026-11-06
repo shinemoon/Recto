@@ -547,7 +547,7 @@ def analyze_book(body: dict) -> tuple[int, dict]:
     # 推理模型体检 (只提示, 不拦 -- 拦截交给严格模式在首个块之后中止)
     model = cfg["llm"].get("model", "")
     thinking = str(cfg["llm"].get("thinking") or "off")
-    strict = bool(cfg["llm"].get("strict_no_reasoning", True))
+    strict = bool(cfg["llm"].get("strict_no_reasoning", False))
     warnings: list[str] = []
     if llm.looks_reasoning_model(model, cfg["llm"].get("base_url", "")):
         if thinking == "on":
@@ -557,10 +557,10 @@ def analyze_book(body: dict) -> tuple[int, dict]:
             )
         else:
             warnings.append(
-                f"当前模型 {model} 是推理模型: 已尝试发送「关闭思考」参数; "
-                f"若该端点忽略它, 严格模式会在第一块之后中止"
+                f"当前模型 {model} 是推理模型: 会先发「关闭思考」参数; "
+                f"端点若关不掉, 就允许它带着思考跑完 (慢 / 费 token)"
             )
-        if strict and thinking != "on":
+        if strict:
             warnings.append("严格避免推理已开启 (检测到 thinking 就整轮中止)")
 
     target_lang = body.get("target_language") or "Chinese"
@@ -623,6 +623,10 @@ def analyze_book(body: dict) -> tuple[int, dict]:
                 # 被"强制重跑"接手了: 本轮结果照样是有效数据, 但别写状态/产物,
                 # 免得把新一轮的 progress 覆盖成 done
                 return
+            forced_think = int((stats.get("llm") or {}).get("thinking_forced") or 0)
+            if forced_think:
+                log("%d 块模型关不掉思考, 已按放宽策略让它带着思考跑完"
+                    % forced_think, "warn")
             out = analyze.build_output(
                 info, cfg["llm"], categories, merged,
                 n_chunks=len(blocks), target_lang=target_lang,

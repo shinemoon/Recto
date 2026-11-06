@@ -104,7 +104,8 @@ async function loadConfig() {
   $('#llm-temp').value = cfg.llm.temperature != null ? cfg.llm.temperature : 0.2;
   $('#llm-conc').value = cfg.llm.max_concurrency || 3;
   $('#llm-thinking').value = cfg.llm.thinking === 'on' ? 'on' : 'off';
-  $('#llm-strict').checked = cfg.llm.strict_no_reasoning !== false;
+  // 严格避免推理默认关 (放宽): 关不掉思考的端点允许它带着思考跑完
+  $('#llm-strict').checked = cfg.llm.strict_no_reasoning === true;
   $('#chunk-size').value = cfg.parse.max_chars_per_chunk || 6000;
   renderReasoningTip(cfg.llm);
   state.categories = cfg.categories || [];
@@ -152,14 +153,14 @@ function renderReasoningTip(llm) {
     return;
   }
   const thinking = (llm && llm.thinking) || $('#llm-thinking').value || 'off';
-  const strict = (llm && llm.strict_no_reasoning) !== false;
+  const strict = (llm && llm.strict_no_reasoning) === true;
   el.className = 'tip warn';
   el.innerHTML = '⚠ <b>' + esc(model) + '</b> 属于推理模型。抽取时它会把 token 烧在思考上, ' +
     '慢而且容易撞 max_tokens 截断。<br>' +
     '→ 已设「思考 = ' + (thinking === 'on' ? '<b>允许</b>' : '<b>关闭</b>') + '」' +
-    (thinking === 'on' ? ' (这会明显变慢)' : ' (会尝试发送关闭参数; 端点不认就只能换模型)') + '。' +
+    (thinking === 'on' ? ' (这会明显变慢)' : ' (会尝试发送关闭参数)') + '。' +
     (strict ? '严格模式开启: 一旦响应里出现 thinking 就中止本轮, 不浪费后面的块。'
-            : '严格模式关闭: 出现 thinking 也会继续跑。');
+            : '严格模式关闭 (默认): 端点关不掉思考就允许它带着思考跑完, 慢一些但不会拦死; 想「一发现就停」就勾上「严格避免推理」。');
 }
 
 $('#btn-llm-save').onclick = async () => {

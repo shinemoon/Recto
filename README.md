@@ -529,6 +529,24 @@ python3 tools/make_logo.py --check    # 派生图比源图旧就 exit 1（CI 用
   `html img.rc-logo{filter:invert(1)}` 反相成白色 —— 换皮肤不用重出图。
 * 派生图**跟着入库**，`tests/test_ui_theme.py` 会检查它们是否比 `logo.png` 旧。
 
+## 推理模型 / 思考
+
+抽取默认**不要思考**（`llm.thinking = "off"`）：一次块抽取的产出只有几百 token 的
+JSON，推理模型会把 token 烧在 thinking 上，慢 3-5 倍，还容易撞 `max_tokens` 截断。
+
+但"关不掉思考"的端点（例如 MiniMax 的 anthropic 兼容层对 `thinking.type=disabled`
+直接 400）**不会再把整轮拦死** —— 默认放宽：
+
+| 配置 | 关不掉思考时的行为 |
+|---|---|
+| `thinking = "off"` + `strict_no_reasoning = false`（**默认**） | 照常先发「别思考」参数；端点不接受就**允许它带着思考跑完**，`corpus.log` 记一条 `N 块模型关不掉思考` |
+| `thinking = "off"` + `strict_no_reasoning = true` | 一发现就中止本轮（`ReasoningAborted`），不浪费后面的块 |
+| `thinking = "on"` | 主动允许思考（最慢、token 最贵；记得调大 `max_tokens`） |
+
+「严格避免推理」在语料页「1 · LLM 配置」里，**默认不勾**。想快就换非推理模型
+（`agnes-2.5-flash` / `MiniMax-Text-01` 实测同一本书 `reasoning_tokens = 0`）。
+`strict_no_reasoning` 只写在 `data/corpus/config.json` 里（不是 `config.toml`）。
+
 ## 可选组件
 
 ### 墨水屏摘录接入（:8080）
@@ -710,7 +728,7 @@ RV_KEY=<某本书的 key> node tools/probe_reader_paged.mjs
 | 阅读器进度与云端差半个百分点 | 正常 | 云端是 float32 存百分比，反解回字节有 <1 字节误差 |
 | 划线正文末尾少/多一个字 | 打开那条划线看原文 | 区间口径差异（云端 `positionend` 指向最后一个字本身） |
 | 摘录页空 | `recto.sources.device status` | 设备接入进程没起，或设备没推到 8080 |
-| 语料页抽词失败 | 语料页「1 · LLM 配置」里点测连通；看 `data/state/logs/corpus.log` | 端点/额度/模型不支持（推理模型会被严格模式中止） |
+| 语料页抽词失败 | 语料页「1 · LLM 配置」里点测连通；看 `data/state/logs/corpus.log` | 端点/额度/模型不支持（模型强制思考时会变慢，但不是错误 —— 见「推理模型 / 思考」一段） |
 | 换了排版后高亮不显示 | 语料目录里有没有这本书的 `keywords.json` | 语料缺失，或书名对不上（在设置页手动绑定） |
 | 藏书票报缺依赖 | `node -v`；Playwright 浏览器是否装 | 只有这一块依赖 Node |
 
