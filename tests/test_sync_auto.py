@@ -94,12 +94,15 @@ print("== 配置层 ==")
 cfg = config.get_config(reload=True)
 sec = cfg.section("sync")
 check("默认项齐全", set(sec) >= {"auto", "pull_on_open", "push_debounce_sec",
-                                "pull_gap_sec", "flush_on_hide", "stamp"}, sec)
+                                "pull_gap_sec", "flush_on_hide", "stamp",
+                                "interval_sec"}, sec)
 check("默认打开自动同步与右下角显示", sec["auto"] is True and sec["stamp"] is True, sec)
 check("默认推送节流 12 秒", int(sec["push_debounce_sec"]) == 12, sec)
+check("默认开定时同步 60 秒", int(sec["interval_sec"]) == 60, sec)
 s0 = sync.sync_settings()
 check("sync_settings 暴露全部项", set(s0) == {"auto", "pull_on_open",
-      "push_debounce_sec", "pull_gap_sec", "flush_on_hide", "stamp"}, s0)
+      "push_debounce_sec", "pull_gap_sec", "flush_on_hide", "stamp",
+      "interval_sec"}, s0)
 
 st.update(sync_auto="off", sync_stamp="off", sync_push_debounce="20")
 config.get_config(reload=True)

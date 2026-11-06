@@ -36,7 +36,7 @@ REPORT_URL = "https://webboot.zhangyue.com/usercenter/user/read_report/statistic
 BOOK_URL = "https://webboot.zhangyue.com/usercenter/user/read_report/book"
 UPLOAD_URL = "https://uc.ireader.com/postal/reading_time/report"
 
-RES_READ = 1
+RES_READ = "R"          # APK: `res: "R"` = 阅读 (T=TTS); 服务端要实体串, 不是数字
 BITMAP_BYTES = 180
 KEEP_DAYS = 30
 
@@ -167,9 +167,38 @@ def _state_conn() -> sqlite3.Connection:
             tries INTEGER DEFAULT 0, first_at TEXT NOT NULL, last_try TEXT,
             PRIMARY KEY (book32, day)
         );
+        CREATE TABLE IF NOT EXISTS rtime_push (
+            book32 TEXT NOT NULL, day TEXT NOT NULL, bitmap TEXT NOT NULL,
+            minutes INTEGER DEFAULT 0, pushed_at TEXT NOT NULL,
+            PRIMARY KEY (book32, day)
+        );
     """)
     c.commit()
     return c
+
+
+def _pushed_bitmap(book32: str, day: str) -> str:
+    """这天这本书**已经推上去过**的分钟位图 (没有 = 空串)。"""
+    c = _state_conn()
+    try:
+        row = c.execute("SELECT bitmap FROM rtime_push WHERE book32=? AND day=?",
+                        (book32, day)).fetchone()
+        return str(row["bitmap"] or "") if row else ""
+    finally:
+        c.close()
+
+
+def _mark_pushed(book32: str, day: str, bitmap: str, minutes: int) -> None:
+    c = _state_conn()
+    try:
+        c.execute("""INSERT INTO rtime_push(book32,day,bitmap,minutes,pushed_at)
+                     VALUES(?,?,?,?,?)
+                     ON CONFLICT(book32,day) DO UPDATE SET bitmap=excluded.bitmap,
+                       minutes=excluded.minutes, pushed_at=excluded.pushed_at""",
+                  (book32, day, bitmap, int(minutes), _now()))
+        c.commit()
+    finally:
+        c.close()
 
 
 def _now() -> str:
@@ -349,7 +378,7 @@ def enqueue(day: date, *, keys: Iterable[str] | None = None,
     if keys is not None:
         want = set(keys)
         rows = [r for r in rows if r["key"] in want]
-    queued = skipped = 0
+    queued = skipped = unchanged = 0
     detail: list[dict] = []
     for r in rows:
         bitmap, minutes = _local_day_bitmap(r["key"], day)
@@ -357,11 +386,18 @@ def enqueue(day: date, *, keys: Iterable[str] | None = None,
             skipped += 1
             continue
         book32 = (r["id32"] or r["id64"])[:32].upper()
+        # 云端已经有这些分钟了 → 别再推一遍 (定时通道每 10 分钟跑一次,
+        # 不然同一份"今天读了 N 分钟"会反复写上去, 日志也变成噪声)。
+        prev = _pushed_bitmap(book32, day.isoformat())
+        if prev and _union(prev, bitmap)[0] == prev:
+            unchanged += 1
+            continue
         if not dry_run:
             _queue_put(book32, day, bitmap, minutes, _pct_for_day(r["key"], day))
         queued += 1
         detail.append({"book": r["title"], "minutes": minutes})
-    return {"day": day.isoformat(), "queued": queued, "skipped": skipped, "books": detail}
+    return {"day": day.isoformat(), "queued": queued, "skipped": skipped,
+            "unchanged": unchanged, "books": detail}
 
 
 def flush(*, dry_run: bool = False) -> dict:
@@ -415,6 +451,8 @@ def flush(*, dry_run: bool = False) -> dict:
     for v in groups.values():
         for r in v:
             _queue_del(r["book32"], r["day"])
+            _mark_pushed(r["book32"], r["day"], str(r["bitmap"] or ""),
+                         int(r["minutes"] or 0))
             report["cleared"] += 1
     report["resp"] = res.get("body")
     return report

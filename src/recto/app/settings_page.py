@@ -210,6 +210,31 @@ _JS = r"""
     var st = $('sy-stamp'); if (st) st.checked = !!d.stamp;
     var gp = $('sy-gap'); if (gp && document.activeElement !== gp) gp.value = d.push_debounce_sec;
     var pg = $('sy-pullgap'); if (pg) pg.textContent = d.pull_gap_sec;
+    var tk = d.tick || {};
+    var ton = $('sy-tick'); if (ton) ton.checked = !!tk.enabled;
+    var tse = $('sy-tick-sec');
+    if (tse && document.activeElement !== tse) tse.value = tk.interval_sec || 60;
+    var tn = $('sy-tick-notes'); if (tn) tn.checked = !!tk.notes;
+    var tt = $('sy-tick-time'); if (tt) tt.checked = !!tk.time;
+    var tst = $('sy-tick-state');
+    if (tst) {
+      if (!tk.enabled) tst.textContent = '已关闭';
+      else {
+        var bits = ['每 ' + (tk.interval_sec || 0) + ' 秒'];
+        if (!tk.running) bits.push('心跳未运行');
+        if (tk.last_at) {
+          bits.push('上次 ' + String(tk.last_at).slice(11, 19));
+          if ((tk.last_keys || []).length) {
+            bits.push((tk.last_actions || []).length
+              ? '同步了 ' + (tk.last_actions || []).join(' / ')
+              : (tk.last_keys || []).length + ' 本无变化');
+          } else {
+            bits.push('最近没在读');
+          }
+        } else bits.push('还没跑过');
+        tst.textContent = bits.join(' · ');
+      }
+    }
     var pill = $('sy-pill');
     if (pill) {
       var bits = [];
@@ -217,6 +242,7 @@ _JS = r"""
       else {
         bits.push('已启用');
         if (d.stamp) bits.push('右下角显示');
+        if (tk.enabled) bits.push('定时 ' + (tk.interval_sec || 0) + 's');
       }
       pill.textContent = bits.join(' · ');
       pill.className = 'pill' + (d.auto ? '' : ' mute');
@@ -224,7 +250,7 @@ _JS = r"""
     var srcBox = $('sy-src');
     if (srcBox && d.source) {
       var names = [];
-      ['auto','pull_on_open','flush_on_hide','stamp','push_debounce_sec'].forEach(function(k){
+      ['auto','pull_on_open','flush_on_hide','stamp','push_debounce_sec','interval_sec'].forEach(function(k){
         var v = d.source[k];
         var label = SY_LABEL[v] || v;
         if (names.indexOf(label) < 0) names.push(label);
@@ -244,7 +270,11 @@ _JS = r"""
       pull_on_open: !!($('sy-pull') || {}).checked,
       flush_on_hide: !!($('sy-flush') || {}).checked,
       stamp: !!($('sy-stamp') || {}).checked,
-      push_debounce_sec: parseInt(($('sy-gap') || {}).value, 10) || 12
+      push_debounce_sec: parseInt(($('sy-gap') || {}).value, 10) || 12,
+      interval_on: !!($('sy-tick') || {}).checked,
+      interval_sec: parseInt(($('sy-tick-sec') || {}).value, 10) || 60,
+      tick_notes: !!($('sy-tick-notes') || {}).checked,
+      tick_time: !!($('sy-tick-time') || {}).checked
     };
   }
 
@@ -638,6 +668,7 @@ def sync_state() -> dict:
     from recto.services import sync as _sync
 
     eff = _sync.sync_settings()
+    tick = _sync.tick_state()
     over = st.active_overrides()
     db = over.get("sync_push_debounce")
 
@@ -653,17 +684,20 @@ def sync_state() -> dict:
         "stamp": eff["stamp"],
         "push_debounce_sec": int(round(eff["push_debounce_sec"])),
         "pull_gap_sec": int(round(eff["pull_gap_sec"])),
+        "tick": tick,
         "source": {
             "auto": src("sync_auto", "RECTO_SYNC_AUTO"),
             "pull_on_open": src("sync_pull_on_open", "RECTO_SYNC_PULL_ON_OPEN"),
             "flush_on_hide": src("sync_flush_on_hide", "RECTO_SYNC_FLUSH_ON_HIDE"),
             "stamp": src("sync_stamp", "RECTO_SYNC_STAMP"),
             "push_debounce_sec": src("sync_push_debounce", "RECTO_SYNC_PUSH_DEBOUNCE"),
+            "interval_sec": src("sync_interval_sec", "RECTO_SYNC_INTERVAL"),
         },
         "override_keys": sorted(over.keys()),
         "has_override": bool(db) or any(
             k in over for k in ("sync_auto", "sync_pull_on_open",
-                                "sync_flush_on_hide", "sync_stamp")),
+                                "sync_flush_on_hide", "sync_stamp",
+                                "sync_interval_sec")),
     }
 
 
@@ -767,7 +801,9 @@ def page_html(user: str | None = None) -> str:
         '<details class="sec wide" id="sync"><summary>云端同步 '
         '<span class="pill mute" id="sy-pill">读取中…</span></summary><div class="sec-body">'
         '<div class="st-note">阅读时把进度推到云端阅读服务（掌阅），打开一本书时先跟云端对一次。'
-        '推送<b>只前进</b> —— 手机端读得更靠前时不会被网页这边往回拨。</div>'
+        '推送<b>只前进</b> —— 手机端读得更靠前时不会被网页这边往回拨。'
+        '同步有两条通道: <b>翻页触发</b>（读者一动就推）与<b>定时触发</b>'
+        '（停在原地也按时补一次, 顺带把划线与阅读时长带上）。</div>'
         '<div class="st-two">'
         '<div class="st-block"><div class="st-h">同步行为</div>'
         '<label class="st-sw"><span>阅读时自动同步<small>翻页就把进度推给云端</small></span>'
@@ -787,9 +823,19 @@ def page_html(user: str | None = None) -> str:
         "<em>秒</em></div>"
         '<div class="st-row"><span>拉取间隔<small>同一本书两次自动拉取之间</small></span>'
         '<b id="sy-pullgap">—</b><em>秒</em></div>'
+        '<label class="st-sw"><span>定时同步<small>停在一页上看很久 / 没翻页也在同步</small></span>'
+        '<input type="checkbox" class="m3" id="sy-tick"></label>'
+        '<div class="st-row"><span>定时间隔<small>多久看一眼最近读过的书</small></span>'
+        '<input class="st-in" id="sy-tick-sec" type="number" min="15" max="600" step="5">'
+        "<em>秒</em></div>"
+        '<label class="st-sw"><span>顺带同步划线 / 书签<small>定时的同时跟云端对一次</small></span>'
+        '<input type="checkbox" class="m3" id="sy-tick-notes"></label>'
+        '<label class="st-sw"><span>顺带推送阅读时长<small>今天的分钟数, 十分钟一次</small></span>'
+        '<input type="checkbox" class="m3" id="sy-tick-time"></label>'
+        '<div class="st-line">定时同步 <span id="sy-tick-state">—</span></div>'
         '<div class="st-line">来源 <span id="sy-src">—</span></div>'
-        '<div class="st-note" style="margin-top:10px">改完立刻生效（下一次翻页 / 打开书就用新设置），'
-        "不用重启服务。</div>"
+        '<div class="st-note" style="margin-top:10px">改完立刻生效（下一次翻页 / 打开书 / '
+        "定时心跳就用新设置），不用重启服务。</div>"
         "</div>"
         "</div>"
         '<div class="row" style="margin-top:14px">'
@@ -893,7 +939,9 @@ def api_post(body: dict) -> dict:
         raw = body.get("sync")
         if raw is None or raw == "":
             st.clear("sync_auto", "sync_pull_on_open", "sync_flush_on_hide",
-                     "sync_stamp", "sync_push_debounce")
+                     "sync_stamp", "sync_push_debounce",
+                     "sync_interval", "sync_interval_sec",
+                     "sync_tick_notes", "sync_tick_time")
         elif isinstance(raw, dict):
             kv = {}
             for key in ("auto", "pull_on_open", "flush_on_hide", "stamp"):
@@ -908,6 +956,20 @@ def api_post(body: dict) -> dict:
                 if gap < 3 or gap > 300:
                     raise ValueError("推送间隔要在 3–300 秒之间")
                 kv["sync_push_debounce"] = str(gap)
+            # 定时同步 (心跳): interval_on / interval_sec / tick_notes / tick_time
+            if "interval_on" in raw or "interval_sec" in raw:
+                on = bool(raw.get("interval_on", True))
+                try:
+                    iv = int(float(raw.get("interval_sec", 60)))
+                except (TypeError, ValueError):
+                    raise ValueError("定时间隔要写数字 (秒)")
+                if iv < 0 or iv > 3600:
+                    raise ValueError("定时间隔要在 0–3600 秒之间")
+                kv["sync_interval"] = "on" if (on and iv > 0) else "off"
+                kv["sync_interval_sec"] = str(iv if iv > 0 else 60)
+            for tkey in ("tick_notes", "tick_time"):
+                if tkey in raw:
+                    kv["sync_" + tkey] = "on" if bool(raw.get(tkey)) else "off"
             if kv:
                 st.update(**kv)
         else:

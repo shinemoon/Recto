@@ -188,10 +188,26 @@ def _start_device_listener():
     return srv
 
 
+def _start_ticker():
+    """定时同步心跳 (与翻页推送并行)。起不来不致命 —— 翻页推送照旧。"""
+    try:
+        from recto.services import sync as sync_mod
+
+        if sync_mod.start_ticker():
+            st = sync_mod.tick_settings()
+            print(f"[recto] 定时同步每 {int(round(st['interval_sec']))} 秒看一眼最近读过的书",
+                  flush=True)
+        return True
+    except Exception as e:  # noqa: BLE001 — 心跳起不来不该挡住服务
+        print(f"[recto] 定时同步没能启动 ({e}) —— 翻页推送照常", flush=True)
+        return False
+
+
 def main() -> None:
     srv = make_server()
     print(f"recto on http://{HOST}:{PORT}  (library + cloud + reader + excerpts)", flush=True)
     _warn_default_login()
+    _start_ticker()
     dev_srv = _start_device_listener()
     try:
         srv.serve_forever()

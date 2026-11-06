@@ -167,6 +167,11 @@ class Config:
             "RECTO_SYNC_PULL_GAP": ("sync", "pull_gap_sec"),
             "RECTO_SYNC_FLUSH_ON_HIDE": ("sync", "flush_on_hide"),
             "RECTO_SYNC_STAMP": ("sync", "stamp"),
+            # 定时同步 (心跳通道): 0 = 关
+            "RECTO_SYNC_INTERVAL": ("sync", "interval_sec"),
+            "RECTO_SYNC_TICK_ACTIVE_MIN": ("sync", "tick_active_min"),
+            "RECTO_SYNC_TICK_NOTES": ("sync", "tick_notes"),
+            "RECTO_SYNC_TICK_TIME": ("sync", "tick_time"),
         }
         for env, (sec, key) in env_map.items():
             v = os.environ.get(env)

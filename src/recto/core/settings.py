@@ -29,7 +29,10 @@ KEYS = ("nickname", "library_dir",
         # 云端同步 (设置页「云端同步」卡): 布尔用 "on"/"off" 存,
         # 数字用字符串存 —— settings.json 里人能直接看懂
         "sync_auto", "sync_pull_on_open", "sync_flush_on_hide",
-        "sync_stamp", "sync_push_debounce")
+        "sync_stamp", "sync_push_debounce",
+        # 定时同步 (心跳通道): 开关 + 周期 + 是否顺带推划线/时长
+        "sync_interval", "sync_interval_sec",
+        "sync_tick_notes", "sync_tick_time")
 
 
 # ---------------------------------------------------------------- 文件
@@ -126,7 +129,27 @@ _SYNC_BOOLS = (
     ("sync_pull_on_open", "pull_on_open"),
     ("sync_flush_on_hide", "flush_on_hide"),
     ("sync_stamp", "stamp"),
+    ("sync_tick_notes", "tick_notes"),
+    ("sync_tick_time", "tick_time"),
 )
+
+
+def _interval_override(d: dict) -> int | None:
+    """设置页的「定时同步」开关 + 周期 → `[sync] interval_sec` (0 = 关)。"""
+    on = _bool(d.get("sync_interval"))
+    raw = str(d.get("sync_interval_sec") or "").strip()
+    try:
+        num = int(float(raw)) if raw else None
+    except (TypeError, ValueError):
+        num = None
+    if num is not None:
+        num = max(0, min(3600, num))
+        if on is False:
+            return 0
+        return num
+    if on is None:
+        return None
+    return 60 if on else 0
 
 
 def overrides(cfg=None) -> dict:
@@ -147,6 +170,9 @@ def overrides(cfg=None) -> dict:
             sync["push_debounce_sec"] = max(3, min(300, int(float(db))))
     except (TypeError, ValueError):
         pass
+    iv = _interval_override(d)
+    if iv is not None:
+        sync["interval_sec"] = iv
     if sync:
         out["sync"] = sync
     return out
@@ -173,6 +199,9 @@ def active_overrides() -> dict:
     db = str(d.get("sync_push_debounce") or "").strip()
     if db and os.environ.get("RECTO_SYNC_PUSH_DEBOUNCE") is None:
         out["sync_push_debounce"] = db
+    iv = _interval_override(d)
+    if iv is not None and os.environ.get("RECTO_SYNC_INTERVAL") is None:
+        out["sync_interval_sec"] = iv
     return out
 
 

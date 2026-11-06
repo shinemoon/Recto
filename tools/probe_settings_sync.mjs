@@ -40,7 +40,7 @@ const api = async (body) => await page.evaluate(async (b) => {
 chk('卡片存在', await page.locator('#sync').count() === 1);
 chk('状态 pill 已填', /已启用|已关闭/.test(await page.locator('#sy-pill').innerText()),
   await page.locator('#sy-pill').innerText());
-chk('四个开关都在', (await page.locator('#sync input[type=checkbox]').count()) === 4,
+chk('开关都在 (4 行为 + 3 定时)', (await page.locator('#sync input[type=checkbox]').count()) === 7,
   String(await page.locator('#sync input[type=checkbox]').count()));
 chk('推送间隔输入框 3–300', await page.locator('#sy-gap').getAttribute('min') === '3'
   && await page.locator('#sy-gap').getAttribute('max') === '300');

@@ -51,6 +51,14 @@ _PULL_BOOK_AT: dict[str, float] = {}
 # 打开书时"只比不写"的结论缓存: key -> {at, res}
 _PEEK_CACHE: dict[str, dict] = {}
 
+# 定时同步 (`[sync] interval_sec`) 的运行时状态 —— 与"翻页触发"是两条通道,
+# 共用同一份节流窗口和同一份推送结论。
+#   at/notes_at/time_at = 各自上一次跑的墙钟
+#   runs / last / error  = 给设置页看的"最近一次定时同步"
+_TICK_STATE: dict[str, object] = {"at": 0.0, "notes_at": 0.0, "time_at": 0.0,
+                                 "runs": 0, "last": None, "error": None,
+                                 "thread": None, "started_at": 0.0}
+
 # 读者显式选过「留在本地」之后, 多久之内允许把进度写到云端更后面。
 # 这是读者的明确选择, 不是我们擅自回拨; 也不是一劳永逸——
 # 过期后回到默认的只前进, 免得哪天忘了这回事把云端写回旧位置。
@@ -693,6 +701,31 @@ def sync_settings() -> dict:
         "pull_gap_sec": float(_sync_cfg("pull_gap_sec", 120) or 120),
         "flush_on_hide": bool(_sync_cfg("flush_on_hide", True)),
         "stamp": bool(_sync_cfg("stamp", True)),
+        # 定时通道: 0 = 关闭。翻页推送是"读者动一下", 这个是"心跳",
+        # 两者互补 —— 停在一页上不动时进度/划线/时长照样会被带上去。
+        "interval_sec": float(_sync_cfg("interval_sec", 60) or 0),
+    }
+
+
+def tick_settings() -> dict:
+    """定时同步的具体节奏 (「心跳」通道)。
+
+    `interval_sec` 是主周期 (每这么久看一眼有没有活可干);
+    划线/时长比它稀疏, 各自有周期, 免得每分钟都去打一次云端。
+    """
+    def _num(name: str, default: float) -> float:
+        try:
+            return float(_sync_cfg(name, default) or 0)
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "interval_sec": max(0.0, _num("interval_sec", 60)),
+        "active_min": max(1.0, _num("tick_active_min", 30)),
+        "notes": bool(_sync_cfg("tick_notes", True)),
+        "notes_sec": max(30.0, _num("tick_notes_sec", 300)),
+        "time": bool(_sync_cfg("tick_time", True)),
+        "time_sec": max(60.0, _num("tick_time_sec", 600)),
     }
 
 
@@ -868,6 +901,224 @@ def mirror_reader_progress(key: str, pct: float, *, finished: bool = False,
     threading.Thread(target=_push_worker, args=(key,), daemon=True,
                      name="recto-push").start()
     return {"ok": True, "queued": True, "state": _state_of(key)}
+
+
+# --------------------------------------------------------------------------
+# 定时同步 —— 与"翻页触发"并行的第二条通道 (心跳)
+# --------------------------------------------------------------------------
+#
+# 翻页推送解决"读者动了", 但下面这些情况它一次都不会推:
+#   * 停在一页上看很久 (进度不变, 但阅读时长在涨)
+#   * 在阅读器里加了划线 / 书签却不翻页
+#   * 页面已经关了, 队列里还躺着没推的时长
+# 定时器就是干这个的: 每 `[sync] interval_sec` 秒看一眼**最近读过的书**,
+# 有活就推, 没活动就什么都不做 (不打网络, 也不写日志)。
+
+def _iso_to_epoch(s: str | None) -> float | None:
+    """`rprogress.updated_at` 那种本地朴素时间 ("2026-11-06T22:31:05") → 墙钟秒。"""
+    if not s:
+        return None
+    txt = str(s)
+    try:
+        return time.mktime(datetime.strptime(txt[:19], "%Y-%m-%dT%H:%M:%S").timetuple())
+    except Exception:  # noqa: BLE001 —— 带时区 / 带微秒的写法
+        try:
+            return datetime.fromisoformat(txt).timestamp()
+        except Exception:
+            return None
+
+
+def active_keys(window_sec: float | None = None) -> list[str]:
+    """最近动过进度的书 (默认 `[sync] tick_active_min` 分钟), 且跟云端有映射。
+
+    没活动就不打网络: 人没读书的时候定时器该是安静的, 日志也不该被 noop 刷满。
+    """
+    if window_sec is None:
+        window_sec = tick_settings()["active_min"] * 60
+    now = time.time()
+    out: list[str] = []
+    try:
+        books = reader_state.list_books()
+    except Exception as e:  # noqa: BLE001 — 书库读不出来不该让定时器死掉
+        log.warning("定时同步 · 书库读不出来 · %s", e)
+        return out
+    for b in books:
+        ts = _iso_to_epoch(b.get("updated_at"))
+        if not ts or now - ts > float(window_sec):
+            continue
+        key = str(b.get("key") or "")
+        if key and _link_light(key):
+            out.append(key)
+    return out
+
+
+def _changed_keys(keys: list[str]) -> list[str]:
+    """这些书里, 本地进度跟"上次推上去的"不一样的那几本。
+
+    没有这一步的话, 每 60 秒都要为了一本没翻过的书去云端问一圈 —— 白打网络,
+    而 `push_once` 最后也只会给一句 noop。
+    """
+    out: list[str] = []
+    for key in keys:
+        row = _link_light(key)
+        if not row:
+            continue
+        prog = reader_state.get_progress(key) or {}
+        if not prog:
+            continue
+        pct = float(prog.get("percent") or 0.0)
+        link = sidecar.cloud_link(row["path"]) or {}
+        last = link.get("last_push_pct")
+        try:
+            if last is None or abs(float(last) - pct) > 1e-9:
+                out.append(key)
+        except (TypeError, ValueError):
+            out.append(key)
+    return out
+
+
+def tick_once(*, force: bool = False) -> dict:
+    """跑一次定时同步。
+
+    **只走"只前进"的闸门** (`allow_rewind=False`): 定时器替读者做主才是不对的 ——
+    回拨只允许读者自己动出来的位置 (翻页 / 目录跳转)。
+    """
+    st = sync_settings()
+    now = time.time()
+    _TICK_STATE["at"] = now
+    _TICK_STATE["runs"] = int(_TICK_STATE.get("runs") or 0) + 1
+    out: dict = {"at": _now(), "keys": [], "actions": []}
+    if not st["auto"]:
+        out["skipped"] = "auto-off"
+        _TICK_STATE["last"] = out
+        return out
+    tk = tick_settings()
+    keys = active_keys(tk["active_min"] * 60)
+    out["keys"] = keys
+    if not keys:
+        out["activity"] = "idle"
+        _TICK_STATE["last"] = out
+        _TICK_STATE["error"] = None
+        return out
+
+    # 1) 进度 (只前进) —— 只对"本地跟上次推上去的不一样"的书打云端
+    push_keys = _changed_keys(keys)
+    if push_keys:
+        try:
+            res = push_once(keys=push_keys)
+            out["push"] = {k: int(res.get(k) or 0) for k in ("pushed", "skipped", "failed")}
+            if out["push"]["pushed"]:
+                out["actions"].append("progress")
+        except Exception as e:  # noqa: BLE001
+            out["push_error"] = f"{type(e).__name__}: {e}"
+            log.warning("定时同步 · 进度推送失败 · %s", e)
+        # 两条通道共用同一个节流窗口: 定时推完, 紧跟着的翻页不必再打一次云端
+        with _PUSH_LOCK:
+            for k in push_keys:
+                _PUSH_STATE.setdefault(k, {})["at"] = now
+
+    # 2) 划线 / 书签 (稀疏得多)
+    if tk["notes"] and (force or now - float(_TICK_STATE.get("notes_at") or 0) >= tk["notes_sec"]):
+        _TICK_STATE["notes_at"] = now
+        try:
+            from recto.services import notes as _notes
+
+            pu = _notes.push(keys=keys, quiet=True)
+            pl = _notes.pull(keys=keys, quiet=True)
+            out["notes"] = {
+                "pushed": int(pu.get("pushed") or 0) + int(pu.get("pushed_marks") or 0),
+                "deleted": int(pu.get("deleted") or 0),
+                "added": int(pl.get("added") or 0),
+                "updated": int(pl.get("updated") or 0),
+                "failed": len(pu.get("errors") or []),
+            }
+            if any(out["notes"].get(k) for k in ("pushed", "deleted", "added", "updated")):
+                out["actions"].append("notes")
+        except Exception as e:  # noqa: BLE001
+            out["notes_error"] = f"{type(e).__name__}: {e}"
+            log.warning("定时同步 · 划线同步失败 · %s", e)
+
+    # 3) 今天的阅读时长 (云端只认"今天", 所以每次都是今天这一档)
+    if tk["time"] and (force or now - float(_TICK_STATE.get("time_at") or 0) >= tk["time_sec"]):
+        _TICK_STATE["time_at"] = now
+        try:
+            from recto.services import sessions as _sessions
+
+            tm = _sessions.push(keys=keys)
+            out["time"] = {"queued": int(tm.get("queued") or 0),
+                           "written": int(tm.get("written") or 0),
+                           "failed": len(tm.get("errors") or [])}
+            if out["time"]["written"]:
+                out["actions"].append("time")
+        except Exception as e:  # noqa: BLE001
+            out["time_error"] = f"{type(e).__name__}: {e}"
+            log.warning("定时同步 · 时长推送失败 · %s", e)
+
+    _TICK_STATE["last"] = out
+    _TICK_STATE["error"] = None
+    return out
+
+
+def tick_state() -> dict:
+    """定时同步的生效设置 + 最近一次结果 (设置页显示用, 只读内存)。"""
+    tk = tick_settings()
+    last = _TICK_STATE.get("last") or {}
+    return {
+        "enabled": tk["interval_sec"] > 0,
+        "interval_sec": int(round(tk["interval_sec"])),
+        "active_min": int(round(tk["active_min"])),
+        "notes": tk["notes"], "notes_sec": int(round(tk["notes_sec"])),
+        "time": tk["time"], "time_sec": int(round(tk["time_sec"])),
+        "running": bool((_TICK_STATE.get("thread") or {}).is_alive())
+        if hasattr(_TICK_STATE.get("thread"), "is_alive") else False,
+        "runs": int(_TICK_STATE.get("runs") or 0),
+        "last_at": last.get("at"),
+        "last_keys": list(last.get("keys") or []),
+        "last_actions": list(last.get("actions") or []),
+        "last_activity": last.get("activity") or last.get("skipped"),
+        "error": _TICK_STATE.get("error"),
+    }
+
+
+def start_ticker() -> bool:
+    """起后台心跳线程 (幂等)。返回是否真的新起了一个。"""
+    th = _TICK_STATE.get("thread")
+    if th is not None and getattr(th, "is_alive", lambda: False)():
+        return False
+    _TICK_STATE["stop"] = False
+    _TICK_STATE["started_at"] = time.time()
+    thread = threading.Thread(target=_ticker_loop, daemon=True, name="recto-tick")
+    _TICK_STATE["thread"] = thread
+    thread.start()
+    log.info("定时同步已启动 · 每 %d 秒看一眼最近读过的书",
+             int(round(tick_settings()["interval_sec"])) or 0)
+    return True
+
+
+def stop_ticker() -> None:
+    _TICK_STATE["stop"] = True
+
+
+def _ticker_loop() -> None:
+    """心跳主体。设置**每轮现读** —— 关掉/改周期立刻生效, 不用重启服务。"""
+    # 启动时先歇一会儿: 别跟"打开书时的拉取"抢同一批网络
+    time.sleep(3)
+    while not _TICK_STATE.get("stop"):
+        try:
+            tk = tick_settings()
+            gap = tk["interval_sec"]
+            if gap <= 0:
+                # 关着也继续转 (5 秒看一次设置), 免得改了要重启才回来
+                time.sleep(5)
+                continue
+            tick_once()
+        except Exception as e:  # noqa: BLE001 — 心跳不能死
+            _TICK_STATE["error"] = f"{type(e).__name__}: {e}"
+            log.warning("定时同步出错 · %s", e)
+        # 睡的时候分段查 stop, 关服务时不用等满一个周期
+        end = time.time() + max(5.0, float(tick_settings()["interval_sec"] or 0))
+        while not _TICK_STATE.get("stop") and time.time() < end:
+            time.sleep(min(5.0, max(0.5, end - time.time())))
 
 
 def pull_book(key: str, *, force: bool = False) -> dict:

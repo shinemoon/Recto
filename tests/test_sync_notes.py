@@ -174,11 +174,23 @@ def _fail_post(data):
 
 
 sessions._post_report = _fail_post
+# 又读了几分钟 → 本地位图比"已推上去的"多, 这次是真有东西要推
+reader_state.conn().execute(
+    "UPDATE rtime SET bitmap=?, minutes=? WHERE book=? AND day=?",
+    (sessions.bitmap_from_minutes([600, 601, 602]), 3, bkey, date.today().isoformat()))
+reader_state.conn().commit()
 sessions.enqueue(date.today(), keys=[bkey])
 res = sessions.flush()
 ok(res["kept"] == 1 and res["errors"], "上传失败留队, 不丢数据")
 sessions._post_report = _fake_post
 sessions.flush()
+
+# 已经推上去的分钟不该每轮再推一遍 (定时通道每 10 分钟跑一次, 否则全是噪声)
+again = sessions.enqueue(date.today(), keys=[bkey])
+ok(again["queued"] == 0 and again["unchanged"] == 1, "同为位置图不重复入队")
+posted.clear()
+pushed_again = sessions.push(date.today(), keys=[bkey])
+ok(pushed_again["written"] == 0 and not posted, "没新增分钟 → 一次网络都不打")
 
 # --- 5. 云端状态合并 (不触网) --------------------------------------------
 sync.cloud.get_progress = lambda auth, ids: {

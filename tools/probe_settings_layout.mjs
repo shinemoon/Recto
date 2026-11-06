@@ -77,10 +77,13 @@ const align = await page.evaluate(() => {
 });
 chk('字段行中线对齐 (≤1.5px)', align.every(d => d <= 1.5), `max ${Math.max(...align, 0).toFixed(1)}`);
 
-/* 开关行: 每一行开关右边缘一致 */
-const swRight = await page.evaluate(() => [...document.querySelectorAll('#sync .st-sw input.m3')]
-  .map(el => Math.round(el.getBoundingClientRect().right)));
-chk('四个开关右对齐', new Set(swRight).size === 1, JSON.stringify(swRight));
+/* 开关行: **同一栏内**开关右边缘一致 (两栏各自对齐即可, 跨栏不必等) */
+const swRight = await page.evaluate(() => [...document.querySelectorAll('#sync .st-block')]
+  .map((blk) => [...blk.querySelectorAll('.st-sw input.m3')]
+    .map((el) => Math.round(el.getBoundingClientRect().right))));
+chk('每栏内开关右对齐',
+  swRight.every((col) => new Set(col).size === 1) && swRight.every((col) => col.length > 0),
+  JSON.stringify(swRight));
 
 /* ---------- 3. 配色 = 色板, 而不是文本框 ---------- */
 const swap = await page.evaluate(() => {

@@ -175,7 +175,7 @@ print("== 云端同步 / 阅读高亮的排版 ==")
 check("两张卡跨整行", page.count('class="sec wide"') == 2, page.count('class="sec wide"'))
 check("宽卡跨列规则在", ".st-grid>.sec.wide{grid-column:1/-1}" in page, "")
 # 6 个页内开关 + 1 处配色卡模板 (每类一个启用开关)
-check("开关用 m3 样式", page.count('class="m3"') == 7, page.count('class="m3"'))
+check("开关用 m3 样式", page.count('class="m3"') == 10, page.count('class="m3"'))
 check("开关有 CSS (轨道 42x24)", "input.m3[type=checkbox]{-webkit-appearance:none" in page
       and "width:42px;height:24px" in page, "")
 check("数字框不再用 mk-num", 'class="mk-num"' not in page, "")

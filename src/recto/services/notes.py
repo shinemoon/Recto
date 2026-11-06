@@ -174,6 +174,22 @@ def _sig(kind: str, key: str, text: str, remark: str, meta: str = "") -> str:
 # 掌阅 HTTP
 # --------------------------------------------------------------------------
 
+def _label_at_spine(geo, spine: int) -> str:
+    """篇下标 → 展示用章名 (目录名优先, 退回文件名)。
+
+    **push 与 pull 必须用同一份口径**: 这个字符串进了 `_sig` 指纹,
+    两边算出来不一样就会"推完又被拉回", 每轮心跳都白推一遍。
+    `spine` = 阅读器的篇下标 (= rnote.chapter), 云端 chapterId 比它小 1。
+    """
+    toc = (geo.toc if geo else {}) or {}
+    for idx in (spine, spine - 1):
+        if idx in toc:
+            return str(toc[idx])
+    if geo is not None and 0 <= spine < len(geo.spine):
+        return Path(geo.spine[spine]).stem
+    return ""
+
+
 def _call(path: str, body: dict | None = None, extra: dict | None = None,
           timeout: int = 30) -> dict:
     auth = load_zy_auth()
@@ -413,7 +429,13 @@ def _upsert_bookmark(book_key: str, *, chapter: int, offset: int, summary: str,
 # PULL: 云端 → 阅读器
 # --------------------------------------------------------------------------
 
-def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False) -> dict:
+def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
+         quiet: bool = False) -> dict:
+    """云端划线/书签 → 本地。
+
+    `quiet=True` 时「什么都没变」不写日志 —— 定时通道每几分钟跑一次,
+    不该每次都留一条"未变 28 条"。
+    """
     rows = _sync.links()
     if keys is not None:
         want = set(keys)
@@ -434,13 +456,7 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False) -> dict:
 
         def _label(spine: int) -> str:
             """spine 下标 → 展示用章名 (目录名优先, 退回文件名)。"""
-            toc = (geo.toc if geo else {}) or {}
-            for idx in (spine, spine - 1):
-                if idx in toc:
-                    return str(toc[idx])
-            if geo is not None and 0 <= spine < len(geo.spine):
-                return Path(geo.spine[spine]).stem
-            return ""
+            return _label_at_spine(geo, spine)
 
         item = {"book": r["title"], "notes": 0, "marks": 0, "deleted": 0}
         for uc, marktime in ver["note"].items():
@@ -456,10 +472,13 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False) -> dict:
                 item["notes"] += 1
                 continue
             spine = a[0] + 1          # 云端 chapterId 是"读完的上一篇", 阅读器用篇下标
-            sig = _sig("note", uc, text, "", _label(spine))
             row_old = reader_state.conn().execute(
-                "SELECT id, zy_sig, zy_marktime FROM rnote WHERE book=? AND zy_key=?",
+                "SELECT id, zy_sig, zy_marktime, remark FROM rnote WHERE book=? AND zy_key=?",
                 (r["key"], uc)).fetchone()
+            # 指纹里的 remark 用**本地已有的批注** — 云端拿不到 remark,
+            # 若这里按空串算, 本地批注过的那条会被判成"变了", 每轮心跳都推一遍。
+            local_remark = (row_old["remark"] or "") if row_old is not None else ""
+            sig = _sig("note", uc, text, local_remark, _label(spine))
             item["notes"] += 1
             if (row_old is not None and (row_old["zy_sig"] or "") == sig
                     and int(row_old["zy_marktime"] or 0) == int(marktime or 0)):
@@ -504,8 +523,9 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False) -> dict:
             item["deleted"] += 1
             deleted += 1
         report.append(item)
-    _sync.audit("拉取划线 · 新增 %d · 更新 %d · 删除 %d · 未变 %d",
-                added, updated, deleted, unchanged)
+    if not (quiet and not (added or updated or deleted)):
+        _sync.audit("拉取划线 · 新增 %d · 更新 %d · 删除 %d · 未变 %d",
+                    added, updated, deleted, unchanged)
     return {"added": added, "updated": updated, "deleted": deleted,
             "skipped": skipped, "unchanged": unchanged, "books": report}
 
@@ -529,7 +549,12 @@ def _idea_fields(epub: str, geo: geometry.BookGeometry, chapter: int, offset: in
     return out
 
 
-def push(keys: Iterable[str] | None = None, *, dry_run: bool = False) -> dict:
+def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
+         quiet: bool = False) -> dict:
+    """本地划线/书签 → 云端。
+
+    `quiet=True` 时「云端已是最新」不写日志 (定时通道用)。
+    """
     rows = _sync.links()
     if keys is not None:
         want = set(keys)
@@ -557,7 +582,7 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False) -> dict:
                 geometry.build_position(ch_id, int(n["start_off"])),
                 geometry.build_position(ch_id, int(n["end_off"])))
             sig = _sig("note", uc, n.get("summary") or "", n.get("remark") or "",
-                       str((geo.toc or {}).get(int(n["chapter"]) + 1, "")) if geo else "")
+                       _label_at_spine(geo, int(n["chapter"])))
             if n.get("zy_key") and (n.get("zy_sig") or "") == sig:
                 skipped += 1
                 continue
@@ -581,7 +606,7 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False) -> dict:
             m_ch = max(0, int(m["chapter"]) - 1)
             pos = geometry.build_position(m_ch, int(m["offset"]))
             uc = m.get("zy_key") or mark_key(book32, pos)
-            label = str((geo.toc or {}).get(int(m["chapter"]), "")) if geo else ""
+            label = _label_at_spine(geo, int(m["chapter"]))
             sig = _sig("bookmark", uc, "", label)
             if m.get("zy_key") and (m.get("zy_sig") or "") == sig:
                 skipped += 1
@@ -660,7 +685,7 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False) -> dict:
                           pushed, pushed_marks, deleted, len(errors))
     elif pushed or pushed_marks or deleted:
         _sync.audit("推划线 · 划线 %d · 书签 %d · 删除 %d", pushed, pushed_marks, deleted)
-    else:
+    elif not quiet:
         _sync.audit("推划线 · 云端已是最新（%d 条未变）", skipped)
     return {"pushed": pushed, "pushed_marks": pushed_marks, "deleted": deleted,
             "skipped": skipped, "errors": errors, "books": report}

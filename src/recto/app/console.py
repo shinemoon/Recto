@@ -123,6 +123,7 @@ def _state() -> dict:
     except Exception:  # noqa: BLE001
         books = []
     return {"sync": st, "book_count": len(books), "books": books[:200],
+            "tick": sync.tick_state(),
             "running": _run_lock.locked(), "last_run": dict(_last_run)}
 
 
@@ -721,6 +722,30 @@ async function loadState() {
   setPill("link-pill", (s.sync && s.sync.link_count || 0) + " 本", true);
   renderShelf(); renderShelfStats();
   renderLinks(s.sync);
+  renderTick(s.tick);
+}
+
+function renderTick(tk) {
+  const el = $("tick-note");
+  if (!el) return;
+  tk = tk || {};
+  if (!tk.enabled) {
+    el.textContent = "定时同步：已关闭（设置页可打开 —— 停在一页上看很久时也会按时同步）";
+    return;
+  }
+  const bits = ["定时同步：每 " + (tk.interval_sec || 0) + " 秒",
+    "只看最近 " + (tk.active_min || 0) + " 分钟内读过的书"];
+  if (!tk.running) bits.push("心跳未运行");
+  if (tk.last_at) {
+    bits.push("上次 " + ts(tk.last_at));
+    const act = tk.last_actions || [];
+    if (act.length) {
+      const name = {progress: "进度", notes: "划线", time: "时长"};
+      bits.push("同步了 " + act.map((a) => name[a] || a).join(" / "));
+    } else if ((tk.last_keys || []).length) bits.push("无变化");
+    else bits.push("最近没在读");
+  } else bits.push("还没跑过");
+  el.textContent = bits.join(" · ");
 }
 
 async function probeCloud() {
@@ -1211,6 +1236,7 @@ def _page_html(user: str | None) -> str:
     <button class="ghost" data-act="time">推今天时长</button>
     <button class="ghost" data-act="links">对齐映射</button>
   </div>
+  <p class="meta" id="tick-note"></p>
 
   <details class="sec" id="sec-auth">
     <summary>掌阅认证 <span class="pill" id="auth-pill">…</span></summary>
