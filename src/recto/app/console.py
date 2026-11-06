@@ -4,7 +4,7 @@
     书库     reader_state (原书扫描 + 进度/书签/笔记/时长)
     云端     services.sync / notes / sessions + services.acquisition
     摘录     app.excerpts (只读账本 + 工具页)
-    语料     app.corpus (反代外部只读服务)
+    语料     app.corpus (内置: 解析 / 抽词 / 导出)
 
 没有任何外部书目数据库的读写。
 """
@@ -81,11 +81,18 @@ def _intake_summary() -> dict:
 
 
 def _corpus_state() -> dict:
+    """语料服务的摘要 (给控制台 / 自检用)。
+
+    语料现在是本服务的内置能力, 所以这里直接问 `recto.corpus.service`,
+    不再探测外部端口 —— 也就不会有"服务没起就整块不可用"的情况。
+    """
+    from recto.corpus import service as corpus_service
+
     d = paths.PATHS.corpus_dir
     out = {"ok": True, "dir": str(d), "files": 0, "latest": None, "error": None}
     try:
-        files = sorted(p for p in d.glob("*.json") if p.name != "latest.json")
-        out["files"] = len(files)
+        out.update(corpus_service.status_summary())
+        out["files"] = int(out.get("exports") or 0)
         latest = d / "latest.json"
         if latest.exists():
             meta = (json.loads(latest.read_text(encoding="utf-8")) or {}).get("meta") or {}
@@ -96,9 +103,9 @@ def _corpus_state() -> dict:
                 "model": meta.get("model"),
                 "at": meta.get("exported_at") or meta.get("generated_at"),
             }
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 — 摘要失败不该影响控制台
         out["ok"] = False
-        out["error"] = f"{type(e).__name__}: {e}"
+        out["error"] = type(e).__name__ + ": " + str(e)
     return out
 
 
@@ -247,7 +254,11 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if self._user():
             return True
-        if self.command == "POST" or path.startswith("/api/"):
+        # 接口一律返 401 JSON: 前端 fetch 拿到 303 会当成"成功但没内容".
+        # 判据是"路径里有 /api/ 段" —— 语料 (/corpus/api/) 与阅读器 (/read/api/)
+        # 都挂在各自前缀下, 只匹配开头 /api/ 会漏掉它们。
+        if self.command in ("POST", "PUT", "DELETE") or path.startswith("/api/") \
+                or "/api/" in path:
             self._json(401, {"error": "unauthorized", "login": "/login"})
         else:
             self._redirect("/login?next=" + urllib.parse.quote(path or "/"))

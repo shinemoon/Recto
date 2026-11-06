@@ -34,11 +34,11 @@ download_subdir = ""              # 空 = 直接下到 library.dir 根下
 port = 8080
 data_dir = ""                     # 空 = <data_dir>
 
-# --- 术语语料 (外部服务, 只读消费) ---
+# --- 术语语料 (EPUB 关键字精炼, 本服务内置) ---
+# 语料根之下: config.json (LLM 端点/模型库) · state.json · outputs/ (中间产物)
+#             与 <书名>-<hash>.json 固定导出 (下游语料消费方直接扫这一层)
 [corpus]
 dir = ""                          # 空 = <data_dir>/corpus
-ui_url = "http://127.0.0.1:5013"  # /corpus/* 反代到这里 (同一套外壳与皮肤)
-start_hint = ""                   # 上游没起时, 503 页上显示的一句启动提示
 
 # --- 阅读高亮 (语料分解 json → 阅读器里的关键词滤镜) ---
 # 这里是**部署默认值**; 用的人在设置页「阅读高亮」卡里改的覆盖项存在

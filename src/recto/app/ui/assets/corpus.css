@@ -1,0 +1,490 @@
+/* 语料 (EPUB 关键字精炼) —— 云阅 Recto 原生分区
+ *
+ * 版式基线来自上游 style.css (卡片 / 网格 / 表格 / 历史产物那几块经过多轮打磨),
+ * 此后在本仓手工维护:
+ *   · 颜色 / 字体 / 疏密全部走 --rc-* token (换肤跟着变)
+ *   · 顶栏与页脚归外壳, 这里只管正文区块
+ *   · 字段是无边框填充式 (40px 高, 与按钮同高)
+ *
+ * 这个文件不会被 tools/build_corpus_assets.py 覆盖 (只有缺失时才 bootstrap),
+ * 所以可以放心在这里继续调。
+ */
+:root{
+  --bg: var(--rc-bg);
+  --panel: var(--rc-surface);
+  --ink: var(--rc-fg);
+  --ink-dim: var(--rc-mute);
+  --line: var(--rc-line);
+  --accent: var(--rc-accent);
+  --ok: var(--rc-ok);
+  --err: var(--rc-err);
+  --warn: var(--rc-warn);
+  --radius: var(--rc-radius, 0px);
+}
+:root{
+  --bg: var(--rc-bg);
+  --panel: var(--rc-surface);
+  --ink: var(--rc-fg);
+  --ink-dim: var(--rc-mute);
+  --line: var(--rc-line);
+  --accent: var(--rc-accent);
+  --ok: var(--rc-ok);
+  --err: var(--rc-err);
+  --warn: var(--rc-warn);
+  --radius: var(--rc-radius, 0px);
+}
+
+
+
+
+.rc-corpus { max-width: 1080px; }
+
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.card-head {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  background: #fafbfc;
+}
+.card-head h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: .3px; }
+.card-head .hint { color: var(--ink-dim); font-size: 12px; }
+.card-body { padding: 16px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+label { display: block; font-size: 12px; color: var(--ink-dim); }
+label.inline { display: inline-flex; align-items: center; gap: 6px; }
+input, select, textarea {
+  width: 100%;
+  margin-top: 4px;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid #d4d8dd;
+  border-radius: 6px;
+}
+textarea { font-family: ui-monospace, Menlo, monospace; font-size: 12px; resize: vertical; }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47,111,235,.13);
+}
+label.inline input { margin-top: 0; }
+
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.grow { flex: 1 1 200px; margin-top: 0; }
+
+button {
+  font: inherit; font-size: 13px;
+  padding: 7px 14px;
+  border: 1px solid #d4d8dd;
+  background: #fff;
+  color: var(--ink);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+button:hover:not(:disabled) { background: #f3f5f8; border-color: #b9c0c9; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover:not(:disabled) { background: #2559c4; border-color: #2559c4; }
+button.danger { color: var(--err); border-color: #f0b4b4; }
+button.mini { padding: 3px 9px; font-size: 12px; color: var(--ink-dim); }
+
+/* 行内小操作按角色配色 —— 一排全是「白底 + 灰字」会糊成一片, 分不出主次和危险。
+   三档: 主操作(实心强调) / 次要操作(强调色软底) / 辅助(虚线描边) / 危险(透明红字)。
+   颜色全部走 token, 换肤跟着变。 */
+button.mini.act-load {
+  color: #fff; background: var(--accent); border-color: var(--accent);
+}
+button.mini.act-load:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 84%, #000);
+  border-color: color-mix(in srgb, var(--accent) 84%, #000);
+}
+button.mini.act-export {
+  color: var(--accent); border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+}
+button.mini.act-export:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+button.mini.act-pin {
+  color: var(--ink-dim); background: transparent;
+  border-style: dashed; border-color: color-mix(in srgb, var(--ink-dim) 38%, transparent);
+}
+button.mini.act-pin:hover:not(:disabled) { background: var(--panel); color: var(--ink); }
+button.mini.danger {
+  color: var(--err); background: transparent;
+  border-color: color-mix(in srgb, var(--err) 32%, transparent);
+}
+button.mini.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--err) 10%, var(--panel));
+  border-color: color-mix(in srgb, var(--err) 60%, transparent);
+}
+/* 模型库行内三连: 使用 = 软底强调, 测 = 描边, 删 = 透明红 */
+table.models .mdl-ops button[data-act="use"] {
+  color: var(--accent); border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+}
+table.models .mdl-ops button[data-act="use"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
+}
+table.models .mdl-ops button[data-act="test"] {
+  color: var(--ink); background: var(--panel); border-color: var(--line);
+}
+table.models .mdl-ops button[data-act="test"]:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+}
+table.models .mdl-ops button[data-act="del"] {
+  color: var(--err); background: transparent;
+  border-color: color-mix(in srgb, var(--err) 32%, transparent);
+}
+table.models .mdl-ops button[data-act="del"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--err) 10%, var(--panel));
+  border-color: color-mix(in srgb, var(--err) 60%, transparent);
+}
+
+.tag-latest {
+  display: inline-block; margin-left: 6px; padding: 1px 6px;
+  font-size: 11px; line-height: 1.5; border-radius: 999px;
+  color: var(--accent); background: rgba(47, 111, 237, .1);
+  border: 1px solid rgba(47, 111, 237, .3); vertical-align: 1px;
+}
+
+.status { font-size: 12px; color: var(--ink-dim); }
+.status.ok { color: var(--ok); }
+.status.err { color: var(--err); }
+.status.warn { color: var(--warn); }
+
+/* 熔断提示条: 额度用尽后剩余请求会被本进程直接拒, 给一个手动清标记的出口 */
+.quota-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 10px 0 0; padding: 8px 10px; border-radius: 6px;
+  font-size: 12px; color: #8a5a00; background: #fff7e6;
+  border: 1px solid #ffd591;
+}
+.quota-bar #quota-text { flex: 1 1 260px; line-height: 1.5; }
+
+.tip {
+  margin: 10px 0 0; font-size: 12px; color: var(--ink-dim);
+  padding: 6px 10px; background: #f7f9fc; border-radius: 6px;
+  border-left: 3px solid var(--accent);
+}
+.tips {
+  margin: 10px 0 0; padding-left: 18px;
+  font-size: 12px; color: var(--ink-dim); line-height: 1.7;
+}
+.tips code { background: #f0f2f5; padding: 0 3px; border-radius: 3px; }
+
+table.cats { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.cats th {
+  text-align: left; font-weight: 500; color: var(--ink-dim);
+  font-size: 11px; padding: 4px 6px; border-bottom: 1px solid var(--line);
+}
+table.cats td { padding: 4px 6px; border-bottom: 1px solid #f0f2f4; vertical-align: middle; }
+table.cats input[type=checkbox] { width: auto; margin: 0; }
+table.cats input { margin-top: 0; }
+
+/* 模型库: 列多, 字号收紧 */
+table.models { font-size: 12px; }
+table.models th, table.models td { padding: 3px 4px; }
+table.models input, table.models select { padding: 4px 6px; font-size: 12px; }
+table.models td:nth-child(2) { width: 90px; }
+table.models td:nth-child(3) { width: 120px; }
+table.models td:nth-child(4) { width: 90px; }
+table.models td:nth-child(7) { width: 150px; }
+table.models td:nth-child(8) { width: 130px; }
+table.models .mdl-ops { width: 130px; white-space: nowrap; }
+table.models .mdl-ops button { margin-right: 3px; }
+table.models input[type=radio] { width: auto; margin: 0; }
+
+.models-wrap { overflow-x: auto; }
+
+.epub-list {
+  margin-top: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.epub-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f2f4;
+  cursor: pointer;
+  font-size: 13px;
+}
+.epub-row:last-child { border-bottom: none; }
+.epub-row:hover { background: #f7f9fc; }
+.epub-row.sel { background: #eaf1ff; }
+.epub-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.epub-row .sz { color: var(--ink-dim); font-size: 11px; font-family: ui-monospace, Menlo, monospace; }
+
+.empty { color: var(--ink-dim); font-size: 13px; padding: 14px; text-align: center; }
+
+.run-target {
+  padding: 10px 12px; background: #f7f9fc; border-radius: 6px;
+  font-size: 13px; border-left: 3px solid var(--accent);
+}
+.run-target b { font-size: 14px; }
+
+.progress-wrap { margin-top: 12px; display: flex; align-items: center; gap: 10px; }
+.bar { flex: 1; height: 6px; background: #e8ebef; border-radius: 3px; overflow: hidden; }
+#bar-fill { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+
+.kw-cats { margin-top: 12px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.kw-cat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.kw-cat h3 { margin: 0 0 6px; font-size: 13px; font-weight: 650; }
+.kw-cat .ct { color: var(--ink-dim); font-size: 11px; font-weight: 400; margin-left: 4px; }
+.kw-cat ul { margin: 0; padding: 0; list-style: none; }
+.kw-cat li { font-size: 12.5px; padding: 2px 0; display: flex; gap: 6px; }
+.kw-cat li .t { font-weight: 500; }
+.kw-cat li .c { color: var(--ink-dim); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.kw-cat li .al { color: var(--ink-dim); font-size: 11px; }
+
+.roots { background: #f7f9fc; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.roots-label { display: block; }
+.hidden { display: none; }
+
+@media (max-width: 600px) {
+      .card-body { padding: 12px; }
+  .kw-cats { grid-template-columns: 1fr; }
+}
+
+/* ── 历史产物表 (6) ─────────────────────────── */
+.hist-wrap { overflow-x: auto; margin-top: 8px; }
+table.hist { font-size: 13px; }
+table.hist td { vertical-align: top; padding: 6px; }
+table.hist tr.sel { background: #f3f7ff; }
+table.hist td .sub { color: var(--ink-dim); font-size: 11px; margin-top: 2px; }
+table.hist td.pathcell code,
+.path { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
+        background: #f0f2f5; padding: 1px 5px; border-radius: 3px; }
+table.hist td.acts { white-space: nowrap; text-align: right; }
+table.hist td.acts button { margin-left: 4px; }
+table.hist .warn { color: var(--warn); font-size: 12px; }
+#kw-fixed-path code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
+                      background: #f0f2f5; padding: 1px 5px; border-radius: 3px; }
+#kw-fixed-path:empty { display: none; }
+
+.tag-latest.stale {
+  color: var(--warn);
+  background: rgba(214, 140, 0, .1);
+  border-color: rgba(214, 140, 0, .35);
+}
+
+/* ── 推理模型 / 断点续跑 (2026-10-30) ────────── */
+.badge-warn {
+  display: inline-block; margin-left: 4px; padding: 0 5px;
+  font-size: 10.5px; line-height: 1.6; border-radius: 999px;
+  color: #8a5a00; background: #fff3d6; border: 1px solid #ffd591;
+  vertical-align: 1px;
+}
+label.inline-check {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--ink-dim);
+}
+label.inline-check input { margin: 0; }
+.tip.warn { color: #8a5a00; background: #fff9ec; border-color: #ffe0a3; }
+.analyze-warn {
+  margin-top: 8px; padding: 8px 10px; border-radius: 6px;
+  font-size: 12px; line-height: 1.6; color: #8a5a00;
+  background: #fff7e6; border: 1px solid #ffd591;
+}
+#resume-tip:empty { display: none; }
+
+/* ── 外壳与版心 ─────────────────────────────────────────── */
+.rc-corpus{max-width:var(--rc-measure)}
+@media (max-width:860px){.rc-corpus{max-width:none}}
+
+/* ── 卡片: 上游是「描边 + 卡头浅灰底 + 卡身 16px」三层结构, 跟 Recto 其它分区
+   是两套做法。这里合并成一层: 卡片只留高度阴影, 卡头一条极淡分隔线, 内外边距统一。 */
+.rc-corpus .card{padding:0;border:0;overflow:hidden}
+.rc-corpus .card-head{
+  padding:14px var(--rc-pad);
+  background:transparent;
+  border-bottom:1px solid var(--rc-outline-variant, var(--rc-line));
+}
+.rc-corpus .card-body{padding:var(--rc-pad)}
+.rc-corpus .card-head h2{font-size:var(--rc-fs-sm, 13.5px);letter-spacing:.01em}
+.rc-corpus .card-head .hint{font-size:var(--rc-fs-xs, 11.5px);color:var(--rc-mute)}
+
+/* ── 字段: 上游是「白底 + 1px 灰描边」方框, 一页几十个框贴在同样有描边的卡片上,
+   线条互相打架。改成填充式: 无描边, 一层极淡底色跟页面区分, 聚焦时底色加深 +
+   底部一道主色指示线。 */
+.rc-corpus :where(input, select, textarea){
+  border:0; box-shadow:none; outline:none;
+  background:color-mix(in srgb, var(--rc-fg) 6%, var(--rc-surface));
+  border-radius:var(--rc-radius-field, 0);
+  min-height:40px; padding:0 12px;
+  transition:background .15s ease, box-shadow .15s ease;
+}
+.rc-corpus :where(input, select, textarea):hover{
+  background:color-mix(in srgb, var(--rc-fg) 9%, var(--rc-surface));
+}
+.rc-corpus :where(input, select, textarea):focus{
+  background:color-mix(in srgb, var(--rc-fg) 11%, var(--rc-surface));
+  box-shadow:inset 0 -2px 0 var(--rc-primary);
+}
+.rc-corpus textarea{padding:10px 12px;min-height:92px;line-height:1.6}
+/* 复选 / 单选 / 滑块不是文本框, 别让上面的底色糊上去 */
+.rc-corpus :where(input[type="checkbox"], input[type="radio"], input[type="range"]){
+  background:transparent;box-shadow:none;min-height:0;padding:0;
+}
+/* 表格里的行内输入: 同一种填充, 只是更紧凑 (上游那几条带 table 前缀的
+   padding/font-size 特异度更高, 这里显式压回来) */
+.rc-corpus :where(table.models, table.cats) :where(input, select){
+  min-height:30px;padding:0 8px;font-size:var(--rc-fs-xs, 11.5px);
+}
+
+/* ── 对齐: 标签与输入框之间 6px, 网格行距略大于列距, 勾选项不占字段格 ── */
+.rc-corpus label{font-size:var(--rc-fs-xs, 11.5px);color:var(--rc-dim);line-height:1.5}
+.rc-corpus label > :where(input, select, textarea){margin-top:6px}
+.rc-corpus label.inline > :where(input, select){margin-top:0}
+.rc-corpus .grid{align-items:start;column-gap:16px;row-gap:16px}
+.rc-corpus .grid > label.inline-check{
+  grid-column:1 / -1; align-self:start; min-height:0; padding:0;
+}
+.rc-corpus .row{align-items:center;gap:10px;margin-top:16px}
+.rc-corpus .row > :where(input, select){min-height:40px}
+.rc-corpus .row > :where(.status, .path, code){margin:0;line-height:1.5}
+.rc-corpus label.inline{font-size:var(--rc-fs-xs, 11.5px);gap:8px}
+.rc-corpus label.inline input[type="checkbox"]{margin:0}
+
+/* ── 提示条 / 徽标: 上游写死浅色底 (#f7f9fc / #fff7e6), 深色皮肤下会变成几块
+   发光的白板。统一改成 token 混色。 */
+.rc-corpus .tip{
+  margin:14px 0 0;padding:9px 12px;border-radius:0;
+  font-size:var(--rc-fs-xs, 11.5px);line-height:1.65;color:var(--rc-dim);
+  background:color-mix(in srgb, var(--rc-primary) 7%, var(--rc-surface));
+  border-left:3px solid color-mix(in srgb, var(--rc-primary) 55%, transparent);
+}
+.rc-corpus .tips{margin:12px 0 0;font-size:var(--rc-fs-xs, 11.5px);line-height:1.75}
+.rc-corpus .tips code, .rc-corpus .tip code{background:var(--rc-surface-2);padding:0 4px}
+.rc-corpus :where(.quota-bar, .analyze-warn), .rc-corpus .tip.warn{
+  background:color-mix(in srgb, var(--rc-warn) 12%, var(--rc-surface));
+  border:1px solid color-mix(in srgb, var(--rc-warn) 34%, transparent);
+  color:var(--rc-warn);
+}
+.rc-corpus .tip.warn{border-left:3px solid color-mix(in srgb, var(--rc-warn) 55%, transparent)}
+.rc-corpus .badge-warn{
+  background:color-mix(in srgb, var(--rc-warn) 16%, var(--rc-surface));
+  border:1px solid color-mix(in srgb, var(--rc-warn) 34%, transparent);
+  color:var(--rc-warn);
+}
+
+/* 推理徽标不挤输入框 (用户 2026-11-04: 「badge-warn 会推挤输入框」)
+   上游把 <span class="badge-warn">推理</span> 内联写在 input 后面, 而 input 是
+   width:100% → 徽标必被挤到下一行: 实测该行比相邻行高 10.4px (桌面) / 27.2px (手机)。
+   修法 = 「该列统一预留右侧空间 + 徽标绝对定位在预留区」: 输入框宽度仍一致,
+   行高不再变化。(列序耦合: 模型列 = 上游 renderModels 的第 6 个 td;
+   另加一条 :has() 兜底, 列序变了至少不会压住输入框。) */
+.rc-corpus table.models td:nth-child(6){position:relative;padding-right:40px}
+.rc-corpus table.models td:has(> .badge-warn):not(:nth-child(6)){position:relative;padding-right:40px}
+.rc-corpus table.models td > .badge-warn{
+  position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  margin:0;padding:2px 4px;font-size:10px;line-height:1.25;
+  white-space:nowrap;
+}
+.rc-corpus .tag-latest{
+  background:color-mix(in srgb, var(--rc-accent) 12%, var(--rc-surface));
+  border:1px solid color-mix(in srgb, var(--rc-accent) 32%, transparent);
+  color:var(--rc-accent);
+}
+
+/* ── 表格: 与 Recto 其它页面同一口径 —— 无边框线, 只靠隔行底色区分行区间 ── */
+.rc-corpus table, .rc-corpus table.models, .rc-corpus table.hist, .rc-corpus table.cats{
+  border-collapse:collapse;
+}
+.rc-corpus table th, .rc-corpus table td{border: 0 !important}
+.rc-corpus table.cats thead th,
+.rc-corpus table.models thead th,
+.rc-corpus table.hist thead th{background:transparent}
+.rc-corpus table tbody tr:nth-child(even) > *{
+  background:color-mix(in srgb, var(--rc-fg) 5%, transparent);
+}
+.rc-corpus table tbody tr:hover > *{
+  background:color-mix(in srgb, var(--rc-fg) 9%, transparent);
+}
+.rc-corpus table tbody tr.sel{background:transparent !important}
+.rc-corpus table tbody tr.sel > *,
+.rc-corpus table tbody tr.sel:hover > *{
+  background:color-mix(in srgb, var(--rc-accent) 13%, transparent);
+}
+
+/* 窄屏: 模型库 10 列, 上游 width:100% 自适应 → 390px 下输入框只剩十几像素。
+   给表格合理最小宽度, 由 .models-wrap 横向滚动承接。 */
+@media (max-width:860px){
+  .rc-corpus .models-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .rc-corpus .models-wrap table.models{min-width:980px}
+  .rc-corpus .models-wrap table.models th:nth-child(6),
+  .rc-corpus .models-wrap table.models td:nth-child(6){min-width:150px}
+}
+
+/* ── 表格行内的小操作群 —— 模型库「使用 / 测 / 删」与历史产物
+   「载入 / 导出 / 下载 / 设为最新 / 删除」。一排白底灰字分不出主次,
+   按角色分四档 (全部从 token 混色):
+     主操作 = 实心主色 · 次要 = 主色软底 · 辅助 = 虚线描边 · 危险 = 淡红底 */
+.rc-corpus table.models .mdl-ops button,
+.rc-corpus table.hist td.acts button{
+  font-size:var(--rc-fs-xs, 12px);
+  font-weight:600;
+  letter-spacing:.01em;
+  border:1px solid transparent;
+  transition:background .12s, border-color .12s, color .12s;
+}
+.rc-corpus table.hist td.acts button.act-load{
+  background:var(--rc-accent);border-color:var(--rc-accent);
+  color:var(--rc-accent-fg, #fff);
+}
+.rc-corpus table.hist td.acts button.act-load:hover:not(:disabled){
+  background:color-mix(in srgb, var(--rc-accent) 86%, var(--rc-fg));
+  border-color:transparent;
+}
+.rc-corpus table.hist td.acts button.act-export,
+.rc-corpus table.models .mdl-ops button[data-act="use"]{
+  background:var(--rc-accent-soft, color-mix(in srgb, var(--rc-accent) 14%, var(--rc-surface)));
+  border-color:transparent;color:var(--rc-accent);
+}
+.rc-corpus table.hist td.acts button.act-export:hover:not(:disabled),
+.rc-corpus table.models .mdl-ops button[data-act="use"]:hover:not(:disabled){
+  background:color-mix(in srgb, var(--rc-accent) 24%, var(--rc-surface));
+}
+.rc-corpus table.hist td.acts button.act-pin,
+.rc-corpus table.models .mdl-ops button[data-act="test"]{
+  background:transparent;
+  border-color:var(--rc-line-2, var(--rc-line));
+  border-style:dashed;color:var(--rc-dim);
+}
+.rc-corpus table.hist td.acts button.act-pin:hover:not(:disabled),
+.rc-corpus table.models .mdl-ops button[data-act="test"]:hover:not(:disabled){
+  border-style:solid;
+  border-color:color-mix(in srgb, var(--rc-accent) 45%, transparent);
+  background:var(--rc-surface-2);color:var(--rc-fg);
+}
+.rc-corpus table.hist td.acts button.danger,
+.rc-corpus table.models .mdl-ops button.danger,
+.rc-corpus table.models .mdl-ops button[data-act="del"]{
+  background:color-mix(in srgb, var(--rc-err) 7%, var(--rc-surface));
+  border-color:color-mix(in srgb, var(--rc-err) 34%, transparent);
+  color:var(--rc-err);
+}
+.rc-corpus table.hist td.acts button.danger:hover:not(:disabled),
+.rc-corpus table.models .mdl-ops button.danger:hover:not(:disabled),
+.rc-corpus table.models .mdl-ops button[data-act="del"]:hover:not(:disabled){
+  background:color-mix(in srgb, var(--rc-err) 12%, var(--rc-surface));
+  border-color:color-mix(in srgb, var(--rc-err) 60%, transparent);
+}

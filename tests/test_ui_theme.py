@@ -352,15 +352,22 @@ def test_danger_and_submit_roles():
     ok("var(--rc-err)" in css, "危险色走 token")
 
 
+def _corpus_css() -> str:
+    """语料分区的样式表现在是仓内文件 (以前是反代时注入的字符串)。"""
+    from recto.app import corpus
+
+    return (corpus._UI_DIR / "corpus.css").read_text("utf-8")
+
+
 @case
 def test_corpus_does_not_duplicate_stagger():
     """按钮错落只有一处实现 (recto.css)。语料页只保留上游特有的表格规则,
     否则两边改一处忘一处, 皮肤一变就对不上。"""
-    from recto.app import corpus
-    bridge = corpus._BRIDGE_CSS
+    bridge = _corpus_css()
     ok(".row > button:not(.primary)" not in bridge, "语料页不再重复通用错落规则")
     ok("table.models .mdl-ops button" in bridge, "上游表格操作群规则仍在")
-    ok(".filter-bar" not in bridge or "filter-bar" in bridge, "语料页不影响筛选条规则")
+    ok(".filter-bar" not in bridge, "语料页不重复筛选条规则")
+    ok(".rc-corpus" in bridge, "语料规则全部作用域限定 (不污染别的分区)")
 
 
 
@@ -388,12 +395,12 @@ def test_tables_borderless_banded():
 
 @case
 def test_corpus_tables_borderless():
-    """语料反代页: 上游 CSS 的 border-bottom 必须被清掉, 否则口径不一致。"""
-    from recto.app import corpus
-    bridge = corpus._BRIDGE_CSS
+    """语料页: 上游 CSS 的 border-bottom 必须被清掉, 否则口径不一致。"""
+    bridge = _corpus_css()
     ok("border: 0 !important" in bridge, "上游表格边框被清掉")
     ok("nth-child(even)" in bridge, "语料页也上隔行底色")
     ok("tr.sel" in bridge, "选中行 (tr.sel) 有单独强调底色")
+    ok("var(--rc-" in bridge, "语料样式走皮肤 token (换肤跟着变)")
 
 
 @case

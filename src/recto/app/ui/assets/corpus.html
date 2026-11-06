@@ -1,0 +1,228 @@
+<!-- 语料分区正文 —— 平移自上游 index.html 的 <main> 内容。
+     外壳 (顶栏 / 导航 / 页脚 / 皮肤) 由 recto.app.ui.shell 提供;
+     接口前缀 (/corpus) 由 corpus.js 里的 CORPUS_BASE 负责。
+     重新生成: python3 tools/build_corpus_assets.py -->
+<div class="rc-corpus">
+<!-- ── 1. LLM 配置 ───────────────────────────── -->
+<section class="card" id="card-llm">
+  <div class="card-head">
+    <h2>1 · LLM 配置</h2>
+    <button class="mini" id="btn-llm-toggle">收起</button>
+  </div>
+  <div class="card-body" id="llm-body">
+    <div class="grid">
+      <label>端点预设
+        <select id="llm-preset">
+          <option value="">— 选择预设 —</option>
+        </select>
+      </label>
+      <label>模型库
+        <select id="llm-model-sel">
+          <option value="">— 手动配置 (不用模型库) —</option>
+        </select>
+      </label>
+      <label>协议
+        <select id="llm-provider">
+          <option value="openai">OpenAI 兼容 (MiniMax / OpenAI / vLLM / Ollama)</option>
+          <option value="anthropic">Anthropic Messages</option>
+        </select>
+      </label>
+      <label>Base URL
+        <input id="llm-base" placeholder="https://api.minimaxi.com/v1">
+      </label>
+      <label>模型
+        <input id="llm-model" placeholder="agnes-2.5-flash">
+      </label>
+      <label>API Key
+        <input id="llm-key" type="password" placeholder="sk-..." autocomplete="off">
+      </label>
+      <label>超时 (秒)
+        <input id="llm-timeout" type="number" min="10" max="900" step="10">
+      </label>
+      <label>max_tokens
+        <input id="llm-maxtok" type="number" min="256" max="65536" step="256">
+      </label>
+      <label>温度
+        <input id="llm-temp" type="number" min="0" max="2" step="0.05">
+      </label>
+      <label>并发
+        <input id="llm-conc" type="number" min="1" max="8" step="1">
+      </label>
+      <label>思考 (推理)
+        <select id="llm-thinking">
+          <option value="off">关闭 (抽取推荐)</option>
+          <option value="on">允许 (会慢 / 烧 token)</option>
+        </select>
+      </label>
+      <label class="inline-check">
+        <input id="llm-strict" type="checkbox">
+        严格避免推理 (检测到 thinking 就中止本轮)
+      </label>
+    </div>
+    <p class="tip" id="llm-reasoning-tip"></p>
+    <p class="tip" id="llm-tip"></p>
+    <div id="quota-bar" class="quota-bar hidden">
+      <span id="quota-text"></span>
+      <button class="mini" id="btn-quota-reset">清掉熔断</button>
+    </div>
+    <div class="row">
+      <button class="primary" id="btn-llm-save">保存配置</button>
+      <button id="btn-llm-test">测试连通</button>
+      <span id="llm-status" class="status"></span>
+    </div>
+    <ul class="tips" id="llm-tips"></ul>
+  </div>
+</section>
+
+<!-- ── 1b. 模型库 ───────────────────────────── -->
+<section class="card" id="card-models">
+  <div class="card-head">
+    <h2>1b · 模型库</h2>
+    <span class="hint">保存多套端点 / 多把 key · 抽取时随手换, 避开 429</span>
+    <button class="mini" id="btn-models-toggle">收起</button>
+  </div>
+  <div class="card-body" id="models-body">
+    <div class="models-wrap">
+    <table class="cats models">
+      <thead>
+        <tr>
+          <th></th><th>ID</th><th>名称</th><th>协议</th>
+          <th>Base URL</th><th>模型</th><th>思考</th><th>API Key</th><th>备注</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="model-rows"></tbody>
+    </table>
+    </div>
+    <div class="row">
+      <button class="primary" id="btn-models-save">保存模型库</button>
+      <button id="btn-model-add">新增模型</button>
+      <button id="btn-model-import">从当前配置导入</button>
+      <span id="models-status" class="status"></span>
+    </div>
+    <p class="tip">
+      「使用」= 把这行的端点 / 模型 / key 套进上方「1 · LLM 配置」, 立即生效。
+      改了上方表单并保存 = 回到手动模式, 不再绑定模型库。
+    </p>
+  </div>
+</section>
+
+<!-- ── 2. 分类 ───────────────────────────────── -->
+<section class="card" id="card-cats">
+  <div class="card-head">
+    <h2>2 · 关键字分类</h2>
+    <span class="hint">勾选要抽取的类别 · 名称和提示可改</span>
+  </div>
+  <div class="card-body">
+    <table class="cats">
+      <thead><tr><th></th><th>ID</th><th>名称</th><th>提示 (给 LLM 看)</th></tr></thead>
+      <tbody id="cat-rows"></tbody>
+    </table>
+    <div class="row">
+      <button class="primary" id="btn-cat-save">保存分类</button>
+      <button id="btn-cat-add">新增一行</button>
+      <span id="cat-status" class="status"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ── 3. 选书 ───────────────────────────────── -->
+<section class="card" id="card-epub">
+  <div class="card-head">
+    <h2>3 · 选择本地 EPUB</h2>
+    <button class="mini" id="btn-roots-toggle">扫描目录</button>
+  </div>
+  <div class="card-body">
+    <div id="roots-panel" class="roots hidden">
+      <label class="roots-label">扫描根 (每行一个, | 分隔也行)
+        <textarea id="roots-input" rows="3" placeholder="~/work"></textarea>
+      </label>
+      <div class="row">
+        <button id="btn-roots-save">应用扫描根</button>
+        <button id="btn-roots-reset">恢复默认</button>
+        <span id="roots-status" class="status"></span>
+      </div>
+    </div>
+    <div class="row">
+      <input id="epub-filter" placeholder="按文件名过滤…" class="grow">
+      <button id="btn-epub-refresh">刷新列表</button>
+      <span id="epub-status" class="status"></span>
+    </div>
+    <div id="epub-list" class="epub-list"><div class="empty">加载中…</div></div>
+  </div>
+</section>
+
+<!-- ── 4. 解析 + 抽取 ────────────────────────── -->
+<section class="card" id="card-run">
+  <div class="card-head">
+    <h2>4 · 解析并抽取关键字</h2>
+  </div>
+  <div class="card-body">
+    <div id="run-target" class="run-target empty">还没选书</div>
+    <div class="row">
+      <label class="inline">分块字符数
+        <input id="chunk-size" type="number" min="1500" max="40000" step="500" style="width:120px">
+      </label>
+      <label class="inline">目标语言
+        <input id="target-lang" value="Chinese" style="width:120px">
+      </label>
+      <button class="primary" id="btn-parse">① 解析 EPUB</button>
+      <button class="primary" id="btn-analyze">② 抽取关键字</button>
+      <button id="btn-resume" class="hidden">继续 (从断点)</button>
+      <button id="btn-clear-partial" class="mini hidden">丢弃断点</button>
+      <button id="btn-cancel" class="danger" disabled>取消</button>
+    </div>
+    <p class="tip" id="resume-tip"></p>
+    <div id="analyze-warn" class="analyze-warn hidden"></div>
+    <div id="progress-wrap" class="progress-wrap hidden">
+      <div class="bar"><div id="bar-fill"></div></div>
+      <span id="progress-text" class="status"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ── 5. 产物 ───────────────────────────────── -->
+<section class="card" id="card-out">
+  <div class="card-head">
+    <h2>5 · 关键字产物</h2>
+    <span class="hint">keywords.json · 可直接喂给预渲染器</span>
+  </div>
+  <div class="card-body">
+    <div id="kw-summary" class="empty">还没有产物</div>
+    <div id="kw-cats" class="kw-cats"></div>
+    <div class="row">
+      <button id="btn-download">下载 keywords.json</button>
+      <button class="mini" id="btn-copy-path">复制文件路径</button>
+      <span id="out-status" class="status"></span>
+    </div>
+    <p class="tip" id="kw-fixed-path"></p>
+  </div>
+</section>
+
+<!-- ── 6. 历史产物 ───────────────────────────── -->
+<section class="card" id="card-history">
+  <div class="card-head">
+    <h2>6 · 历史产物</h2>
+    <span class="hint">固定路径 &lt;书名&gt;-&lt;hash&gt;.json · 下游只用读 latest.json</span>
+    <button class="mini" id="btn-history-refresh">刷新</button>
+  </div>
+  <div class="card-body">
+    <div class="row">
+      <code id="exports-dir" class="path">语料目录</code>
+      <button class="mini" id="btn-copy-latest">复制 latest.json 路径</button>
+      <span id="history-status" class="status"></span>
+    </div>
+    <p class="tip" id="latest-note"></p>
+    <div class="hist-wrap">
+      <table class="cats hist">
+        <thead>
+          <tr>
+            <th>书名</th><th>作者</th><th>词条</th><th>状态</th><th>时间</th><th>固定路径</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="hist-rows"></tbody>
+      </table>
+    </div>
+    <div id="hist-empty" class="empty">还没有产物</div>
+  </div>
+</section>
+</div>

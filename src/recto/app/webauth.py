@@ -69,7 +69,7 @@ def state_dir() -> Path:
 
 
 def _own(path: Path) -> None:
-    """root 写的文件交回目录属主 (目录常由非 root 的 5013 进程持有)."""
+    """root 写的文件交回目录属主 (目录常由非 root 的应用进程持有)."""
     try:
         if os.geteuid() != 0:
             return

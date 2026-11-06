@@ -6,7 +6,7 @@ Recto 独立服务的全部入口 (不依赖任何外部书目数据库):
     /api/*            控制台 API
     /read/*           内置阅读器
     /admin/*          摘录接入后台 (墨水屏设备账本)
-    /corpus/*         语料服务 (反代外部只读服务, 同一套外壳与皮肤)
+    /corpus/*         语料服务 (EPUB 关键字精炼, 内置)
 
 登录是 Recto 自己的账号口令 (见 [auth] 段)。
 
@@ -76,7 +76,7 @@ class Handler(console.Handler):
             self._json(404, {"error": "not found"})
         return True
 
-    # ---- 语料服务 (反代到独立应用, 但用同一套外壳) ----------------------
+    # ---- 语料服务 (内置: 业务在 recto.corpus, 外壳/登录在这里) ----------
     def _serve_corpus(self) -> bool:
         u = urllib.parse.urlparse(self.path)
         if not (u.path == corpus.PREFIX or u.path.startswith(corpus.PREFIX + "/")):
@@ -115,8 +115,27 @@ class Handler(console.Handler):
             return
         super().do_POST()
 
+    def do_DELETE(self):  # noqa: N802
+        path = urllib.parse.urlparse(self.path).path
+        if path.startswith(corpus.PREFIX) and self._serve_corpus():
+            return
+        if path.startswith("/admin") and self._serve_admin():
+            return
+        # BaseHTTPRequestHandler 没有 do_DELETE —— 不处理就是 405, 不是 500
+        self._json(405, {"error": "method not allowed"})
+
+    def do_PUT(self):  # noqa: N802
+        # 本服务只吃 GET / POST / DELETE; 其余方法明确 405 (BaseHTTPRequestHandler
+        # 默认会吐 501, 前端会把它当"服务坏了")
+        self._json(405, {"error": "method not allowed"})
+
+    do_PATCH = do_PUT  # noqa: N815
+
     def do_OPTIONS(self):  # noqa: N802
-        super().do_OPTIONS()
+        self.send_response(204)
+        self.send_header("Allow", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def log_message(self, fmt, *args):  # 保持安静: 控制台自己也写日志
         return

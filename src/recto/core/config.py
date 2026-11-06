@@ -42,8 +42,6 @@ DEFAULTS: dict[str, Any] = {
     },
     "corpus": {
         "dir": "",                        # 空 = <data_dir>/corpus
-        "ui_url": "http://127.0.0.1:5013",
-        "start_hint": "",                 # 上游没起时, 503 页上显示的一句启动提示
     },
     # 阅读高亮 (关键词滤镜) 的部署默认值; 用的人的覆盖项在
     # <data_dir>/reading_mark.json (设置页「阅读高亮」卡改的就是它)
@@ -159,7 +157,6 @@ class Config:
             "RECTO_LIBRARY_DOWNLOAD_SUBDIR": ("library", "download_subdir"),
             "RECTO_CLOUD_AUTH_FILE": ("cloud", "auth_file"),
             "RECTO_CORPUS_DIR": ("corpus", "dir"),
-            "RECTO_CORPUS_UI_URL": ("corpus", "ui_url"),
             "RECTO_DEVICE_PORT": ("device", "port"),
             "RECTO_AUTH_MODE": ("auth", "mode"),
             "RECTO_AUTH_USER": ("auth", "user"),

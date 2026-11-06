@@ -246,23 +246,52 @@ EPUB2 `<meta name="cover">`，取不到再按文件名带 `cover` 的图兜底�
 会把整行判成"原文"），等级在界面上写中文（信息 / 注意 / 失败），消息体写成
 完整句子（例如 推送成功 · 书名 · 进度 31.7% · 第 159 章）。
 
-## 6 语料服务为什么是反代 (而不是搬代码)
+## 6 语料服务: 原生能力 (不再是反代)
 
-`/corpus/*` → `corpus.ui_url` (默认 `http://127.0.0.1:5013`)。反代层
-(`app/corpus.py`) 做三件事:
+语料 (EPUB 关键字精炼) 原本是一个独立进程 (`:5013` Flask), 由这里反代 + 注入外壳。
+2026-11-06 起整个能力搬进来了 —— 反代层不再存在, 因为独立服务带来的问题
+(多一个要自启/自检/挂了的端口、两套登录、两套日志、注入式改 HTML) 都比收益大。
 
-1. **同源** —— 浏览器只在 5015 上, 不再另开端口跳转; 会话 cookie 转发给上游
-2. **同壳** —— 往上游 HTML 的 `<body>` 后注入 Recto 顶栏 + 导航 (高亮「语料」),
-   旧的深色页头用 `.masthead{display:none}` 收起
-3. **同皮** —— 注入 `recto.css` + `skin.css`, 并把上游自己的
-   `--bg / --panel / --ink / --line / --accent / --ok / --err / --warn / --radius`
-   映射到 `--rc-*`; 上游 CSS 一行没改, 所以**换肤它也跟着变**
+分层:
 
-路径改写只有两处: `/static/` 与 `/api/` → 加 `/corpus` 前缀 (三种引号形式都覆盖)。
-上游的登录跳转被翻译到本服务 `/login` —— 一次登录, 全区通用。
-上游不可达时返回 503 + 同样外壳的说明页 (含启动命令), 不会出现裸 502。
+| 层 | 位置 | 职责 |
+|---|---|---|
+| 业务 | `src/recto/corpus/` | 解析 EPUB / 分块 / LLM 抽词 / 断点续跑 / 固定导出 / 模型库 |
+| 服务 | `src/recto/corpus/service.py` | 每个用例一个函数, 返回 `(状态码, JSON)`, 与 HTTP 无关 |
+| 路由 | `src/recto/app/corpus.py` | `/corpus/*` 的路径与方法分派 (薄薄一层) |
+| 页面 | `src/recto/app/ui/assets/corpus.{html,css,js}` | 外壳 + 分区正文 (资产见下) |
 
-### 6.1 表单: 无边框填充式字段 (2026-11-04)
+- **一套登录**: 走 `server.Handler._gate`, 没有第二套账号; `/corpus/api/*` 未登录返 401 JSON
+- **一套皮肤**: `corpus.css` 全部走 `--rc-*` token, 换肤/深色自动跟随
+- **一套日志**: `logs/corpus.log` (超 512KB 轮转), 按句写人话
+
+### 6.1 页面资产是"机械平移 + 手工打磨"
+
+页面本体 (六张卡) 与 1000 行前端脚本经过多轮打磨, 重写只会丢功能。所以:
+
+    python3 tools/build_corpus_assets.py [上游仓库根]
+
+- `corpus.html` — 取上游 `index.html` 的 `<main>` 片段 (外壳由 `shell.document` 给)
+- `corpus.js` — 上游 `app.js` + `CORPUS_BASE` 前缀 (所有接口都走同一个 `api()` 包装)
+- `corpus.css` — **只在缺失时 bootstrap**, 之后是仓内文件, 手工维护
+  (填充式字段 / 单层卡片 / 徽标定位 / 表格口径这些规则都在里面)
+
+### 6.2 数据布局
+
+语料根 = `config.toml` 的 `[corpus] dir` (默认 `<data_dir>/corpus`):
+
+    config.json         LLM 端点 / 模型库 / 分类定义 (含 api_key, 权限 600)
+    state.json          书目状态 (book_id → 路径 / 标题 / 进度)
+    outputs/<bid>/      中间产物 (meta / blocks / keywords / status / 断点)
+    <书名>-<hash>.json  固定导出 —— 阅读高亮的语料扫描就是这一层
+    index.json          导出清单 (latest_slug / latest_pinned)
+    latest.json         最近一次成功产物 (下游只需读这一个)
+
+固定导出**平铺在语料根**是刻意的: `core/reading_mark.py` 用 `glob("*.json")` 扫
+这一层, 放子目录会断。`config.json` / `state.json` / `index.json` 被 `load_corpus()`
+自动跳过 (没有 `categories` 字典), 所以不冲突。
+
+### 6.3 表单: 无边框填充式字段 (2026-11-04)
 
 上游是「白底 + 1px 灰描边」的方框, 一页几十个框贴在同样有描边的卡片上, 线条互相打架。
 `_BRIDGE_CSS` 把所有规则限定在 `body.rc-corpus` 作用域内 (反代时给 `<body>` 补这个类),
