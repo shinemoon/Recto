@@ -34,7 +34,10 @@ const box = () => page.evaluate(() => {
 });
 
 const b0 = await box();
-chk('顶栏可见时页面从顶栏下方开始', Math.abs(b0.top - b0.barBottom) <= 1, JSON.stringify(b0));
+// 顶栏是浮层 (2026-11-05): .rv-view 占满视口 (top=0), 正文靠上下等距内边距让开;
+// 顶栏显示时会盖住顶部一两行, 这是设计 (点正文中间可收起)。
+chk('阅读区占满视口 (顶栏不吃版面)', Math.abs(b0.top) <= 1 && Math.abs(b0.h - b0.winH) <= 2,
+  JSON.stringify(b0));
 
 await page.mouse.click(640, 500);            // 点正文中间 → 收起顶栏
 await page.waitForTimeout(500);

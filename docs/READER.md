@@ -267,7 +267,12 @@ rtime.cloud_minutes  = 云端 read_report/book 给的当天分钟 (App / 其它�
    重建时先把平移钉到当前页（临时 `rv-no-anim`）再量，得到一张"块 → 页号"的静态表。
 2. **分栏是异步碎片化的**：首屏 `scrollWidth` 可能还是上一次页高算出来的。
    `scheduleSettle()` 在 90ms 后按锚点再排一次，页数变了就再来一轮（最多三轮）。
-3. **页号提示**：块级游标落在跨页段上时会差一页，所以逐设备记
+3. **列宽必须用可视区的真实宽度（小数），不能用 `clientWidth`**：
+   390 屏上可视区是 364.4px，`clientWidth` 取整成 364，而浏览器实际按 364.4 排 ——
+   每翻一页 `stride` 就少 0.4px，翻到第 70 页整块正文**偏右约 28px、右边被裁掉一截**。
+   桌面（704px 整数）看不出问题，只有窄屏会累积。现在取
+   `viewEl.getBoundingClientRect().width - 左右内边距`，保留三位小数。
+4. **页号提示**：块级游标落在跨页段上时会差一页，所以逐设备记
    `recto.pg.<bookKey> = {ch, off, page, sig}`（`sig` = 列宽/页高/字号/行距/宽度/字体指纹）。
    同一设备同一排版时用页号精确复原；换设备或改了排版就退回块级口径（±1 页）。
 
@@ -316,7 +321,9 @@ rtime.cloud_minutes  = 云端 read_report/book 给的当天分钟 (App / 其它�
 失败时页脚变成可点的「下一章没载入, 点这里重试」。
 滚动模式下章末点热区，补到内容后会**接着往下滚一屏**，不再是"点一下不动"。
 
-热区宽度：`clamp(44px, 10vw, 220px)`；≥780px 视口改成
+热区宽度：窄屏（<780px）`clamp(64px, 25vw, 160px)` —— 手机上 390 屏约 98px，
+左右各四分之一，中间一半留给"点正文切顶栏"。原来的 `clamp(44px, 10vw, 220px)`
+在手机上只有 44px，几乎点不中。≥780px 视口改成
 `max(44px, calc(50vw - var(--rv-w) / 2 - 1.4rem))` —— **只在正文列之外**，不压字，
 而且跟着排版面板里的"阅读宽度"自动让位。页边热区**始终不可见**：hover 不变色、不出现箭头，
 只把鼠标指针换成手型。
@@ -472,6 +479,7 @@ class 上（示例短篇 `.biaoti` = `1.7em + bold`），照抄字号的结果�
 自检：
 ```bash
 python3 tests/test_reading_mark.py          # 38 项：归一化 / 语料 / 挑语料 / 预算 / 概览
+node tools/probe_reader_paged_narrow.mjs     # 48 项：窄屏左右翻页 (列宽不取整 / 深处不漂 / 热区宽度 / 手感 / 进度写回)
 node tools/probe_reader_kw.mjs              # 21 项：真开阅读器 (命中 / 零 DOM 改动 / 开关 / 翻页)
 node tools/probe_settings_mark.mjs          # 15 项：设置页保存 / 绑定 / 恢复默认
 node tools/probe_settings_layout.mjs        # 40 项：两张宽卡排版 / 输入框 / 色板 / 手机

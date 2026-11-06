@@ -9,6 +9,39 @@ const KEY = process.env.RV_KEY || 'a6f63af571f05bb4';
 const token = execFileSync('python3', [new URL('./make_cookie.py', import.meta.url).pathname],
   { encoding: 'utf8' }).trim();
 
+// 翻页会真的写服务端进度 (并自动推送云端) —— 收尾必须写回原处
+async function readProgress(pg) {
+  return await pg.evaluate(async (k) => {
+    const r = await fetch('/read/api/book/' + k, { headers: { accept: 'application/json' } });
+    const j = await r.json();
+    return (j && j.progress) || null;
+  }, KEY);
+}
+async function writeProgress(pg, pr) {
+  if (!pr) return null;
+  return await pg.evaluate(async ([k, p]) => {
+    const r = await fetch('/read/api/book/' + k + '/progress', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      // jump=true 绕开"跨会话大幅回退"守卫 (探针翻过页, 写回必然是往回拨)
+      body: JSON.stringify({ chapter: p.chapter, offset: p.offset, jump: true, user: 1 })
+    });
+    return r.status;
+  }, [KEY, pr]);
+}
+
+// 刷新/补章之后有几帧"还在排版的中间态" (页数先变、锚点后落), #rv-pct 会短暂
+// 显示别的位置。等它连续两次一致再断言, 否则测的是排版中间态而不是结果。
+async function settledPct(pg) {
+  let prev = null;
+  for (let i = 0; i < 24; i++) {
+    const v = await pg.evaluate(() => (document.getElementById('rv-pct') || {}).textContent);
+    if (v && v === prev) return v;
+    prev = v;
+    await pg.waitForTimeout(250);
+  }
+  return prev;
+}
+
 const out = [];
 const chk = (name, cond, extra = '') =>
   out.push(`${cond ? 'ok  ' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`);
@@ -32,7 +65,8 @@ async function open(width, height, reset) {
   await page.goto(`${BASE}/read/b/${KEY}`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.rv-page p', { timeout: 20000 });
   await page.waitForTimeout(900);
-  return { ctx, page, errs };
+  const progress0 = await readProgress(page);
+  return { ctx, page, errs, progress0 };
 }
 
 const state = (page) => page.evaluate(() => {
@@ -60,7 +94,7 @@ const state = (page) => page.evaluate(() => {
 });
 
 /* ---------- 1. 默认 = 滚动 ---------- */
-let { ctx, page, errs } = await open(1280, 900, true);
+let { ctx, page, errs, progress0 } = await open(1280, 900, true);
 let s0 = await state(page);
 chk('默认是滚动模式', !s0.paged && s0.mode !== 'page', JSON.stringify(s0.mode));
 chk('滚动模式没有页码', s0.ind === '');
@@ -130,15 +164,16 @@ chk('键盘 → 也能翻页', kb.ind === after2.ind, `${after3.ind} → ${kb.in
 
 /* ---------- 6. 页码 / 位置在刷新后保持 ---------- */
 const keep = await state(page);
+const keepPct = await settledPct(page);
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.rv-page p', { timeout: 20000 });
-await page.waitForTimeout(1200);
+await settledPct(page);
 const reload = await state(page);
 chk('刷新后仍是翻页模式', reload.paged && reload.mode === 'page');
 const pageIdx = t => parseInt(String(t || '0'), 10) || 0;
 chk('刷新后留在同一页', pageIdx(reload.ind) === pageIdx(keep.ind),
   `${keep.ind} → ${reload.ind} (总数不同是预取章数不同)`);
-chk('刷新后进度一致', reload.pct === keep.pct, `${keep.pct} → ${reload.pct}`);
+chk('刷新后进度一致', reload.pct === keepPct, `${keepPct} → ${reload.pct}`);
 
 /* ---------- 7. 切回滚动 ---------- */
 await page.click('#rv-typo-btn');
@@ -150,8 +185,9 @@ chk('切回滚动模式', !s2.paged && s2.mode === 'scroll');
 chk('滚动模式恢复纵向可滚', await page.evaluate(() =>
   document.documentElement.scrollHeight > window.innerHeight + 100));
 chk('页码隐藏', s2.ind === '');
-chk('切回后进度没丢', Math.abs(pctNum(s2.pct) - pctNum(keep.pct)) < 3,
-  `${keep.pct} → ${s2.pct}`);
+const s2p = await settledPct(page);
+chk('切回后进度没丢', Math.abs(pctNum(s2p) - pctNum(keepPct)) < 3,
+  `${keepPct} → ${s2p}`);
 chk('切回后仍停在原处 (滚动位置对得上)', await page.evaluate(() => {
   const el = document.querySelector('.rv-blk');
   return !!el && window.scrollY >= 0;
@@ -159,10 +195,16 @@ chk('切回后仍停在原处 (滚动位置对得上)', await page.evaluate(() =
 
 /* ---------- 8. 无错误 ---------- */
 chk('无 JS 报错', errs.length === 0, errs.slice(0, 3).join(' | '));
+await writeProgress(page, progress0);
+const back = await readProgress(page);
+chk('探针把阅读进度写回原处',
+  !!back && !!progress0 && back.chapter === progress0.chapter
+  && Math.abs(back.offset - progress0.offset) <= 2,
+  JSON.stringify({ before: progress0, after: back }));
 await ctx.close();
 
 /* ---------- 9. 手机宽度 ---------- */
-({ ctx, page, errs } = await open(390, 780, false));
+({ ctx, page, errs, progress0 } = await open(390, 780, false));
 await page.click('#rv-typo-btn');
 await page.waitForTimeout(200);
 await page.click('#rv-mode button[data-mode="page"]');
@@ -179,6 +221,7 @@ chk('手机上一列到底 (不留白边)', mob.w > 300 && mob.overflow <= 0, JS
 chk('手机无横向溢出', mob.overflow <= 0, String(mob.overflow));
 chk('手机无 JS 报错', errs.length === 0, errs.slice(0, 3).join(' | '));
 await page.screenshot({ path: '/tmp/rv-paged-mobile.png' });
+await writeProgress(page, progress0);
 await ctx.close();
 
 await browser.close();

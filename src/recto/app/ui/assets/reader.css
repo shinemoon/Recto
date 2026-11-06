@@ -89,10 +89,12 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
 }
 .rv.is-immersive .rv-prog { opacity: .7; }
 
-/* 左右页边: 点击翻页 (桌面落在正文两侧留白里, 手机上是一条窄边) */
+/* 左右页边: 点击翻页 (桌面落在正文两侧留白里, 手机上是一块按视口比例的触摸区) */
 .rv-turn {
   position: fixed; top: 0; bottom: 0; z-index: 20;
-  width: clamp(44px, 10vw, 220px);
+  /* 窄屏 (手机) 上 44px 几乎点不中: 按视口给 25% (64–160px)
+     —— 左右各四分之一, 中间一半留给"点正文切顶栏" */
+  width: clamp(64px, 25vw, 160px);
   display: flex; align-items: center; justify-content: center;
   margin: 0; padding: 0; border: 0; background: transparent;
   color: var(--rv-dim); font: inherit; font-size: 2rem; line-height: 1;

@@ -491,7 +491,13 @@
     var h = Math.max(220, Math.round(window.innerHeight));
     root.style.setProperty('--rv-bar-h', barH + 'px');
     root.style.setProperty('--rv-page-h', h + 'px');
-    var w = Math.round(viewEl.clientWidth);
+    // 列宽必须等于可视区的**真实**宽度, 不能用 clientWidth —— 它取整。
+    // 窄屏上可视区常是小数宽 (390 屏 → 364.4px), 取整后列宽 364 而浏览器实际按 364.4 排,
+    // 每翻一页就多算 0.4px 的 stride → 翻到第 70 页整块正文偏右 ~28px、右边被裁掉一截。
+    // 用 rect 宽减左右内边距, 保留三位小数。
+    var vcs = getComputedStyle(viewEl);
+    var padX = (parseFloat(vcs.paddingLeft) || 0) + (parseFloat(vcs.paddingRight) || 0);
+    var w = Math.round((viewEl.getBoundingClientRect().width - padX) * 1000) / 1000;
     if (!w) return false;
     contentEl.style.columnWidth = w + 'px';
     var gap = parseFloat(getComputedStyle(contentEl).columnGap) || 0;

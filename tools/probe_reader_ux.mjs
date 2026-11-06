@@ -151,7 +151,8 @@ p2.on('pageerror', e => errors.push('m: ' + String(e)));
 await p2.goto(`${BASE}/read/b/${KEY}`, { waitUntil: 'domcontentloaded' });
 await p2.waitForTimeout(1200);
 const mL = await p2.evaluate(() => document.querySelector('.rv-turn-l').getBoundingClientRect().width);
-chk('手机热区窄 (<=60px)', mL <= 60, `${Math.round(mL)}px`);
+// 2026-11-06 起手机上按视口给 25% (64–160px), 44px 几乎点不中
+chk('手机热区够宽 (64–160px, ≈25vw)', mL >= 64 && mL <= 160, `${Math.round(mL)}px`);
 const over = await p2.evaluate(() => document.documentElement.scrollWidth - innerWidth);
 chk('手机无横向溢出', over <= 0, `${over}`);
 await p2.tap('.rv-turn-r');

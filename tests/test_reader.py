@@ -367,7 +367,9 @@ check("翻页 = 分栏 + 横向平移",
       "column-fill: auto" in _css and "column-gap: 2rem" in _css
       and "translate3d(" in _js and "contentEl.style.columnWidth" in _js)
 check("列宽必须等于可视区宽 (否则会并排两列)",
-      "function pageGeom" in _js and "var w = Math.round(viewEl.clientWidth)" in _js)
+      "function pageGeom" in _js
+      and "contentEl.style.columnWidth = w + 'px';" in _js
+      and "S.pageW = w" in _js)
 check("每章另起一页 / 图片不跨页",
       "break-before: column" in _css and "break-inside: avoid" in _css)
 check("页号表静态化 (翻页动画途中量 rect 会飘)",
@@ -443,6 +445,25 @@ check("恢复默认也回到滑动", "S.fx = 'slide';" in _js
       and "localStorage.removeItem('recto.fx')" in _js)
 check("面板下拉改高度对齐其它行 (不吃 44px 触控高)",
       "min-height: 0; height: 2.2rem;" in _css)
+
+# ---- 窄屏左右翻页: 列宽不能取整 (2026-11-06) ----
+# viewEl.clientWidth 是整数; 390 屏的可视区是 364.4px, 取整成 364 后
+# 浏览器按 364.4 排 -> 每翻一页 stride 少 0.4px, 第 70 页整块正文偏右 ~28px、右边被裁。
+check("翻页列宽用可视区真实宽度 (rect 减内边距, 不取整)",
+      "viewEl.getBoundingClientRect().width - padX" in _js
+      and "Math.round(viewEl.clientWidth)" not in _js)
+check("列宽保留小数 (三位), 消除累计漂移",
+      "* 1000) / 1000" in _js and "S.pageStride = w + gap;" in _js)
+check("列宽注释写明取整会漂",
+      "clientWidth" in _js and "每翻一页就多算 0.4px" in _js)
+check("窄屏页边点击区按视口给 (64–160px, 25vw)",
+      "width: clamp(64px, 25vw, 160px);" in _css)
+check("桌面页边仍按正文列外留白 (不压字)",
+      "@media (min-width: 780px)" in _css
+      and "max(44px, calc(50vw - var(--rv-w) / 2 - 1.4rem))" in _css)
+check("页边热区不可见 (只改 cursor)",
+      ".rv-turn:hover, .rv-turn:active { opacity: 0;" in _css
+      and "cursor: pointer" in _css)
 
 print(f"\n{PASS} passed / {FAIL} failed")
 sys.exit(1 if FAIL else 0)
