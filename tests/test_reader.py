@@ -374,7 +374,7 @@ check("每章另起一页 / 图片不跨页",
       "break-before: column" in _css and "break-inside: avoid" in _css)
 check("页号表静态化 (翻页动画途中量 rect 会飘)",
       "function rebuildFlow" in _js and "rv-no-anim" in _js
-      and "flow.pages[i] === S.page" in _js)
+      and "flow.pages[i] === pg" in _js and "function pageTopBlockAt(pg)" in _js)
 check("分栏异步碎片化要二次稳版",
       "function scheduleSettle" in _js and "settleDepth" in _js)
 check("翻页模式有页码指示", 'id="rv-pageind"' in _html and "function paintPageInd" in _js)
@@ -392,6 +392,25 @@ check("正文上下边距取同一个值 (垂直居中)",
       "env(safe-area-inset-bottom, 0px)) 0;" in _css)
 check("逐设备记住页号 (块级游标会差一页)",
       "recto.pg." in _js and "function pageSig" in _js and "function pageHintRead" in _js)
+# 2026-11-06 定位: 刷新后落到半路 → 页号提示原来存"整篇文档的绝对页号",
+# 而 boot 只载入进度所在那一章, 绝对页号被当成章内页号用 (往后跳掉前几章的页数)
+check("页号提示按章内相对页存 (rel)",
+      "rel: S.page - base" in _js and "function chapterFirstPage" in _js
+      and "typeof hint.rel === 'number'" in _js)
+check("页号提示应用前校验页顶块",
+      "var top = pageTopBlockAt(hp);" in _js
+      and "+top.dataset.off === hint.off" in _js)
+# 同一次修复的另一半: rebuildFlow 把 (left − x0)/stride 直接 max(0,…), 而 x0 含当前页
+# 平移 → 翻过一页后前面所有块都塌到第 0 页, 页表只在第 0 页是对的
+check("块→页 换算加回当前页 (前面翻过的页不塌成 0)",
+      "+ S.page);" in _js and "vr.left + S.page * stride" not in _js)
+check("瞬态页表不更新游标 / 不写页号提示",
+      "function flowLooksSane" in _js and "function flowTrusted" in _js
+      and "if (!flowTrusted()) return;" in _js          # pageHintWrite 开头
+      and "if (isPaged() && !flowTrusted())" in _js)     # currentAnchor 兜底
+check("settle 在页表不可信时只重量不重锚点",
+      "var a = flowTrusted() ? currentAnchor() : null;" in _js
+      and "!flowTrusted()) && settleDepth < 3" in _js)
 check("翻页模式键盘左右可用",
       "ev.key === 'ArrowRight'" in _js and "ev.key === 'ArrowLeft'" in _js
       and "PageDown" in _js)

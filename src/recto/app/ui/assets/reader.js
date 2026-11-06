@@ -518,6 +518,26 @@
   // 中间位置 —— 那样算出来的"当前页第一段"会飘。这表只在排版稳定时重建一次。
   var flow = null;
 
+  // 瞬态页表 (补章/重排进行中, 分栏还没切完) 会把整篇的块挤到第 0/1 列,
+  // 于是"当前页第一段"会指到后面某一章的段上 —— 光标、存进度、settle 全跟着跑偏。
+  // 真排好时有一條硬不变量: 章首带 break-before: column, 后一章的首块一定在更后的页。
+  function flowLooksSane(f) {
+    if (!f || !f.els.length) return false;
+    var prev = -1, ch = -1;
+    for (var i = 0; i < f.els.length; i++) {
+      var c = +f.els[i].dataset.ch;
+      if (c === ch) continue;
+      if (f.pages[i] <= prev) return false;
+      prev = f.pages[i]; ch = c;
+    }
+    return true;
+  }
+
+  function flowTrusted() { return !!flow && flow.trusted === true; }
+
+  // 最后一次"页表可信"时落到的位置 —— 瞬态期间存进度/加书签都用它, 不用瞎猜的块。
+  var lastGood = null;
+
   function rebuildFlow() {
     flow = null;
     if (!isPaged() || !viewEl || !S.pageStride) return;
@@ -529,12 +549,16 @@
     void contentEl.offsetWidth;
     var vr = viewEl.getBoundingClientRect();
     var stride = S.pageStride;
-    var x0 = vr.left + S.page * stride;          // 加回当前平移 = 流内零点
+    // 视口左缘 = 流内零点平移了「当前页」个列宽。原来的写法把 (left − x0)/stride
+    // 直接 max(0, …), 于是**前面已经翻过的页全部塌成 0** —— 页表只在第 0 页是对的。
+    // 先除以列宽回到"相对当前页"的页差, 再加回 S.page 即可。
+    var x0 = vr.left;
     var pages = new Array(els.length);
     for (var i = 0; i < els.length; i++) {
-      pages[i] = Math.max(0, Math.round((els[i].getBoundingClientRect().left - x0) / stride));
+      pages[i] = Math.max(0, Math.round((els[i].getBoundingClientRect().left - x0) / stride) + S.page);
     }
     flow = { els: els, pages: pages };
+    flow.trusted = flowLooksSane(flow);
     root.classList.remove('rv-no-anim');
   }
 
@@ -561,17 +585,19 @@
 
   // 当前页左上角那一段 = 进度游标 (一段跨页时优先取"从本页开始"的那段,
   // 取不到才退回跨过来的那段 —— 否则重开时会漂回上一页)
-  function pageTopBlock() {
+  function pageTopBlockAt(pg) {
     if (!flow) rebuildFlow();
     if (!flow || !flow.els.length) return null;
     var spanning = flow.els[0];
     for (var i = 0; i < flow.els.length; i++) {
-      if (flow.pages[i] > S.page) break;
-      if (flow.pages[i] === S.page) return flow.els[i];
+      if (flow.pages[i] > pg) break;
+      if (flow.pages[i] === pg) return flow.els[i];
       spanning = flow.els[i];
     }
     return spanning;
   }
+
+  function pageTopBlock() { return pageTopBlockAt(S.page); }
 
   // 逐设备记"上次停在第几页" —— 块级游标在跨页段上会差一页,
   // 同一台设备 + 同一套排版时用页号精确复原 (换设备就退回粗口径)。
@@ -588,14 +614,30 @@
     } catch (e) { return null; }
   }
 
+  // 某章第一块落在第几页 —— 页号提示按"本章内偏移"存: 刷新后 DOM 里只有起始
+  // 那一章, 绝对页号会把前几章的页数也算进去 → 往后跳 (2026-11-06 定位)
+  function chapterFirstPage(ch) {
+    if (!flow) rebuildFlow();
+    if (!flow) return null;
+    for (var i = 0; i < flow.els.length; i++) {
+      var c = +flow.els[i].dataset.ch;
+      if (c === ch) return flow.pages[i];
+      if (c > ch) return null;
+    }
+    return null;
+  }
+
   function pageHintWrite() {
     if (!isPaged() || !S.pageStride) return;
+    if (!flowTrusted()) return;                 // 瞬态页表写出来的提示是错的, 宁可不写
     var el = pageTopBlock();
     if (!el) return;
+    var ch = +el.dataset.ch;
+    var base = chapterFirstPage(ch);
+    if (base == null || base > S.page) return;
     try {
       localStorage.setItem('recto.pg.' + S.key, JSON.stringify({
-        ch: +el.dataset.ch, off: +el.dataset.off,
-        page: S.page, sig: pageSig()
+        ch: ch, off: +el.dataset.off, page: S.page, rel: S.page - base, sig: pageSig()
       }));
     } catch (e) { /* 配额/隐私模式: 忽略 */ }
   }
@@ -623,11 +665,16 @@
       root.classList.remove('rv-no-anim');
     }
     if (fx !== 'slide' && fx !== 'none') playFx(fx, S.page > prev ? 1 : -1);
-    var el = pageTopBlock();
-    if (el) {
-      var ch = +el.dataset.ch;
-      if (ch !== S.cur) { S.cur = ch; markToc(); }
-      $('#rv-pct').textContent = pctText(pctOf(ch, +el.dataset.off), S.bytes);
+    // 瞬态页表会把"本页第一段"指到后面某一章 —— 这时既不更新游标也不写页号提示,
+    // 等 settle 把页表量稳 (90ms 内) 再来。否则会存下错误的章号。
+    if (flowTrusted()) {
+      var el = pageTopBlock();
+      if (el) {
+        var ch = +el.dataset.ch;
+        if (ch !== S.cur) { S.cur = ch; markToc(); }
+        $('#rv-pct').textContent = pctText(pctOf(ch, +el.dataset.off), S.bytes);
+        lastGood = { ch: ch, off: +el.dataset.off, page: S.page };
+      }
     }
     pageHintWrite();
     paintPageInd();
@@ -650,10 +697,21 @@
     if (anchor) {
       var el = blockForAnchor(anchor.ch, anchor.off);
       if (el) p = pageOfEl(el);
-      // 同一台设备 + 同一套排版 = 页号可以精确复原 (块级游标会差一页)
-      var hint = pageHintRead();
-      if (hint && hint.ch === anchor.ch && hint.off === anchor.off &&
-          hint.sig === pageSig() && hint.page < S.pageCount) p = hint.page;
+      // 同一台设备 + 同一套排版 = 页号可以精确复原 (块级游标会差一页)。
+      // 提示存的是"本章内第几页", 这里加上本章在本文档里的起始页; 算出来的那一页
+      // 必须真的以那段开头, 否则 (瞬态页表写出的错提示) 一律退回块级定位。
+      if (flowTrusted()) {
+        var hint = pageHintRead();
+        if (hint && hint.ch === anchor.ch && hint.off === anchor.off &&
+            hint.sig === pageSig() && typeof hint.rel === 'number') {
+          var base = chapterFirstPage(anchor.ch);
+          var hp = (base == null) ? -1 : base + hint.rel;
+          if (hp >= 0 && hp < S.pageCount) {
+            var top = pageTopBlockAt(hp);
+            if (top && +top.dataset.ch === hint.ch && +top.dataset.off === hint.off) p = hp;
+          }
+        }
+      }
     }
     if (opts.tail) p = S.pageCount - 1;
     S.page = p;
@@ -671,9 +729,19 @@
     settleTimer = setTimeout(function () {
       if (!isPaged() || !S.pageStride) return;
       var before = S.pageCount;
-      var a = currentAnchor();
-      layoutPaged(a ? { ch: a.ch, off: a.off } : null, { noSave: true, noSettle: true });
-      if (S.pageCount !== before && settleDepth < 3) {
+      // 瞬态页表里"当前页第一段"会指到后面某一章 —— 拿它当锚点重排会直接跳过几页。
+      // 这种时候只重量、保留页号: 尾部补章不会改动前面已有的页界。
+      var a = flowTrusted() ? currentAnchor() : null;
+      if (a) {
+        layoutPaged({ ch: a.ch, off: a.off }, { noSave: true, noSettle: true });
+      } else {
+        measurePages();
+        rebuildFlow();
+        var keep = Math.max(0, Math.min(S.page, S.pageCount - 1));
+        S.page = keep;
+        goPage(keep, { instant: true, noSave: true, noGrow: true });
+      }
+      if ((S.pageCount !== before || !flowTrusted()) && settleDepth < 3) {
         settleDepth++;
         scheduleSettle();
       } else {
@@ -792,6 +860,12 @@
 
   // 当前游标: 滚动模式 = 视口顶部那一段; 翻页模式 = 当前页左上角那一段
   function currentAnchor() {
+    if (isPaged() && !flowTrusted()) {
+      // 量测瞬态: 页表可能把某一章错当成本页开头 —— 用最后一次可信位置兜住
+      if (!lastGood) return null;
+      return { el: blockForAnchor(lastGood.ch, lastGood.off),
+               ch: lastGood.ch, off: lastGood.off };
+    }
     var el = isPaged() ? pageTopBlock() : topBlock();
     if (!el) return null;
     return { el: el, ch: +el.dataset.ch, off: +el.dataset.off };
@@ -2543,6 +2617,7 @@
     S.notes = meta.notes || [];
     S.marks = meta.bookmarks || [];
     S.lastCh = null; S.lastOff = null;
+    lastGood = null;
     applyLook();
     root.classList.toggle('is-paged', isPaged());
     paintMode();

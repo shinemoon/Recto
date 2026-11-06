@@ -273,8 +273,38 @@ rtime.cloud_minutes  = 云端 read_report/book 给的当天分钟 (App / 其它�
    桌面（704px 整数）看不出问题，只有窄屏会累积。现在取
    `viewEl.getBoundingClientRect().width - 左右内边距`，保留三位小数。
 4. **页号提示**：块级游标落在跨页段上时会差一页，所以逐设备记
-   `recto.pg.<bookKey> = {ch, off, page, sig}`（`sig` = 列宽/页高/字号/行距/宽度/字体指纹）。
+   `recto.pg.<bookKey> = {ch, off, page, rel, sig}`（`sig` = 列宽/页高/字号/行距/宽度/字体指纹）。
    同一设备同一排版时用页号精确复原；换设备或改了排版就退回块级口径（±1 页）。
+   **`rel` 是"本章内第几页"，不是绝对页号**（2026-11-06 修复，见 6.2.2）。
+
+#### 6.2.2 两条"页号"口径坑（2026-11-06 定位并修）
+
+**症状**：左右翻页时刷新（或从书架重进）会落到比实际更后的位置（用户报过"跑到 96.1%"）；
+补章那一刻按一次右翻有时会跳过好几页，甚至把进度存到后面某一章的段上。
+
+**根因 A：提示存的是整篇文档的绝对页号。**
+刷新后 `boot()` 只载入进度所在**那一章**，前面几章不在 DOM 里 ——
+同一个 `page` 数字现在是"章内页号"，于是往里多跳了 `page(本章前那些章)` 那么多页。
+修法：写提示时存 `rel = page − chapterFirstPage(ch)`；读时 `p = chapterFirstPage(ch) + rel`，
+并要求 `pageTopBlockAt(p)` 真的是 `hint.ch/hint.off` 那一段，对不上就退回块级定位。
+
+**根因 B：`rebuildFlow()` 的页号换算把"前面翻过的页"全压成 0。**
+原来是 `(left − (vr.left + page·stride)) / stride` 再 `Math.max(0, …)` ——
+当前平移也算进了零点，于是**当前页之前的所有块都得到负数 → 被钳成第 0 页**。
+这张表只在第 0 页是对的；补章/重排时若在别的页上量，`pageTopBlock()` 会把后面某一章的段
+当成"本页第一段"，锚点、存进度、settle 全跟着跑偏。
+修法：`page = (left − vr.left) / stride + S.page`（先回到"相对当前页的页差"，再加回当前页）。
+
+**配套：瞬态页表不许当真。**
+分栏碎片化期间量到的表会把不同章节挤到同一页 —— 用一条硬不变量识别：
+章首带 `break-before: column`，**后一章的首块必定落在更后的页**。
+`flowLooksSane()` 不满足就把这张表标成不可信，此时
+① 不更新游标/百分比 ② 不写页号提示 ③ `currentAnchor()` 退回最后一次可信位置
+④ `scheduleSettle()` 只重量不重锚点（尾部补章不会改动前面已有的页界），
+并且一直稳到页表可信为止（最多三轮）。
+
+回归：`tools/probe_reader_pagehint.mjs`（12 项：单次翻页只走一页 / 提示是章内相对页 /
+rel 与页表自洽 / 刷新前后落在同一段 / 章内往后几页刷新同样一致）。
 
 翻页入口：左右热区点击、键盘 `→ / ← / PageDown / PageUp / 空格`、
 手机上左右滑动（>44px 且横向为主）。翻到末页自动补下一章，翻到首页回上一章末页。
@@ -520,9 +550,11 @@ node tools/probe_settings_layout.mjs        # 40 项：两张宽卡排版 / 输�
 ## 8. 运维
 
 ```bash
-python3 tests/test_reader.py        # 133 项：坐标一致性 / 块切分 / 状态库 / 时长位图
+python3 tests/test_reader.py        # 147 项：坐标一致性 / 块切分 / 状态库 / 时长位图 / 翻页页号口径
 python3 tests/test_reading_mark.py  # 38 项：阅读高亮 (语料 -> 词表 -> 配置)
 python3 tests/test_sync_notes.py    # 边车 / 进度判定 / 笔记位置 / 时长队列
+
+node tools/probe_reader_pagehint.mjs   # 12 项：翻页页号提示 + 刷新落点 (真浏览器)
 ```
 
 清空阅读状态（进度/书签/划线/时长）只需删 `data/reader.sqlite`；书目录会在下次
