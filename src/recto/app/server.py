@@ -17,6 +17,7 @@ Recto 独立服务的全部入口 (不依赖任何外部书目数据库):
 from __future__ import annotations
 
 import json
+import threading
 import traceback
 import urllib.parse
 from http.server import ThreadingHTTPServer
@@ -142,16 +143,49 @@ def _warn_default_login() -> None:
         pass
 
 
+def _start_device_listener():
+    """墨水屏设备接入口 (默认 :8080) —— 与主服务同进程, 协议与端口都沿用设备固件期望的样子。
+
+    端口被占 / 无权限时不致命: 主服务照常起, 只打一行明确的话。
+    """
+    try:
+        port = int(_cfg.get("device", "port", 8080) or 0)
+    except Exception:  # noqa: BLE001
+        port = 0
+    if port <= 0:
+        return None
+    from recto.sources import device as device_mod
+
+    data_dir = paths.PATHS.device_data_dir
+    data_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        srv = device_mod._make_server("0.0.0.0", port, data_dir)
+    except OSError as e:  # 端口占用 / 权限
+        print(f"[recto] 设备接入口 {port} 未能绑定 ({e}) —— 设备推送不可用, 其余功能正常",
+              flush=True)
+        return None
+    threading.Thread(target=srv.serve_forever, name="device-intake", daemon=True).start()
+    print(f"[recto] 设备接入口 http://0.0.0.0:{port}/api/sync  账本: {data_dir}", flush=True)
+    return srv
+
+
 def main() -> None:
     srv = make_server()
     print(f"recto on http://{HOST}:{PORT}  (library + cloud + reader + excerpts)", flush=True)
     _warn_default_login()
+    dev_srv = _start_device_listener()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         srv.server_close()
+        if dev_srv is not None:
+            try:
+                dev_srv.shutdown()
+            except Exception:  # noqa: BLE001
+                pass
+            dev_srv.server_close()
 
 
 if __name__ == "__main__":

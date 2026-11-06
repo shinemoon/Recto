@@ -91,7 +91,7 @@
   掌阅云端（进度 / 划线 / 时长）    library/ 原书 + *.recto.json 边车
                                    data/    reader.sqlite + state/
                                         │
-                                        │ ③ 墨水屏设备（可选，另一个进程）
+                                        │ ③ 墨水屏设备（可选，同一进程的第二个监听）
                                         ▼
                                   :8080 /api/sync
 ```
