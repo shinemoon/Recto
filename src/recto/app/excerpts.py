@@ -362,6 +362,8 @@ def _source_type(excerpt: dict) -> str:
         anything else  -> M5Paper device push
     """
     deck = str(excerpt.get("_firstSeenDeck", ""))
+    if deck == "recto":
+        return "阅读器"
     if deck.startswith(("kavita-merge-", "merged-")):
         return "合并"
     if deck:
@@ -371,7 +373,7 @@ def _source_type(excerpt: dict) -> str:
 
 def _source_badge(excerpt: dict) -> str:
     src = _source_type(excerpt)
-    cls = "kv" if src == "合并" else "m5"
+    cls = {"合并": "kv", "阅读器": "rd"}.get(src, "m5")
     return f'<span class="src-badge {cls}" title="来源: {_e(src)}">{_e(src)}</span>'
 
 
@@ -1068,8 +1070,10 @@ def _render_tools(handler, data_dir: Path, flash: str = "") -> str:
         f'   <datalist id="zh-author-list">{"".join(author_opts)}</datalist>'
         '    <label>只导出来源</label>'
         '    <select name="source" style="width:100%;padding:7px;border:1px solid var(--rule);font:13px var(--sans);background:var(--paper)">'
-        '      <option value="all">全部</option>'
-        '      <option value="m5">M5Paper</option>'
+        '      <option value="all">全部 (设备摘录 + 阅读器笔记)</option>'
+        '      <option value="rd">阅读器 / 掌阅 的划线·笔记</option>'
+        '      <option value="m5">M5Paper 设备</option>'
+        '      <option value="kv">合并 (旧书目库)</option>'
         '    </select>'
         '    <label>时间窗 (createdTime 倒序, 留空 = 全部)</label>'
         '    <div style="display:flex;gap:8px">'
@@ -1093,7 +1097,9 @@ def _render_tools(handler, data_dir: Path, flash: str = "") -> str:
         '  </form>'
         '  <div class="note" style="font:11px var(--sans);color:var(--muted);margin-top:6px;line-height:1.5">'
         '    阅读时长 = 本阅读器的会话区间 + 掌阅云端每日分钟 (没有时段, 补成 19:00–23:59 的一段)。'
-        '书库里没有这本书 (或从未读过) 就不带时长。'
+        '书库里没有这本书 (或从未读过) 就不带时长。<br>'
+        '    摘录来源 = 墨水屏设备推上来的摘录库 + 阅读器/掌阅的划线·笔记·书签'
+        '(后者直接读 reader.sqlite, 不用等设备推), 同一书名下同一条划线只发一份。'
         '  </div>'
         '</div>'
         '<script>'
@@ -1143,7 +1149,7 @@ def _render_tools(handler, data_dir: Path, flash: str = "") -> str:
         '    var r=await fetch("/admin/api/export-zhijian",{method:"POST",body:fd});'
         '    var j=await r.json().catch(function(_){return {ok:false,error:"JSON parse failed"};});'
         '    if(!j.ok){status.textContent="✗ "+j.error;log.textContent=JSON.stringify(j,null,2);log.className="out err";return;}'
-        '    status.textContent="共 "+j.total+" 条 / "+j.book_count+" 本"+(j.time_minutes?(" / 时长 "+j.time_minutes+" 分钟"):"")+", 开始推送...";'
+        '    status.textContent="共 "+j.total+" 条 / "+j.book_count+" 本"+(j.recto_count?(" (阅读器笔记 "+j.recto_count+" 条)"):"")+(j.time_minutes?(" / 时长 "+j.time_minutes+" 分钟"):"")+", 开始推送...";'
         # 逐本推, 串行, 实时回显
         '    function withTimeout(p,ms,label){'
         '      return Promise.race([p,new Promise(function(_,rej){setTimeout(function(){rej(new Error(label+" 超时 "+ms+"ms"));},ms);})]);'
@@ -1862,9 +1868,14 @@ def _redirect_with_flash(handler, location: str, flash: str) -> bool:
 def _entry_page_pct(e: dict) -> int:
     """纸间 /send 的 locationUnit=0 把 page 当「书内百分比 0-100」。
 
-    以前这里恒 0: 所有摘录落在同一个位置, 既没法"跳到原文", 同一章里的多条
-    在 App 侧也无法区分。有 合并 页号 + 总页数就换算成百分比, 没有就 0。
+    阅读器的划线/笔记直接带 `_pct` (字节比例算出来的, 精确到 1%);
+    设备摘录只有 合并 的页号 + 总页数, 换算成百分比; 都没有就 0。
     """
+    if e.get("_pct") is not None:
+        try:
+            return max(0, min(100, int(e["_pct"])))
+        except (TypeError, ValueError):
+            return 0
     try:
         pg = int(e.get("page") or 0)
         total = int(e.get("pageCount") or 0)
@@ -1944,6 +1955,148 @@ def _reader_key_for(title: str, tmap: dict[str, str]) -> str:
     return ""
 
 
+# ---------- 阅读器 / 掌阅 的划线笔记 (导出用) ----------
+
+_GEO_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+def _geometry_for(path: str):
+    """按 mtime 缓存 epub 几何 —— 一次导出可能要算好几本, 别反复解析。"""
+    p = Path(path)
+    mtime = p.stat().st_mtime
+    hit = _GEO_CACHE.get(str(p))
+    if hit and hit[0] == mtime:
+        return hit[1]
+    from recto.core import geometry as _geometry
+    geo = _geometry.load_geometry(p)
+    _GEO_CACHE[str(p)] = (mtime, geo)
+    return geo
+
+
+def _spine_label(geo, spine: int) -> str:
+    """篇下标 → 目录名 (与掌阅推送共用同一口径, 见 services.notes)。"""
+    try:
+        from recto.services import notes as _notes
+        return _notes._label_at_spine(geo, spine)
+    except Exception:                               # noqa: BLE001
+        return ""
+
+
+def _iso_ms(s: str) -> int:
+    try:
+        return int(datetime.fromisoformat(str(s)).timestamp() * 1000)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _recto_rows() -> tuple[list[dict], dict[str, dict]]:
+    """阅读器里的划线 / 笔记 / 书签 → 与 aggregate 同形的摘录行。
+
+    为什么必须读这里: aggregate 只有墨水屏设备推上来的历史摘录; 掌阅里新加的
+    划线由 `services.notes.pull` 写进 reader.sqlite 的 rnote / rbookmark,
+    从不进 aggregate —— 只读 aggregate 就会"明明加了却没有东西可导"。
+    """
+    try:
+        notes = _reader_state.all_notes()
+        marks = _reader_state.all_bookmarks()
+    except Exception:                               # noqa: BLE001
+        return [], {}
+
+    rows: list[dict] = []
+    books: dict[str, dict] = {}
+
+    def _emit(r: dict, *, kind: str, start: int, remark: str) -> None:
+        key = str(r.get("book") or "")
+        if not key:
+            return
+        title = str(r.get("book_title") or "").strip() or key
+        bid = f"recto:{key}"
+        books.setdefault(bid, {
+            "id": bid,
+            "name": title,
+            "author": str(r.get("book_author") or "").strip(),
+        })
+        chapter = int(r.get("chapter") or 0)
+        label, pct = "", 0.0
+        path = str(r.get("book_path") or "")
+        if path:
+            try:
+                geo = _geometry_for(path)
+            except Exception:                       # noqa: BLE001
+                geo = None
+            if geo is not None:
+                label = _spine_label(geo, chapter)
+                try:
+                    # rnote.chapter 是篇下标 (= 云端 chapterId + 1)
+                    pct = float(geo.percent(max(0, chapter - 1), start)) * 100.0
+                except Exception:                   # noqa: BLE001
+                    pct = 0.0
+        rows.append({
+            "bookId": bid,
+            "content": str(r.get("summary") or ""),
+            "idea": remark,
+            "chapter": label or "未分章",
+            "createdTime": _iso_ms(r.get("created_at") or ""),
+            "_pct": max(0, min(100, int(round(pct)))),
+            "_firstSeenDeck": "recto",
+            "_recto": True,
+            "_kind": kind,
+        })
+
+    for r in notes:
+        _emit(r, kind="note",
+              start=int(r.get("start_off") or 0),
+              remark=str(r.get("remark") or ""))
+    for r in marks:
+        _emit(r, kind="bookmark",
+              start=int(r.get("offset") or 0),
+              remark="")
+    return rows, books
+
+
+def _norm_text(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"[\s　]+", "", s)
+    return re.sub(r"[，。、；：,.;:!?！？“”\"'‘’（）()《》「」『』…—\-]+", "", s)
+
+
+def _same_text(a: str, b: str) -> bool:
+    """同一段划线在两侧可能差一两个字 (旧版 positionend 是闭区间)。"""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if len(a) >= 6 and len(b) >= 6:
+        if a.startswith(b) and len(a) - len(b) <= 3:
+            return True
+        if b.startswith(a) and len(b) - len(a) <= 3:
+            return True
+    return False
+
+
+def _merge_recto(agg: list[dict], books: dict, recto: list[dict]) -> list[dict]:
+    """两处摘录合并: 同书名下同一条划线只留阅读器那份 (更新, 章名更准)。
+
+    aggregate 里设备独有的行 (书库没有那本书) 照旧保留。
+    """
+    by_title: dict[str, list[str]] = {}
+    for r in recto:
+        b = books.get(r.get("bookId")) or {}
+        nt = _norm_title(str(b.get("name") or ""))
+        if nt:
+            by_title.setdefault(nt, []).append(_norm_text(r.get("content") or ""))
+
+    out: list[dict] = []
+    for e in agg:
+        b = books.get(e.get("bookId")) or {}
+        nt = _norm_title(str(b.get("name") or ""))
+        txt = _norm_text(e.get("content") or "")
+        if nt and nt in by_title and any(_same_text(txt, t) for t in by_title[nt]):
+            continue
+        out.append(e)
+    return out + recto
+
+
 def _build_zhijian_payloads(
     data_dir: Path,
     host: str,
@@ -1967,9 +2120,17 @@ def _build_zhijian_payloads(
     excerpts = _load_excerpts(data_dir)
     books = _load_books(data_dir)
 
-    # 1. source filter (m5/kv/all)
-    if source in ("m5", "kv"):
-        want = "M5Paper" if source == "m5" else "合并"
+    # 0. 阅读器 / 掌阅的划线笔记 —— aggregate 里没有 (新加的都只在这里)
+    recto_rows, recto_books = _recto_rows()
+    for bid, b in recto_books.items():
+        books.setdefault(bid, b)
+    recto_count = len(recto_rows)
+    if recto_rows:
+        excerpts = _merge_recto(excerpts, books, recto_rows)
+
+    # 1. source filter (m5/kv/rd/all)
+    if source in ("m5", "kv", "rd"):
+        want = {"m5": "M5Paper", "kv": "合并", "rd": "阅读器"}[source]
         excerpts = [e for e in excerpts if _source_type(e) == want]
 
     # 2. 提前用 books 表筛 book_name / author — 摘录自己没这俩字段
@@ -2003,7 +2164,11 @@ def _build_zhijian_payloads(
         }
 
     if not excerpts:
-        return {"ok": False, "error": "没有可导出的摘录", "total": 0, "payloads": []}
+        return {
+            "ok": False,
+            "error": f"没有可导出的摘录 (当前筛选 0 条; 阅读器笔记共 {recto_count} 条)",
+            "total": 0, "payloads": [],
+        }
 
     # 6. 按书分组
     by_book: dict[str, list[dict]] = {}
@@ -2068,6 +2233,7 @@ def _build_zhijian_payloads(
         "port": port,
         "total": len(excerpts),
         "book_count": len(payloads),
+        "recto_count": sum(1 for e in excerpts if e.get("_recto")),
         "time_minutes": round(sum((p.get("timeMinutes") or 0) for p in payloads), 1),
         "time_books": sum(1 for p in payloads if p.get("preciseReadingDurations")),
         "payloads": payloads,

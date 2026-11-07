@@ -605,6 +605,7 @@ table.cols-sessions { min-width: 480px; }
 }
 .src-badge.m5 { color: var(--rc-primary); border-color: transparent; background: var(--rc-primary-container); }
 .src-badge.kv { color: var(--rc-fg); border-color: var(--rc-outline-variant); }
+.src-badge.rd { color: var(--rc-fg); border-color: transparent; background: var(--rc-surface-variant, rgba(0,0,0,.06)); }
 
 /* ------------------------------------------------------------------ 8 代码块 */
 pre, .out {

@@ -30,6 +30,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 TMP = Path(tempfile.mkdtemp())
 os.environ["RECTO_WEBAUTH_DIR"] = str(TMP)
 os.environ["RECTO_AUTH_DISABLE"] = "1"
+# 导出现在会读 reader.sqlite 的划线/笔记 —— 必须指到临时 data_dir,
+# 否则会读到本机真实数据, 断言随用户读了多少书而飘 (2026-11-07 撞过)。
+os.environ["RECTO_DATA_DIR"] = str(TMP / "data")
 
 from recto.app import excerpts  # noqa: E402
 

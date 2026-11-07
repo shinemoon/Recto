@@ -620,6 +620,38 @@ def del_bookmark(bmid: int) -> bool:
     return cur.rowcount > 0
 
 
+def all_notes() -> list[dict]:
+    """全部书的划线/笔记 —— 导出用 (带书名/作者/路径)。
+
+    摘录库 (墨水屏设备的 aggregate) 里没有掌阅/阅读器新增的划线, 所以导出
+    得直接读这张表。`chapter` 是**篇下标** (与 rnote 的写入方一致)。
+    """
+    c = conn()
+    rows = c.execute(
+        """SELECT n.id, n.book, n.chapter, n.start_off, n.end_off,
+                  n.summary, n.remark, n.color, n.created_at, n.updated_at,
+                  n.src,
+                  COALESCE(b.title, '')  AS book_title,
+                  COALESCE(b.author, '') AS book_author,
+                  COALESCE(b.path, '')   AS book_path
+             FROM rnote n LEFT JOIN rbook b ON b.key = n.book
+            ORDER BY n.created_at""").fetchall()
+    return [dict(r) for r in rows]
+
+
+def all_bookmarks() -> list[dict]:
+    """全部书的书签 —— 导出用 (带书名/作者/路径)。"""
+    c = conn()
+    rows = c.execute(
+        """SELECT m.id, m.book, m.chapter, m.offset, m.summary, m.created_at,
+                  COALESCE(b.title, '')  AS book_title,
+                  COALESCE(b.author, '') AS book_author,
+                  COALESCE(b.path, '')   AS book_path
+             FROM rbookmark m LEFT JOIN rbook b ON b.key = m.book
+            ORDER BY m.created_at""").fetchall()
+    return [dict(r) for r in rows]
+
+
 def list_notes(key: str) -> list[dict]:
     c = conn()
     return [dict(r) for r in c.execute(
