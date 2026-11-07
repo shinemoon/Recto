@@ -484,5 +484,30 @@ check("页边热区不可见 (只改 cursor)",
       ".rv-turn:hover, .rv-turn:active { opacity: 0;" in _css
       and "cursor: pointer" in _css)
 
+# ---- 左右翻页: 几何必须与「掀页动画」绝缘 (2026-11-07) ----------------------
+# 报障: 「翻卷模式, 如果翻页很快, 有时候出现阅读区域错位, 会露出前后页边沿」。
+# 真因一: 掀页 (flip) 期间 #rv 带 3D 变换, `.rv-view` 的 getBoundingClientRect().width
+#   是投影后的宽 (桌面实测 704 -> 781px, +11%)。这时来一次重排 (补章/图片加载/resize),
+#   列宽与 stride 就按放大的值算 —— 相邻列从页边露出来。
+# 真因二: 连翻时旧掀页还在跑, 它 onfinish 里清掉 transformOrigin, 剩下几个改成绕
+#   画布中心转, 整页左右各缩一截。
+check("列宽取布局宽 (getComputedStyle), 不用被 3D 投影放大的 rect",
+      "var boxW = parseFloat(vcs.width);" in _js
+      and "box-sizing: border-box" in _js)
+check("量 rect 前先收掀页动画 (layoutPaged / rebuildFlow)",
+      "flipStop();                                   // 同上: 量 rect 前不能有 3D 投影" in _js
+      and "if (!isPaged() || !pageGeom()) return;" in _js
+      and "if (!isPaged() || !viewEl || !S.pageStride) return;" in _js)
+check("翻卷单飞: 只留一个掀页动画 + 一层高光",
+      "var flipAnim = null, flipSweep = null, flipMeta = null;" in _js
+      and _js.count("flipStop();") >= 5)
+check("旧掀页的 onfinish/oncancel 不许动新动画的 origin",
+      _js.count("if (flipAnim !== a) return;") >= 2)
+check("连翻接着当前角度继续, 不弹回 ±12°",
+      "function flipDone()" in _js and "from = (p < 0.9)" in _js)
+check("切走翻卷 / 恢复默认 / 退出翻页都收掉动画",
+      "if (fx !== 'flip') flipStop();" in _js
+      and "别把半转的页面留在屏上" in _js)
+
 print(f"\n{PASS} passed / {FAIL} failed")
 sys.exit(1 if FAIL else 0)

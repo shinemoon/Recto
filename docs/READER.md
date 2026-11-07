@@ -325,6 +325,9 @@ rel 与页表自洽 / 刷新前后落在同一段 / 章内往后几页刷新同�
 `rebuildFlow()` 的块→页号表、`pageStride`、续读页号都不会因为换了效果而飘。
 非滑动效果翻页时临时加 `rv-no-anim`（关掉 CSS transition），量完位移再解锁。
 
+**但"动画不参与测量"要靠两件事守住**（2026-11-07 踩过，见 6.2.3）：
+量列宽只读布局值（`getComputedStyle`），量 rect 前先 `flipStop()`。
+
 效果**盖满整个视口**，不是只作用在正文那一列：所有视觉层都放进 `#rv-fxstage`
 （`position: fixed; inset: 0; z-index: 32` —— 在顶栏 30 / 进度条 31 之上、抽屉 40 之下，
 `pointer-events: none` + `contain: paint`）。正文列宽 `--rv-w` 比屏幕窄时，页边留白和顶栏
@@ -338,8 +341,37 @@ rel 与页表自洽 / 刷新前后落在同一段 / 章内往后几页刷新同�
   不给 `body` 挂 `perspective` —— 那会让 `position: fixed` 的层改以 body 为容器；
 - 系统开了「减少动态效果」且用户没自己选过时，按 `none` 处理；
 - 面板里的「恢复默认」会把效果一起回到 `slide`。
-- 系统开了「减少动态效果」且用户没自己选过时，按 `none` 处理；
-- 面板里的「恢复默认」会把效果一起回到 `slide`。
+
+#### 6.2.3 掀页动画与版面测量（2026-11-07：连翻时"露出前后页边沿"）
+
+报障：**翻卷模式下翻页很快时，有时候阅读区域错位 —— 会露出前后页边沿。**
+
+两条独立根因，都在"动画期间去量版面"这条缝里：
+
+1. **`getBoundingClientRect()` 在 3D 动画期间给的是投影宽。**
+   `flip` 把 `#rv` 绕一侧掀起 `±12deg` + `perspective(2200px)`，整页被放大：
+   桌面实测 `.rv-view` 从 **704 → 781px（+11%）**，手机 364.4 → 370。
+   这期间只要来一次重排（**补章、图片加载、resize** 都会走 `scheduleSettle` →
+   `layoutPaged`），`pageGeom()` 就把放大值当列宽 → `columnWidth` / `pageStride`
+   全错 → 正文按错的列距平移，**相邻列从页边露出来**。
+   `settle` 最多重试三轮（每 90ms），有时能自愈，有时三轮全落在动画里 —— 于是"有时候"。
+   修法：`pageGeom()` 读 `getComputedStyle(viewEl).width`（布局值，与 transform 无关），
+   `layoutPaged()` / `rebuildFlow()` 开头先 `flipStop()`（rect 测量必须在无变换空间里）。
+2. **掀页动画会堆叠。** 连翻时上一次还在跑，`root.animate()` 直接再加一个；
+   先结束的那个在自己 `onfinish` 里执行 `transformOrigin = ''`，
+   于是**还在转的那几个改成绕画布中心转** —— 整页左右各缩一截，两个边都能看见。
+   修法：`flipAnim` / `flipSweep` 单飞（开始新的一次前 `flipStop()`），
+   `onfinish` / `oncancel` 里先判 `if (flipAnim !== a) return;`（origin 只由当前那次清），
+   并且连翻时**接着当前角度继续往回收**（`flipDone()`），不弹回 `±12°`。
+
+规则（以后改这条路径必须守）：
+- **布局测量不读 rect，如果祖先可能带 transform。** 宽度读 `getComputedStyle`，
+  位置读 rect 前先把动画停掉。
+- **动画的 `onfinish` 只许动自己那份状态。** 单飞句柄 + 身份判定，
+  别用"清全局默认值"收尾。
+- 探针：`tools/probe_flip_rapid.mjs`（连翻时"同刻最多 1 个掀页动画 / origin 不被抢 /
+  掀页途中重排后列宽与 stride 不变"）、`tools/probe_reader_seam.mjs`
+  （落点 = `-page × stride`、实际列距 = stride、窗外无内容）。
 
 #### 章末续读为什么不会再"卡死"
 

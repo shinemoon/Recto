@@ -699,6 +699,8 @@ npx playwright install chromium-headless-shell
 cd .. && node tools/probe_all_pages.mjs    # 页面/导航/溢出
 node tools/probe_logo.mjs                  # 标志: 加载/比例/尺寸/深色反相/favicon
 node tools/probe_reader_paged.mjs          # 阅读器左右翻页
+node tools/probe_reader_seam.mjs           # 左右翻页: 列距/落点是否与 stride 一致
+node tools/probe_flip_rapid.mjs            # 翻卷连翻: 掀页动画不堆叠, 版面不被动画污染
 ```
 
 脚本里不写死任何本机路径：仓库根、`make_cookie.py` 都由 `tools/_env.mjs` 现算。

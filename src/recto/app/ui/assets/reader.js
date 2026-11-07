@@ -494,10 +494,17 @@
     // 列宽必须等于可视区的**真实**宽度, 不能用 clientWidth —— 它取整。
     // 窄屏上可视区常是小数宽 (390 屏 → 364.4px), 取整后列宽 364 而浏览器实际按 364.4 排,
     // 每翻一页就多算 0.4px 的 stride → 翻到第 70 页整块正文偏右 ~28px、右边被裁掉一截。
-    // 用 rect 宽减左右内边距, 保留三位小数。
+    //
+    // 但也不能用 getBoundingClientRect() —— 翻卷/滑动正在播动画时 (祖先 #rv 带 3D 变换)
+    // 它给的是**投影后**的宽: 桌面实测 704 → 781px (+11%)。拿它当列宽会让整本书按错误的
+    // 宽度重新分栏, stride 也跟着错 → 正文按错的列距平移, 相邻列就从页边露出来,
+    // 而且这个错会留在版面里直到下一次重排。用 getComputedStyle 的 width:
+    // 那是布局值, 与 transform 无关 (即使小数也保真)。
     var vcs = getComputedStyle(viewEl);
     var padX = (parseFloat(vcs.paddingLeft) || 0) + (parseFloat(vcs.paddingRight) || 0);
-    var w = Math.round((viewEl.getBoundingClientRect().width - padX) * 1000) / 1000;
+    var boxW = parseFloat(vcs.width);
+    if (!boxW) boxW = viewEl.getBoundingClientRect().width - padX;
+    var w = Math.round((boxW - padX) * 1000) / 1000;   // box-sizing: border-box
     if (!w) return false;
     contentEl.style.columnWidth = w + 'px';
     var gap = parseFloat(getComputedStyle(contentEl).columnGap) || 0;
@@ -541,6 +548,7 @@
   function rebuildFlow() {
     flow = null;
     if (!isPaged() || !viewEl || !S.pageStride) return;
+    flipStop();                                   // 同上: 量 rect 前不能有 3D 投影
     var els = $$('.rv-blk', contentEl);
     if (!els.length) return;
     // 先把平移"钉"到当前页 (翻页动画途中量到的是中间位置 → 页号会飘)
@@ -687,6 +695,9 @@
   function layoutPaged(anchor, opts) {
     opts = opts || {};
     if (!isPaged() || !pageGeom()) return;
+    // 重排要量一堆 rect (列位/页首块)。祖先 #rv 若正在播翻卷, 量到的是投影后的位置,
+    // 页表会整体错位 —— 动画只是观感, 该让路就让路。
+    flipStop();
     root.classList.add('rv-no-anim');
     S.page = 0;                                   // 量列位时必须在"零平移"状态
     contentEl.style.transform = 'translate3d(0,0,0)';
@@ -2024,6 +2035,7 @@
       localStorage.removeItem('recto.' + k);
     });
     S.fx = 'slide';
+    flipStop();
     try { localStorage.removeItem('recto.fx'); } catch (e) { /* 隐私模式忽略 */ }
     applyLook();
     paintLook();
@@ -2068,6 +2080,7 @@
     if (fx === S.fx) { paintFx(); return; }
     S.fx = fx;
     try { localStorage.setItem('recto.fx', fx); } catch (e) { /* 隐私模式忽略 */ }
+    if (fx !== 'flip') flipStop();          // 离开翻卷: 收掉还在转的那一页
     paintFx();
     if (isPaged()) playFx(fx, 1);          // 选中就当场演示一次
     toast('翻页效果: ' + FX_NAME[fx]);
@@ -2124,29 +2137,75 @@
 
   // 翻卷: 整页绕转页那一侧的边缘掀起 (±12deg, perspective 写在 transform 里,
   // 不给 body 挂 perspective —— 那会让 fixed 层改以 body 为容器), 再掠过一道纸页高光
+  //
+  // 单飞 (2026-11-07): 连翻时上一次翻卷往往还在跑。若让它和新的一次并排存在,
+  // **先结束的那个会在自己的 onfinish 里把 transformOrigin 清成默认值** ——
+  // 还在转的那几个就改成绕画布中心转, 整页左右各缩一截, 读起来就是
+  // 「阅读区域错位, 露出前后页边沿」。所以这里只允许一个翻卷动画 + 一层高光。
+  var flipAnim = null, flipSweep = null, flipMeta = null;
+
+  function flipStop() {
+    var a = flipAnim;
+    flipAnim = null; flipMeta = null;
+    if (a) { try { a.cancel(); } catch (e) { /* 已结束 */ } }
+    if (flipSweep) { fxDrop(flipSweep); flipSweep = null; }
+    if (root) root.style.transformOrigin = '';
+  }
+
+  // 上一次翻卷已经转过去多少 (0..1) —— 连翻时从这个角度接着转, 不弹回 ±12°
+  function flipDone() {
+    if (!flipAnim || !flipMeta) return 1;
+    var t = flipAnim.currentTime;
+    if (!(typeof t === 'number')) return 1;
+    var p = t / flipMeta.ms;
+    return p < 0 ? 0 : (p > 1 ? 1 : p);
+  }
+
   function fxFlip(dir, ms) {
     if (!root || typeof root.animate !== 'function') return;
     var deg = dir > 0 ? -12 : 12;
+    var from = deg, dur = ms;
+    if (flipAnim && flipMeta) {
+      if (flipMeta.dir === dir) {
+        var p = flipDone();
+        // 已经转过九成: 当作新的一页, 从头掀; 否则接着当前角度往回收
+        from = (p < 0.9) ? +(deg * (1 - p)).toFixed(2) : deg;
+        if (from !== deg) dur = Math.max(150, Math.round(ms * (1 - p) + 120));
+      }
+    }
+    flipStop();
     root.style.transformOrigin = dir > 0 ? 'left center' : 'right center';
     var a = root.animate([
-      { transform: 'perspective(2200px) rotateY(' + deg + 'deg)' },
+      { transform: 'perspective(2200px) rotateY(' + from + 'deg)' },
       { transform: 'perspective(2200px) rotateY(0deg)' }
-    ], { duration: ms, easing: 'cubic-bezier(.22,.61,.36,1)' });
+    ], { duration: dur, easing: 'cubic-bezier(.22,.61,.36,1)' });
+    flipAnim = a; flipMeta = { dir: dir, ms: dur };
     var done = function () {
+      if (flipAnim !== a) return;             // 已被新的一次接管: 不许动 origin
+      flipAnim = null; flipMeta = null;
       root.style.transformOrigin = '';
       try { a.cancel(); } catch (e) { /* 已结束 */ }
     };
     a.onfinish = done;
-    a.oncancel = function () { root.style.transformOrigin = ''; };
+    a.oncancel = function () {
+      if (flipAnim !== a) return;
+      flipAnim = null; flipMeta = null;
+      root.style.transformOrigin = '';
+    };
     var sw = fxLayer('rv-fxl-sweep', ms + 140);
     if (!sw || typeof sw.animate !== 'function') { fxDrop(sw); return; }
+    flipSweep = sw;
     var b = sw.animate([
       { opacity: 0, transform: 'translateX(' + (dir > 0 ? '-40%' : '40%') + ')' },
       { opacity: .9, transform: 'translateX(0)', offset: .38 },
       { opacity: 0, transform: 'translateX(' + (dir > 0 ? '40%' : '-40%') + ')' }
     ], { duration: ms, easing: 'ease-out' });
-    b.onfinish = function () { fxDrop(sw); };
-    b.oncancel = function () { fxDrop(sw); };
+    var sweepDone = function () {
+      if (flipSweep === sw) flipSweep = null;
+      fxDrop(sw);
+    };
+    b.onfinish = sweepDone;
+    b.oncancel = sweepDone;
   }
 
   function playFx(fx, dir) {
@@ -2178,6 +2237,7 @@
       prefetch();
       toast('左右翻页');
     } else {
+      flipStop();                            // 退出左右翻页: 别把半转的页面留在屏上
       root.classList.add('rv-no-anim');
       contentEl.style.transform = '';
       contentEl.style.columnWidth = '';
