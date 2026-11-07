@@ -1005,7 +1005,7 @@ def api_post(body: dict) -> dict:
     return out
 
 
-def api_password(body: dict, user: str | None) -> dict:
+def api_password(body: dict, user: str | None, ip: str = "") -> dict:
     """改口令 —— 只校验「当前口令」, 不校验用户名。
 
     会话已经证明是登录用户了; 再拿 cookie 里的用户名去比 `[auth] user` 只会
@@ -1017,14 +1017,21 @@ def api_password(body: dict, user: str | None) -> dict:
     body = body or {}
     old = str(body.get("old") or "")
     new = str(body.get("new") or "")
-    if webauth.password_source() == "env":
+    who = (ip or "-") + ("" if not user else "/" + str(user))
+    src = webauth.password_source()
+    if src == "env":
         # 环境变量优先级最高: 改了文件也不生效, 不如直说 (也别白验一遍旧口令)
+        webauth._audit(f"口令修改 by={who} 拒绝: 来源是环境变量")   # noqa: SLF001
         raise ValueError("口令由环境变量 RECTO_AUTH_PASSWORD 提供 —— 请改环境变量, "
                          "或去掉它再用本页修改")
     if webauth.enabled() and not webauth.check_password(old):
+        # 「旧口令不对」每次都要留痕: 用户看到的只是一句提示, 我们得知道到底哪一步
+        webauth._audit(                                        # noqa: SLF001
+            f"口令修改 by={who} 拒绝: 当前口令不对 (服务端来源 {src}, "
+            f"填了 {len(old)} 位)")
         raise ValueError("当前口令不对 (口令来源: " + _password_source_label() + ")。"
                          "忘了旧口令, 可在服务器执行 python3 -m recto.cli passwd 重置")
-    ok, err = webauth.set_password(new)
+    ok, err = webauth.set_password(new, who=who)
     if not ok:
         raise ValueError(err or "改不了口令")
     return {"ok": True, "login": webauth.login_user(),

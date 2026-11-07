@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 TMP = tempfile.mkdtemp(prefix="recto-settings-test-")
 os.environ["RECTO_DATA_DIR"] = TMP
+os.environ["RECTO_AUTH_LOG"] = "off"   # 测试不写生产留痕 (data/logs/webauth.log)
 os.environ.pop("RECTO_LIBRARY_DIR", None)
 os.environ.pop("RECTO_AUTH_PASSWORD", None)
 

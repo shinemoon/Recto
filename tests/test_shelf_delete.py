@@ -34,6 +34,7 @@ os.environ["RECTO_DATA_DIR"] = str(TMP / "data")
 os.environ["RECTO_LIBRARY_DIR"] = str(LIB)
 os.environ["RECTO_CLOUD_AUTH_FILE"] = str(TMP / "auth.json")
 os.environ["RECTO_CORPUS_DIR"] = str(TMP / "data" / "corpus")
+os.environ["RECTO_AUTH_LOG"] = "off"   # 测试不写生产留痕 (data/logs/webauth.log)
 os.environ["RECTO_AUTH_PASSWORD"] = "del-pass"
 os.environ.pop("RECTO_AUTH_DISABLE", None)
 (TMP / "data").mkdir(parents=True, exist_ok=True)

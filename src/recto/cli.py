@@ -204,7 +204,7 @@ def cmd_passwd(args) -> int:
         if new != again:
             print("两次输入不一致")
             return 2
-    ok, err = webauth.set_password(new)
+    ok, err = webauth.set_password(new, who="cli")
     if not ok:
         print(f"改不了口令: {err}")
         return 1

@@ -297,7 +297,7 @@ class Handler(BaseHTTPRequestHandler):
             body = webauth.login_page("", nxt, f"失败次数太多, {wait} 秒后再试", user)
             self._send(429, body.encode("utf-8"), "text/html; charset=utf-8")
             return
-        ok, msg, _via = webauth.verify(user, password)
+        ok, msg, _via = webauth.verify(user, password, ip=ip)
         if ok:
             webauth.rate_clear(ip)
             # cookie 里存规范登录名 (config 的 [auth] user), 不存用户敲的大小写/别名,
@@ -507,7 +507,8 @@ class Handler(BaseHTTPRequestHandler):
             from recto.app import settings_page as _st
 
             try:
-                self._json(200, _st.api_password(body, self._user()))
+                self._json(200, _st.api_password(
+                    body, self._user(), (self.client_address or ("",))[0]))
             except Exception as e:  # noqa: BLE001
                 self._json(400, {"ok": False, "error": str(e)})
             return

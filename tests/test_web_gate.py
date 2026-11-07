@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 TMP = Path(tempfile.mkdtemp())
+os.environ["RECTO_AUTH_LOG"] = "off"   # 测试不写生产留痕 (data/logs/webauth.log)
 os.environ["RECTO_WEBAUTH_DIR"] = str(TMP)
 os.environ["RECTO_AUTH_PASSWORD"] = "gate-pass"
 os.environ.pop("RECTO_AUTH_USER", None)  # 登录名用 config.toml (初始 root)

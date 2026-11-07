@@ -33,6 +33,7 @@ os.environ["RECTO_LIBRARY_DIR"] = str(TMP / "library")
 os.environ["RECTO_CLOUD_AUTH_FILE"] = str(TMP / "auth.json")
 # 语料根也要隔离: config.toml.local 里写的是绝对路径, 不隔离就会写进生产语料目录
 os.environ["RECTO_CORPUS_DIR"] = str(TMP / "data" / "corpus")
+os.environ["RECTO_AUTH_LOG"] = "off"   # 测试不写生产留痕 (data/logs/webauth.log)
 os.environ["RECTO_AUTH_PASSWORD"] = "corpus-pass"
 os.environ.pop("RECTO_AUTH_DISABLE", None)          # 要测登录门
 os.environ.pop("RECTO_AUTH_USER", None)

@@ -383,11 +383,16 @@ def auth_page(*, title: str = "", body: str) -> str:
 
 def login_body(*, next_url: str = "/", err: str = "", user: str = "",
                ttl_days: int = 7, note: str = "") -> str:
+    """登录表单 —— 只放标志、两个输入框和按钮。
+
+    用户口径: 这里不写任何配置项 / 口令来源 / 会话时长的说明 (那些是维护者视角,
+    对来登录的人只是噪声)。`note` 参数留着给调用方传自定义文案, 缺省不显示。
+    """
     err_html = f'<div class="err">{_e(err)}</div>' if err else ""
+    sub_html = f'\n  <div class="rc-sub">{_e(note)}</div>' if note else ""
     return f"""<form class="rc-auth-card" method="post" action="/login" autocomplete="on">
   <a class="rc-lockup" href="/" aria-label="{_e(BRAND_FULL)}">{logo_full()}</a>
-  <header class="rc-head"><h1>登录</h1>
-  <div class="rc-sub">{_e(note or '用阅读器宿主 (:5000) 的账号密码登录 —— 一套凭据, 全部分区通用。')}</div></header>
+  <header class="rc-head"><h1>登录</h1>{sub_html}</header>
   <input type="hidden" name="next" value="{_e(next_url or '/')}">
   <label class="field"><span>用户名</span>
     <input name="username" value="{_e(user or '')}" autocomplete="username"
@@ -396,7 +401,6 @@ def login_body(*, next_url: str = "/", err: str = "", user: str = "",
     <input name="password" type="password" autocomplete="current-password"></label>
   <button type="submit" class="primary">登录</button>
   {err_html}
-  <div class="tip">会话 {ttl_days} 天内有效 · 所有分区共用这一次登录。</div>
 </form>"""
 
 

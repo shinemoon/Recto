@@ -247,23 +247,31 @@ def password_source() -> str:
     return "file"
 
 
-def set_password(new: str) -> tuple[bool, str]:
+def set_password(new: str, *, who: str = "") -> tuple[bool, str]:
     """改口令。→ (ok, 说明)
 
     env 提供口令时**拒绝**: 环境变量优先级最高, 改了文件也不生效, 不如直说。
     来源是 config.toml 时同时改那一行 (只动这一行, 注释保留)。
+
+    写完**立刻读回校验**: `password()` 反映的才是登录时真正用的那一份。
+    两者不一致就如实报错 (多半是 env / config 把文件盖掉了), 别让用户"改成功了"
+    却登不进去。
     """
     new = (new or "").strip()
+    tag = f"口令修改 by={who or '-'}"
     if len(new) < 6:
+        _audit(f"{tag} 拒绝: 新口令太短 ({len(new)} 位)")
         return False, "新口令至少要 6 位"
     if len(new) > 200:
+        _audit(f"{tag} 拒绝: 新口令太长")
         return False, "新口令太长了"
     src = password_source()
     if src == "env":
+        _audit(f"{tag} 拒绝: 口令由环境变量提供")
         return False, ("口令由环境变量 RECTO_AUTH_PASSWORD 提供 —— 请改环境变量, "
                        "或去掉它再用本页修改")
+    f = password_file()
     try:
-        f = password_file()
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(new + "\n", "utf-8")
         try:
@@ -272,13 +280,60 @@ def set_password(new: str) -> tuple[bool, str]:
             pass
         _own(f)
     except OSError as e:
+        _audit(f"{tag} 失败: 写 {f} 出错 {e}")
         return False, f"写口令文件失败: {e}"
     if src == "config":
         from recto.core import config as _conf
 
         if not _conf.set_value("auth", "password", new):
+            _audit(f"{tag} 失败: config.toml 写不进去 (来源 config)")
             return False, "已更新 admin-password, 但 config.toml 写不进去 (它优先级更高)"
+    # 读回校验: 登录判定用的是 password(), 不是"我刚写进文件的字符串"
+    if not _same(password(), new):
+        shadow = password_source()
+        _audit(f"{tag} 失败: 写入后读回不一致 (实际来源 {shadow})")
+        return False, ("口令已写入 " + str(f) + f", 但服务端实际用的是「{shadow}」那一份 —— "
+                       "请改那个来源 (环境变量 RECTO_AUTH_PASSWORD 或 config.toml 的 "
+                       "[auth] password)")
+    _audit(f"{tag} 成功: 已写入 {f} (来源 {src}, {len(new)} 位)")
     return True, ""
+
+
+def _audit(msg: str) -> None:
+    """登录 / 口令事件写一行 —— 这类问题没有留痕就只能靠猜。
+
+    data/recto.log 里一条口令记录都没有, 所以「改了口令但登录还是旧口令」无从定位。
+    日志落 `<data_dir>/logs/webauth.log` (512KB 轮转); 不记口令本身。
+    """
+    try:
+        # RECTO_AUTH_LOG: 空 = <data_dir>/logs/webauth.log; off = 不写; 其它 = 该路径
+        # (测试与临时实例靠它把日志指到临时目录, 不污染生产留痕)
+        override = _env("RECTO_AUTH_LOG").strip()
+        if override.lower() in ("off", "0", "none", "no"):
+            return
+        p = Path(override) if override else Path(_cfg().data_dir) / "logs" / "webauth.log"
+        d = p.parent
+        d.mkdir(parents=True, exist_ok=True)
+        try:
+            if p.stat().st_size > 512 * 1024:
+                os.replace(p, p.with_name(p.name + ".1"))
+        except OSError:
+            pass
+        line = time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n"
+        with p.open("a", encoding="utf-8") as f:
+            f.write(line)
+        try:
+            os.chmod(p, 0o640)
+        except OSError:
+            pass
+        _own(p)
+    except Exception:  # noqa: BLE001 — 写日志失败不该影响登录/改口令
+        pass
+
+
+def _who(user: str) -> str:
+    u = (user or "").strip()
+    return u if len(u) <= 24 else u[:24] + "…"
 
 
 def _same(a: str, b: str) -> bool:
@@ -300,18 +355,31 @@ def check_password(password_in: str) -> bool:
     return _same(password_in or "", want)
 
 
-def verify(user: str, password_in: str) -> tuple[bool, str, str]:
-    """登录用 → (ok, 错误文案, 途径 'local'|'none')"""
+def verify(user: str, password_in: str, *, ip: str = "") -> tuple[bool, str, str]:
+    """登录用 → (ok, 错误文案, 途径 'local'|'none')
+
+    失败/成功都写一行 webauth.log (用户名与来源 IP, 不记口令本身):
+    「口令改了但登录还是不认」这类问题只能靠这条线定位。
+    """
     if not enabled():
         return True, "", "none"
     user = (user or "").strip()
+    src = password_source()
     if not user or not password_in:
+        _audit(f"登录失败 ip={ip or '-'} user={_who(user) or '-'} 原因=没填全 (来源 {src})")
         return False, "用户名和口令都要填", ""
     want = password()
     if not want:
+        _audit(f"登录失败 ip={ip or '-'} user={_who(user)} 原因=服务端没有口令 (来源 {src})")
         return False, "服务端没有配置口令（[auth] password 或 <data_dir>/admin-password）", ""
     ok = _same(user, login_user()) and _same(password_in, want)
-    return (True, "", "local") if ok else (False, "用户名或口令不对", "")
+    if ok:
+        _audit(f"登录成功 ip={ip or '-'} user={_who(user)} (来源 {src})")
+        return True, "", "local"
+    why = ("用户名不对" if not _same(user, login_user())
+           else f"口令不对 (服务端来源 {src})")
+    _audit(f"登录失败 ip={ip or '-'} user={_who(user)} 原因={why}")
+    return False, "用户名或口令不对", ""
 
 
 # ---------------------------------------------------------------- ratelimit
@@ -344,10 +412,10 @@ def login_page(title: str = "", next_url: str = "/", err: str = "",
     """登录页 —— 与其它页面共用同一套 token 与皮肤 (外观页里换肤, 这里跟着变)。"""
     from recto.app.ui import shell
 
+    # 登录页不写任何配置项 / 口令来源的提示 (用户口径: 只留输入框和按钮)
     body = shell.login_body(
         next_url=next_url, err=err, user=user,
         ttl_days=max(1, ttl() // 86400),
-        note="云阅 Recto 自有账号口令（[auth] 段或 <data_dir>/admin-password）。",
     )
     return shell.auth_page(title=title or shell.BRAND_FULL, body=body)
 

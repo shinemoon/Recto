@@ -523,8 +523,7 @@ def _render_login(handler, error: str = "") -> str:
 
     return _shell.auth_page(
         title="摘录接入",
-        body=_shell.login_body(err=error, next_url="/admin/",
-                               note="摘录接入与控制台共用一次登录。"),
+        body=_shell.login_body(err=error, next_url="/admin/"),
     )
 
 
