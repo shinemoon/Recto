@@ -468,8 +468,10 @@ check("面板下拉改高度对齐其它行 (不吃 44px 触控高)",
 # ---- 窄屏左右翻页: 列宽不能取整 (2026-11-06) ----
 # viewEl.clientWidth 是整数; 390 屏的可视区是 364.4px, 取整成 364 后
 # 浏览器按 364.4 排 -> 每翻一页 stride 少 0.4px, 第 70 页整块正文偏右 ~28px、右边被裁。
-check("翻页列宽用可视区真实宽度 (rect 减内边距, 不取整)",
-      "viewEl.getBoundingClientRect().width - padX" in _js
+# 2026-11-07: 宽度来源从 rect 换成布局值 —— rect 在掀页 (3D) 动画期间是投影宽,
+# 详见 6.2.3。要守住的仍是同一个事实: 用真实宽度, 不取整。
+check("翻页列宽用可视区真实宽度 (布局值, 不取整)",
+      "var boxW = parseFloat(vcs.width);" in _js
       and "Math.round(viewEl.clientWidth)" not in _js)
 check("列宽保留小数 (三位), 消除累计漂移",
       "* 1000) / 1000" in _js and "S.pageStride = w + gap;" in _js)

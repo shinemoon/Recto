@@ -503,7 +503,8 @@
     var vcs = getComputedStyle(viewEl);
     var padX = (parseFloat(vcs.paddingLeft) || 0) + (parseFloat(vcs.paddingRight) || 0);
     var boxW = parseFloat(vcs.width);
-    if (!boxW) boxW = viewEl.getBoundingClientRect().width - padX;
+    // 兜底 (元素隐藏/老浏览器取不到 width): 退回 rect, 但那是投影值, 只配用在不播动画时
+    if (!boxW) boxW = viewEl.getBoundingClientRect().width;
     var w = Math.round((boxW - padX) * 1000) / 1000;   // box-sizing: border-box
     if (!w) return false;
     contentEl.style.columnWidth = w + 'px';
