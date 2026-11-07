@@ -106,6 +106,10 @@ reader_state.conn = _fake_conn          # type: ignore[assignment]
 
 
 def _build(**kw):
+    # 视图缓存按文件 mtime 失效; 这里用 monkeypatch 换 conn (文件没变),
+    # 所以每个用例前手工清一次, 否则会读到上一个用例的缓存。
+    excerpts._VIEW_CACHE["key"] = None
+    excerpts._VIEW_CACHE["value"] = None
     args = dict(source="all", book_name="", author="", day_from="", day_to="",
                 text_q="", safety_cap=0, include_time=False)
     args.update(kw)

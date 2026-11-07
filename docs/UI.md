@@ -374,6 +374,25 @@ inline 排布在 100% 宽的字段后面**必然换行**, 该行比相邻行高 
 回归: `tests/test_corpus_proxy.py::test_badge_warn_does_not_push_input` +
 `tools/probe_badge_warn.mjs` (双视口: 不重叠 / 中线对齐 / 不换行 / 列宽一致 / 行高一致)。
 
+### 6.3 摘录后台的数据源 (2026-11-07)
+
+摘录面板 (首页 / 摘录 / 书 / 工具 / 书票 / 导出) 读的是**同一个合并视图**
+`excerpts._load_view()`:
+
+| 来源 | 存在哪 | 来源徽标 |
+|---|---|---|
+| 墨水屏设备推送的摘录 | `<data_dir>/intake/aggregate/*.jsonl` | `M5Paper` / `合并` |
+| 阅读器 + 掌阅 的划线/笔记/书签 | `<data_dir>/reader.sqlite` 的 `rnote` / `rbookmark` | `阅读器` |
+
+- 书的 `bookId` 对阅读器那批是字符串 `recto:<book key>`, 所以筛选、书详情、
+  书票都必须按**字符串 bookId** 走 (旧代码 `int(book_id)` 一抛错就"显示全部")。
+- 视图缓存按 `aggregate.jsonl / books.jsonl / reader.sqlite(+wal)` 的 mtime+size 失效,
+  新划的线刷页面就能看到, 不需要重启进程。
+- 删除: 设备摘录改 `aggregate.jsonl`; 阅读器记录只删本地 `reader.sqlite` ——
+  掌阅云端还在, 下次 `notes.pull` 会重新拉回 (弹窗里写明了)。
+
+回归: `tests/test_admin_reader_notes.py`。
+
 ## 7 什么时候不该用这套
 
 内置阅读器 (`app/reader.py` + `assets/reader.css`) 有自己的正文排版，不套这里的

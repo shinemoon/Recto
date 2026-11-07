@@ -260,9 +260,11 @@ def _filter_excerpts(
     if book_id:
         try:
             bid = int(book_id)
-            out = [e for e in out if e.get("bookId") == bid]
         except ValueError:
-            pass
+            # 阅读器 (recto:<key>) / 历史合并 (kavita_xxx) 用字符串 bookId
+            out = [e for e in out if str(e.get("bookId")) == str(book_id)]
+        else:
+            out = [e for e in out if e.get("bookId") == bid]
 
     if book_q:
         ql = book_q.lower()
@@ -530,13 +532,13 @@ def _render_login(handler, error: str = "") -> str:
 
 
 def _render_home(handler, data_dir: Path) -> str:
-    books = _load_books(data_dir)
-    excerpts = _load_excerpts(data_dir)
+    excerpts, books = _load_view(data_dir)
     events = _load_events(data_dir, limit=200)
 
     # Source split
     n_m5 = sum(1 for e in excerpts if _source_type(e) == "M5Paper")
     n_kv = sum(1 for e in excerpts if _source_type(e) == "合并")
+    n_rd = sum(1 for e in excerpts if _source_type(e) == "阅读器")
 
     # 7-day bar chart
     buckets: dict[str, int] = {}
@@ -637,12 +639,12 @@ def _render_home(handler, data_dir: Path) -> str:
       <div class="card">
         <div class="kicker-sm">摘录</div>
         <div class="n">{len(excerpts)}<sup>条</sup></div>
-        <div class="l">M5Paper <b>{n_m5}</b> · 合并 <b>{n_kv}</b></div>
+        <div class="l">阅读器 <b>{n_rd}</b> · M5Paper <b>{n_m5}</b> · 合并 <b>{n_kv}</b></div>
       </div>
       <div class="card">
         <div class="kicker-sm">同步</div>
         <div class="n">{len(events)}</div>
-        <div class="l">M5Paper + 合并 合并</div>
+        <div class="l">设备推送 + 阅读器 / 掌阅</div>
       </div>
       <div class="card">
         <div class="kicker-sm">活跃</div>
@@ -668,13 +670,15 @@ def _render_home(handler, data_dir: Path) -> str:
 
 
 def _render_books(handler, data_dir: Path, q: str = "") -> str:
-    books = _load_books(data_dir)
-    excerpts = _load_excerpts(data_dir)
-    # count per book
+    excerpts, books = _load_view(data_dir)
+    # count per book + 来源集合 (同一本可能既有设备摘录又有阅读器划线)
     counts: dict[int | str, int] = {}
+    srcs: dict[int | str, set] = {}
     for e in excerpts:
         b = e.get("bookId")
         counts[b] = counts.get(b, 0) + 1
+        srcs.setdefault(b, set()).add(_source_type(e))
+    _src_cls = {"M5Paper": "m5", "合并": "kv", "阅读器": "rd"}
 
     rows = []
     for bid, b in sorted(books.items(), key=lambda kv: -counts.get(kv[0], 0)):
@@ -682,8 +686,15 @@ def _render_books(handler, data_dir: Path, q: str = "") -> str:
         author = b.get("author", "")
         cnt = counts.get(bid, 0)
         first_seen = b.get("_firstSeenDeck", "")
-        src = "合并" if str(first_seen).startswith(("kavita-merge-", "merged-")) else "M5Paper"
-        src_cls = "kv" if src == "合并" else "m5"
+        kinds = srcs.get(bid) or set()
+        if not kinds:
+            src, src_cls = "—", "mix"
+        elif len(kinds) == 1:
+            src = next(iter(kinds))
+            src_cls = _src_cls.get(src, "mix")
+        else:
+            src, src_cls = "混合", "mix"
+        seen_txt = "阅读器" if str(first_seen) == "recto" else first_seen
         if q and q.lower() not in name.lower() and q.lower() not in author.lower():
             continue
         rows.append(
@@ -693,7 +704,7 @@ def _render_books(handler, data_dir: Path, q: str = "") -> str:
             f'<span class="sub">{_e(author) or "未署名"}</span></td>'
             f'<td class="num">{cnt}</td>'
             f'<td class="cell-src"><span class="src-badge {src_cls}">{_e(src)}</span></td>'
-            f'<td class="cell-deck mono">{_e(first_seen)}</td>'
+            f'<td class="cell-deck mono">{_e(seen_txt) or "—"}</td>'
             f'</tr>'
         )
     search = (
@@ -717,8 +728,7 @@ def _render_books(handler, data_dir: Path, q: str = "") -> str:
 
 
 def _render_book_detail(handler, data_dir: Path, book_id: str) -> str:
-    books = _load_books(data_dir)
-    excerpts = _load_excerpts(data_dir)
+    excerpts, books = _load_view(data_dir)
     # bid type coercion
     try:
         bid = int(book_id)
@@ -728,8 +738,14 @@ def _render_book_detail(handler, data_dir: Path, book_id: str) -> str:
     name = book.get("name", f"未知 ({book_id})")
     author = book.get("author", "")
     first_seen = book.get("_firstSeenDeck", "")
-    src = "合并" if str(first_seen).startswith(("kavita-merge-", "merged-")) else "M5Paper"
-    src_cls = "kv" if src == "合并" else "m5"
+    if str(bid).startswith("recto:"):
+        src, src_cls = "阅读器", "rd"
+    elif str(first_seen) == "recto":
+        src, src_cls = "阅读器", "rd"
+    elif str(first_seen).startswith(("kavita-merge-", "merged-")):
+        src, src_cls = "合并", "kv"
+    else:
+        src, src_cls = "M5Paper", "m5"
 
     # group by year-month
     by_month: dict[str, list[dict]] = {}
@@ -763,13 +779,13 @@ def _render_book_detail(handler, data_dir: Path, book_id: str) -> str:
                 f'  <div class="tl-time"><span class="h">{_e(ts_short)}</span><span class="d">{_e(ts_day)}</span></div>'
                 f'  <div class="tl-body">'
                 f'    <div class="tl-meta">'
-                f'      <span class="src-badge {src_cls}">{_e(src)}</span> '
+                f'      {_source_badge(e)} '
                 f'      <b>{_e(chap) or "未分章"}</b> · {_e(_char_count(e))} 字 · {eid_str}'
                 f'    </div>'
                 f'    <div class="tl-content">{content}</div>'
                 f'    {f"<div class=tl-idea>— {_e(idea)}</div>" if idea else ""}'
                 f'    <div class="tl-footer">'
-                f'      <span class="sub">首次见 {_e(first_seen)}</span>'
+                f'      <span class="sub">首次见 {_e("阅读器" if str(first_seen) == "recto" else first_seen)}</span>'
                 f'      <button class="btn-link" onclick="copyEx(this, \'{copy_text}\')">复制</button>'
                 f'    </div>'
                 f'  </div>'
@@ -794,16 +810,15 @@ def _render_excerpts(
     day_from: str = "", day_to: str = "",
     page: int = 1, source: str = "all", chars: str = "all",
 ) -> str:
-    books = _load_books(data_dir)
-    excerpts = _load_excerpts(data_dir)
+    excerpts, books = _load_view(data_dir)
     filtered = _filter_excerpts(
         excerpts, q=q, book_id=book_id, book_q=book_q, author=author,
         day_from=day_from, day_to=day_to, books=books,
     )
 
     # Source filter (derived from _firstSeenDeck prefix)
-    if source in ("m5", "kv"):
-        want = "M5Paper" if source == "m5" else "合并"
+    if source in ("m5", "kv", "rd"):
+        want = {"m5": "M5Paper", "kv": "合并", "rd": "阅读器"}[source]
         filtered = [e for e in filtered if _source_type(e) == want]
 
     # Char count filter
@@ -850,7 +865,11 @@ def _render_excerpts(
             eid = e.get("id", "")
             cc = _char_count(e)
             content = _highlight(e.get("content", ""), q)
+            if not (e.get("content") or "").strip():
+                content = '<span class="muted">（无正文的定位书签）</span>'
             copy_text = (e.get("content", "") or "").replace("\\", "\\\\").replace("'", "\\'")
+            del_confirm = ("确认删除这条本地记录？掌阅/云端仍保留, 下次同步会重新拉回"
+                           if e.get("_recto") else "确认删除这条摘录？")
             back = (
                 f"/admin/?pane=excerpts&q={urllib.parse.quote(q)}"
                 f"&book={urllib.parse.quote(book_id)}&book_q={urllib.parse.quote(book_q)}"
@@ -875,8 +894,8 @@ def _render_excerpts(
                 f'      <a class="btn-link" href="/admin/api/bookplate?id={_e(eid)}&style={_render.DEFAULT_BOOKPLATE_STYLE}" target="_blank" title="生成纸间书票 PNG (skill 默认风格)">书票</a>'
                 f'      <span style="flex:1"></span>'
                 f'      <button class="btn-link" onclick="copyEx(this, \'{copy_text}\')">复制</button>'
-                f'      <a class="btn-link" href="/admin/api/delete?id={_e(eid)}&back={urllib.parse.quote(back)}" '
-                f'         onclick="return confirm(\'确认删除这条摘录？\')">删除</a>'
+                f'      <a class="btn-link" href="/admin/api/delete?id={urllib.parse.quote(str(eid))}&back={urllib.parse.quote(back)}" '
+                f'         onclick="return confirm(\'{del_confirm}\')">删除</a>'
                 f'    </div>'
                 f'  </div>'
                 f'</div>'
@@ -885,8 +904,8 @@ def _render_excerpts(
     # Filter chips: source
     def src_chip(key, label):
         cls = "chip" + (" active" if source == key else "")
-        if key == "kv":
-            cls = "chip kv" + (" active" if source == key else "")
+        if key in ("kv", "rd"):
+            cls = f"chip {key}" + (" active" if source == key else "")
         params = _qs_replace(pane="excerpts", q=q, book=book_id, day_from=day_from,
                              day_to=day_to, source=key, chars=chars)
         return f'<a class="{cls}" href="/admin/?{params}">{label}</a>'
@@ -907,6 +926,7 @@ def _render_excerpts(
         f'{src_chip("all", "全部")}'
         f'{src_chip("m5", "M5Paper")}'
         f'{src_chip("kv", "合并")}'
+        f'{src_chip("rd", "阅读器")}'
         f'<span class="lbl" style="margin-left:8px">字数</span>'
         f'{chars_chip("all", "全部")}'
         f'{chars_chip("short", "短 <50")}'
@@ -1021,8 +1041,7 @@ TOOL_CSS = """
 
 
 def _render_tools(handler, data_dir: Path, flash: str = "") -> str:
-    excerpts = _load_excerpts(data_dir)
-    books = _load_books(data_dir)
+    excerpts, books = _load_view(data_dir)
     kv_count = sum(1 for e in excerpts if _source_type(e) == "合并")
     m5_count = sum(1 for e in excerpts if _source_type(e) == "M5Paper")
     books_list = [b for b in books.values() if b.get("name")]
@@ -1746,14 +1765,13 @@ def handle_admin(handler, data_dir: Path, path: str, query: str) -> bool:
 
     # /admin/api/excerpts.json (enriched: joined book meta + source + char count)
     if path == "/admin/api/excerpts.json":
-        books = _load_books(data_dir)
-        excerpts = _load_excerpts(data_dir)
+        excerpts, books = _load_view(data_dir)
         filtered = _filter_excerpts(
             excerpts, q=q, book_id=book_id, book_q=book_q, author=author,
             day_from=day_from, day_to=day_to, books=books,
         )
-        if source in ("m5", "kv"):
-            want = "M5Paper" if source == "m5" else "合并"
+        if source in ("m5", "kv", "rd"):
+            want = {"m5": "M5Paper", "kv": "合并", "rd": "阅读器"}[source]
             filtered = [e for e in filtered if _source_type(e) == want]
         if chars == "short":
             filtered = [e for e in filtered if _char_count(e) < 50]
@@ -1794,26 +1812,16 @@ def handle_admin(handler, data_dir: Path, path: str, query: str) -> bool:
             back = form.get("back", "/admin/excerpts")
             if ids_str:
                 # bulk delete
-                eids: list[int] = []
-                for x in ids_str.split(","):
-                    x = x.strip()
-                    if not x:
-                        continue
-                    try:
-                        eids.append(int(x))
-                    except ValueError:
-                        pass
-                deleted = sum(1 for x in eids if _delete_excerpt(data_dir, x))
+                eids = [x.strip() for x in ids_str.split(",") if x.strip()]
+                deleted = sum(1 for x in eids if _delete_row(data_dir, x))
                 # flash via cookie-less query param
                 sep = "&" if "?" in back else "?"
                 _send_redirect(handler, f"{back}{sep}deleted={deleted}")
                 return True
-        try:
-            eid = int(eid_str)
-        except ValueError:
+        if not str(eid_str or "").strip():
             _send_html(handler, _page("失败", '<p style="color:var(--danger)">ID 非法</p>', "excerpts", handler), status=400)
             return True
-        ok = _delete_excerpt(data_dir, eid)
+        ok = _delete_row(data_dir, eid_str)
         if ok:
             _send_redirect(handler, back)
         else:
@@ -1823,6 +1831,28 @@ def handle_admin(handler, data_dir: Path, path: str, query: str) -> bool:
     # 404 within admin
     _send_html(handler, _page("404", '<p class="muted">页面不存在</p>', "", handler), status=404)
     return True
+
+
+def _delete_row(data_dir: Path, eid) -> bool:
+    """删除一条摘录: 设备 aggregate (int id) 或阅读器记录 (recto-note-N / recto-bm-N)。
+
+    阅读器那侧的删除只动本地 reader.sqlite —— 掌阅云端的划线还在, 下次
+    `notes.pull` 会重新拉回 (有意的: 后台不是掌阅的删除入口)。
+    """
+    raw = str(eid if eid is not None else "").strip()
+    if not raw:
+        return False
+    m = re.match(r"^recto-(note|bm)-(\d+)$", raw)
+    if m:
+        rid = int(m.group(2))
+        ok = (_reader_state.del_note(rid) if m.group(1) == "note"
+              else _reader_state.del_bookmark(rid))
+        _VIEW_CACHE["key"] = None          # 立刻让视图缓存失效
+        return bool(ok)
+    try:
+        return _delete_excerpt(data_dir, int(raw))
+    except (TypeError, ValueError):
+        return False
 
 
 def _delete_excerpt(data_dir: Path, excerpt_id: int) -> bool:
@@ -2032,6 +2062,7 @@ def _recto_rows() -> tuple[list[dict], dict[str, dict]]:
                 except Exception:                   # noqa: BLE001
                     pct = 0.0
         rows.append({
+            "id": f"recto-{'note' if kind == 'note' else 'bm'}-{r.get('id')}",
             "bookId": bid,
             "content": str(r.get("summary") or ""),
             "idea": remark,
@@ -2041,6 +2072,7 @@ def _recto_rows() -> tuple[list[dict], dict[str, dict]]:
             "_firstSeenDeck": "recto",
             "_recto": True,
             "_kind": kind,
+            "_rid": r.get("id"),
         })
 
     for r in notes:
@@ -2097,6 +2129,63 @@ def _merge_recto(agg: list[dict], books: dict, recto: list[dict]) -> list[dict]:
     return out + recto
 
 
+def _reader_db_sig() -> tuple:
+    """reader.sqlite 的 (mtime, size) —— WAL 里才是新写入, 两份都要看。"""
+    try:
+        base = Path(_reader_state.db_path())
+    except Exception:                               # noqa: BLE001
+        return (0, 0, 0, 0)
+    out = []
+    for p in (base, Path(str(base) + "-wal")):
+        try:
+            st = p.stat()
+            out.extend((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.extend((0, 0))
+    return tuple(out)
+
+
+_VIEW_CACHE: dict[str, Any] = {"key": None, "value": None}
+
+
+def _load_view(data_dir: Path) -> tuple[list[dict], dict]:
+    """摘录视图 = 设备 aggregate + 阅读器/掌阅的划线笔记 (合并去重)。
+
+    `?pane=home` / `?pane=excerpts` / 导出 / 书票 全部走这一个入口 ——
+    只读 aggregate 时, 在阅读器里新划的线永远不会出现在后台。
+    缓存按两侧文件 (aggregate.jsonl / books.jsonl / reader.sqlite + wal)
+    的 mtime+size 失效, 所以写完立刻可见, 不需要重启。
+    """
+    agg, bks = _aggregate_paths(data_dir)
+
+    def _sig(p: Path) -> tuple:
+        try:
+            st = p.stat()
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return (0, 0)
+
+    key = (str(data_dir), _sig(agg), _sig(bks)) + _reader_db_sig()
+    cached = _VIEW_CACHE.get("value")
+    if cached is not None and _VIEW_CACHE.get("key") == key:
+        return cached  # type: ignore[return-value]
+
+    books = _load_books(data_dir)
+    excerpts = _load_excerpts(data_dir)
+    try:
+        rows, rbooks = _recto_rows()
+    except Exception:                               # noqa: BLE001
+        rows, rbooks = [], {}
+    for bid, b in rbooks.items():
+        books.setdefault(bid, b)
+    if rows:
+        excerpts = _merge_recto(excerpts, books, rows)
+
+    _VIEW_CACHE["key"] = key
+    _VIEW_CACHE["value"] = (excerpts, books)
+    return excerpts, books
+
+
 def _build_zhijian_payloads(
     data_dir: Path,
     host: str,
@@ -2117,16 +2206,10 @@ def _build_zhijian_payloads(
       - server 跟手机可能不同子网, server 直推失败但浏览器能通
       - filter 维度 (书名/作者/时间窗/文本) 在 server 端比 client 端更可靠
     """
-    excerpts = _load_excerpts(data_dir)
-    books = _load_books(data_dir)
-
-    # 0. 阅读器 / 掌阅的划线笔记 —— aggregate 里没有 (新加的都只在这里)
-    recto_rows, recto_books = _recto_rows()
-    for bid, b in recto_books.items():
-        books.setdefault(bid, b)
-    recto_count = len(recto_rows)
-    if recto_rows:
-        excerpts = _merge_recto(excerpts, books, recto_rows)
+    # 0. 阅读器 / 掌阅的划线笔记 + 设备 aggregate —— 一个合并视图
+    #    (aggregate 里没有阅读器新增的划线, 只读它会"明明加了却没有东西可导")
+    excerpts, books = _load_view(data_dir)
+    recto_count = sum(1 for e in excerpts if e.get("_recto"))
 
     # 1. source filter (m5/kv/rd/all)
     if source in ("m5", "kv", "rd"):
@@ -2263,8 +2346,7 @@ def _render_bookplate_png(data_dir: Path, excerpt_id, style: str) -> tuple[bytes
         )
 
     # 1. Find the excerpt
-    excerpts = _load_excerpts(data_dir)
-    books = _load_books(data_dir)
+    excerpts, books = _load_view(data_dir)
     target = next((e for e in excerpts if str(e.get("id")) == str(excerpt_id)), None)
     if target is None:
         return None, f"找不到 id={excerpt_id} 的摘录"

@@ -606,6 +606,7 @@ table.cols-sessions { min-width: 480px; }
 .src-badge.m5 { color: var(--rc-primary); border-color: transparent; background: var(--rc-primary-container); }
 .src-badge.kv { color: var(--rc-fg); border-color: var(--rc-outline-variant); }
 .src-badge.rd { color: var(--rc-fg); border-color: transparent; background: var(--rc-surface-variant, rgba(0,0,0,.06)); }
+.src-badge.mix { color: var(--rc-dim); border-color: var(--rc-outline-variant); background: transparent; }
 
 /* ------------------------------------------------------------------ 8 代码块 */
 pre, .out {
@@ -929,6 +930,7 @@ pre:empty::before { content: "—"; color: var(--rc-mute); }
   color: var(--rc-on-secondary-container); font-weight: 500;
 }
 .chip.kv.active { background: var(--rc-primary); border-color: transparent; color: var(--rc-on-primary); }
+.chip.rd.active { background: var(--rc-surface-variant, rgba(0,0,0,.06)); border-color: transparent; color: var(--rc-fg); }
 
 .tool-card { padding: calc(var(--rc-pad) + 4px); }
 .tool-card h3 { margin-bottom: 4px; }
