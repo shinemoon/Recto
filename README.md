@@ -330,6 +330,7 @@ PYTHONPATH=src python3 -m recto.cli align          # 判定: bad: 0 (位置与�
 | | `download_subdir` | 空 | 同 `[library] download_subdir` |
 | `[device]` | `port` | `8080` | 墨水屏接入端口（**固件写死，不要改**） |
 | | `data_dir` | `data/` | 摘录账本目录（`decks/` + `aggregate/` + `events.jsonl`） |
+| `[ui]` | `timezone` | 空 = 跟随系统 | **只影响显示换算**（存盘一律本地时间）。写 IANA 名，如 `Asia/Shanghai`；环境变量 `RECTO_TZ` 优先 |
 | `[corpus]` | `dir` | 空 | 语料 json 目录（阅读高亮从这里读） |
 | `[reader.mark]` | `enabled` | `true` | 阅读器高亮总开关 |
 | | `mode` | `highlight` | `highlight`（不改 DOM） / `span`（可加粗圆角） |
@@ -370,6 +371,7 @@ PYTHONPATH=src python3 -m recto.cli align          # 判定: bad: 0 (位置与�
 | 命令 | 作用 |
 |---|---|
 | `version` / `config` / `paths` | 版本 / 生效配置 / 关键路径 |
+| `tz` | 时间口径（生效时区 / 现在 / 换算约定）—— 「差 8 小时」先看这个 |
 | `selftest` | 自检：目录、凭据、书目数、端口 |
 | `passwd [新口令]` | 服务器侧重置 Web 口令（不验旧口令） |
 | `library scan` / `library list` | 扫书库 / 列书（`--force` 重建几何、`--q` 过滤） |
@@ -757,6 +759,7 @@ RV_KEY=<某本书的 key> node tools/probe_reader_paged.mjs
 | 语料页抽词失败 | 语料页「1 · LLM 配置」里点测连通；看 `data/state/logs/corpus.log` | 端点/额度/模型不支持（模型强制思考时会变慢，但不是错误 —— 见「推理模型 / 思考」一段） |
 | 换了排版后高亮不显示 | 语料目录里有没有这本书的 `keywords.json` | 语料缺失，或书名对不上（在设置页手动绑定） |
 | 藏书票报缺依赖 | `node -v`；Playwright 浏览器是否装 | 只有这一块依赖 Node |
+| 时间戳差了 8 小时 | `python3 -c "from recto.core import clock; print(clock.summary())"` | 展示层口径问题（旧版有：毫秒时间戳按 UTC 印、裸本地 ISO 当 UTC 换算）；`[ui] timezone` / `RECTO_TZ` 可固定时区 |
 
 **日志位置**：`data/recto.log`（Web），设备接入在自己的 `data_dir` 下，同步审计行格式统一为
 `<时间> <级别> <中文一句话>`，页面上是同一个来源。

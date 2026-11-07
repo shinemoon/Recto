@@ -42,6 +42,7 @@ from typing import Any, Callable
 # Imported here so the webui "书票" link and route default stay in sync with
 # the renderer's CLI default. If you change styles in render.py, no edit
 # needed here.
+from recto.core import clock as _clock  # noqa: E402
 from recto.core import legacy  # noqa: E402
 from recto.assets.bookplate import render as _render  # noqa: E402
 from recto.core import sidecar as _sidecar  # noqa: E402
@@ -190,25 +191,12 @@ def _load_events(data_dir: Path, limit: int = 500) -> list[dict]:
 # ---------- Time formatting ----------
 
 def _fmt_ts(raw) -> str:
-    if raw is None or raw == "":
-        return ""
-    if isinstance(raw, (int, float)):
-        # assume ms
-        try:
-            return datetime.fromtimestamp(int(raw) / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-        except (ValueError, OSError, OverflowError):
-            return ""
-    if isinstance(raw, str):
-        # try iso
-        try:
-            s = raw.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(s)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone().strftime("%Y-%m-%d %H:%M")
-        except ValueError:
-            return raw[:16]
-    return ""
+    """时间戳 → 本地时间 "YYYY-MM-DD HH:MM"。
+
+    口径全在 `core.clock`: 毫秒时间戳是绝对时间 (必须换算), 裸本地 ISO
+    按本地解释 (不能当 UTC —— 当 UTC 会快 8 小时, 甚至跨进"明天")。
+    """
+    return _clock.fmt(raw)
 
 
 def _month_header(month_key: str, count: int) -> str:
@@ -228,18 +216,8 @@ def _month_header(month_key: str, count: int) -> str:
 
 
 def _fmt_event_ts(raw: str) -> str:
-    """events.jsonl uses UTC Z; show local + UTC."""
-    if not raw:
-        return ""
-    try:
-        s = raw.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        local = dt.astimezone().strftime("%Y-%m-%d %H:%M")
-        return local
-    except ValueError:
-        return raw[:16]
+    """events.jsonl 用带偏移/`Z` 的 ISO; 显示成本地时间 (口径见 core.clock)。"""
+    return _clock.fmt(raw)
 
 
 # ---------- Filter helpers ----------
@@ -325,14 +303,10 @@ def _filter_excerpts(
 
 def _ts_ms(e: dict) -> int:
     t = e.get("createdTime")
-    if isinstance(t, (int, float)):
+    if isinstance(t, (int, float)) and not isinstance(t, bool):
         return int(t)
-    if isinstance(t, str) and t:
-        try:
-            return int(datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp() * 1000)
-        except ValueError:
-            return 0
-    return 0
+    dt = _clock.parse(t)
+    return _clock.to_ms(dt) if dt else 0
 
 
 # ---------- HTML helpers ----------
@@ -2013,10 +1987,9 @@ def _spine_label(geo, spine: int) -> str:
 
 
 def _iso_ms(s: str) -> int:
-    try:
-        return int(datetime.fromisoformat(str(s)).timestamp() * 1000)
-    except (TypeError, ValueError):
-        return 0
+    """ISO (裸本地 / 带偏移) → 毫秒时间戳。裸本地按本地解释 (见 core.clock)。"""
+    dt = _clock.parse(s)
+    return _clock.to_ms(dt) if dt else 0
 
 
 def _recto_rows() -> tuple[list[dict], dict[str, dict]]:

@@ -53,6 +53,22 @@ def cmd_paths(_args) -> int:
     return 0
 
 
+def cmd_tz(_args) -> int:
+    """打印当前时间口径 —— 「时间戳差 8 小时」先看这里。"""
+    from recto.core import clock
+
+    info = clock.summary()
+    print("== 时间口径 ==")
+    print(f"配置时区    {info['config'] or '(跟随系统)'}")
+    print(f"生效时区    {info['effective']}  偏移 {info['offset']}")
+    print(f"现在        {info['now']}")
+    print(f"环境 TZ     {info['system_tz'] or '(未设)'}")
+    print()
+    print("约定: 毫秒时间戳是绝对时间 (显示时换算); 裸 ISO 是本地时间 (不当 UTC);")
+    print("      带偏移 / Z 的 ISO 按偏移换算。存盘一律本地时间, 时区只影响显示。")
+    return 0
+
+
 def cmd_selftest(_args) -> int:
     from recto.services import reader_state, sync
 
@@ -283,6 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("config", help="打印生效配置").set_defaults(func=cmd_config)
     sub.add_parser("paths", help="打印关键路径").set_defaults(func=cmd_paths)
     sub.add_parser("selftest", help="自检").set_defaults(func=cmd_selftest)
+    sub.add_parser("tz", help="查看时间口径 (时区 / 现在 / 约定)").set_defaults(func=cmd_tz)
     p_pw = sub.add_parser("passwd", help="重置 Web 登录口令 (服务器端, 不验旧口令)")
     p_pw.add_argument("new", nargs="?", default="", help="新口令; 省略则交互输入")
     p_pw.set_defaults(func=cmd_passwd)

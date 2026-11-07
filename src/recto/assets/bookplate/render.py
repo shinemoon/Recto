@@ -966,14 +966,14 @@ STYLE_MARK = {
 
 def _dim_for(created_time_ms: int) -> str:
     """从 createdTime (ms) 派生 dim 短串: 季·天气·时段·星期.
-    季: createdTime 落北京时; 天气: 无外部数据, 永远 '阴' (米色调对阴最稳);
+    季: createdTime 按**本地时区**落 (见 core.clock, 不再写死北京时);
+    天气: 无外部数据, 永远 '阴' (米色调对阴最稳);
     时段: 0-5 深夜 / 6-11 晨 / 12-13 午 / 14-17 下午 / 18-22 夜 / 23 深夜;
     星期: 周一/二/…/日."""
     if not created_time_ms or created_time_ms < 10_000_000_000:
         return "夏 · 阴 · 午后 · 周末"
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    dt = datetime.fromtimestamp(created_time_ms / 1000, tz=ZoneInfo("Asia/Shanghai"))
+    from recto.core import clock as _clock
+    dt = _clock.from_ms(created_time_ms)         # 本地时区 (不再写死北京时)
     m = dt.month
     if m in (3, 4, 5): season = "春"
     elif m in (6, 7, 8): season = "夏"
@@ -1088,10 +1088,8 @@ def build_zhijian_body(book_name: str, author: str, content: str, bg_data_uri: s
     dim = _dim_for(created_time_ms)
     ts = ""
     if created_time_ms and created_time_ms > 10_000_000_000:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        dt = datetime.fromtimestamp(created_time_ms / 1000, tz=ZoneInfo("Asia/Shanghai"))
-        ts = dt.strftime("%Y . %m . %d")
+        from recto.core import clock as _clock
+        ts = _clock.from_ms(created_time_ms).strftime("%Y . %m . %d")
 
     seal_char = _pick_seal_char(book_raw, auth_raw, content)
     note_html = ""

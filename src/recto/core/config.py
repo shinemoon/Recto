@@ -61,6 +61,11 @@ DEFAULTS: dict[str, Any] = {
         "output_dir": "",                 # 空 = <data_dir>/bookplate/out
         "node_dirs": [],                  # 额外的 nvm 根 (找不到 node 时按顺序找)
     },
+    # 时区 (只影响"显示这一层", 不影响任何存盘格式)。
+    # 空 = 跟随系统; 想固定的写 IANA 名, 例如 "Asia/Shanghai"。
+    "ui": {
+        "timezone": "",
+    },
     "auth": {
         "mode": "password",               # password | none
         "user": "root",                   # 登录用户名 (首次启动的默认值, 可在配置里改)
@@ -158,6 +163,7 @@ class Config:
             "RECTO_CLOUD_AUTH_FILE": ("cloud", "auth_file"),
             "RECTO_CORPUS_DIR": ("corpus", "dir"),
             "RECTO_DEVICE_PORT": ("device", "port"),
+            "RECTO_TZ": ("ui", "timezone"),
             "RECTO_AUTH_MODE": ("auth", "mode"),
             "RECTO_AUTH_USER": ("auth", "user"),
             "RECTO_AUTH_PASSWORD": ("auth", "password"),
