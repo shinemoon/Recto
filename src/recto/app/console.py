@@ -861,7 +861,9 @@ const WHY = {
   "throttled": "刚同步过，稍后再试",
   "no-cloud-link": "没有云端映射",
   "auto-off": "自动同步已关闭",
-  "no-key": "取不到云端记录"
+  "no-key": "取不到云端记录",
+  "text-mismatch": "本地这份与云端不是同一个文件，坐标对不上，跳过",
+  "cloud-only": "书库里没有这本书"
 };
 
 function whyText(w) {
@@ -929,15 +931,26 @@ function detailRows(items, one) {
 }
 
 function notesBody(n) {
-  const body = detailRows(n.books, (b) => [
-    b.notes != null ? "划线 " + b.notes : "",
-    b.marks ? "书签 " + b.marks : "",
-    b.del_notes ? "删划线 " + b.del_notes : "",
-    b.deleted ? "删除 " + b.deleted : "",
-    b.dry ? "试运行" : ""
-  ].filter(Boolean).join(" · "));
+  const body = detailRows(n.books, (b) => {
+    const parts = [
+      b.notes != null ? "划线 " + b.notes : "",
+      b.marks ? "书签 " + b.marks : "",
+      b.del_notes ? "删划线 " + b.del_notes : "",
+      b.deleted ? "删除 " + b.deleted : "",
+      b.unchanged ? "未变 " + b.unchanged : "",
+      b.cloud_keys ? b.cloud_keys + " 处云端记录" : "",
+      b.skipped ? whyText(b.skipped) : "",
+      b.dry ? "试运行" : ""
+    ].filter(Boolean);
+    return parts.length ? parts.join(" · ") : "没有要拉的";
+  });
   const errs = (n.errors || []).map((e) => `<li><span class="pill err">失败</span> ${esc(String(e))}</li>`).join("");
-  return body + (errs ? `<ul class="rs-list">${errs}</ul>` : "");
+  const only = (n.unmapped || []).length
+    ? `<p class="meta">云端还有 ${n.unmapped.length} 本有笔记、但书库里没有这本书（取不到原文，划不了线）：`
+      + esc(n.unmapped.slice(0, 5).map((u) => `${u.name || u.book_id}（划线 ${u.notes || 0}`
+        + (u.marks ? ` · 书签 ${u.marks}` : "") + `）`).join("、")) + `</p>`
+    : "";
+  return body + (errs ? `<ul class="rs-list">${errs}</ul>` : "") + only;
 }
 
 function timeBody(t) {

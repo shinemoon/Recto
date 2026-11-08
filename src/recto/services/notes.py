@@ -28,6 +28,7 @@ import gzip
 import hashlib
 import html
 import json
+import os
 import re
 import sqlite3
 import time
@@ -59,6 +60,31 @@ _doc_cache: dict[tuple[str, int], bytes | None] = {}
 def kb32(zy_book_id: str) -> str:
     """云端 book_id → 笔记服务用的 32hex **大写**。"""
     return (zy_book_id or "").strip().split("_")[0][:32].upper()
+
+
+def hex32(value: str) -> str:
+    """任意 book_id → 32hex 大写; 不是 32hex 就返回空串。"""
+    s = (value or "").strip().split("_")[0][:32]
+    return s.upper() if re.fullmatch(r"[0-9A-Fa-f]{32}", s) else ""
+
+
+def cloud_ids(row: dict) -> list[str]:
+    """一本书在云端可能存在的身份 (32hex 大写, 去重, 优先级从高到低)。
+
+    书名相同的一本书在掌阅云端最多有两种 32hex 身份:
+
+    - `id64` 前 32 位 = **云端那份文件的字节 MD5** (云书架 book_id 的构造), 权威;
+    - `id32` = 边车记下来的身份, 文件被替换后会过期。
+
+    并且同一身份在云端**大小写敏感**: App 的笔记身份用 `getFileMD5()` 原样 (小写),
+    进度用大写。真实数据里两者可能各存一批条目 (设备上划的落小写, 网页推的落大写),
+    所以查询要展开大小写、结果要合并。
+    """
+    out: list[str] = []
+    for v in (hex32(str(row.get("id64") or "")), hex32(str(row.get("id32") or ""))):
+        if v and v not in out:
+            out.append(v)
+    return out
 
 
 def norm_key(key: str) -> str:
@@ -285,6 +311,107 @@ def cloud_versions(book32: str) -> dict[str, Any]:
             "del": {norm_key(str(x)) for x in (row.get("delList") or [])}}
 
 
+def cloud_versions_multi(ids: Iterable[str]) -> dict[str, Any]:
+    """多个身份 × 大小写 合并后的版本表; key 一律大写。
+
+    `del` 只留下**任何身份都不存在**的条目。
+    原因: 2026-11-01 做过一次"大小写合并" (小写身份 → 大写), 那次删除在云端留了
+    墓碑; 若照单执行, 本地刚拉下来的笔记会被自己清空。
+    """
+    note: dict[str, int] = {}
+    mark: dict[str, int] = {}
+    dels: set[str] = set()
+    used: list[str] = []
+    sources: dict[str, dict[str, int]] = {}
+    for bid in ids:
+        for variant in dict.fromkeys((str(bid).upper(), str(bid).lower())):
+            try:
+                row = data_ver(variant)
+            except Exception:      # noqa: BLE001 — 单个身份读失败不该拖垮整本
+                continue
+            if not row:
+                continue
+            used.append(variant)
+            got = {"note": len(row.get("booknotesVerList") or []),
+                   "mark": len(row.get("bookmarksVerList") or [])}
+            if got["note"] or got["mark"]:
+                sources[str(bid).upper()] = got
+            for name, slot in (("booknotesVerList", note), ("bookmarksVerList", mark)):
+                for it in (row.get(name) or []):
+                    if not isinstance(it, dict):
+                        continue
+                    k = norm_key(str(it.get("uniquecheck") or it.get("uniquechek") or ""))
+                    if not k:
+                        continue
+                    try:
+                        mt = int(it.get("marktime") or 0)
+                    except (TypeError, ValueError):
+                        mt = 0
+                    if k not in slot or mt > slot[k]:
+                        slot[k] = mt
+            for x in (row.get("delList") or []):
+                dels.add(norm_key(str(x)))
+    dels -= set(note) | set(mark)
+    return {"note": note, "mark": mark, "del": dels, "ids": used, "sources": sources}
+
+
+_md5_cache: dict[tuple[str, int, int], str] = {}
+
+
+def file_md5(path: str) -> str:
+    """本地原书的 MD5 (大写)。
+
+    云端每个条目的位置都是**按云端那份文件的字节**算出来的。本地这份若不是同一份
+    文件 (重新下载过 / 换过版本), 按位置切出来的正文一定是错的 —— 调用方必须比对。
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    key = (str(path), int(st.st_size), int(st.st_mtime))
+    hit = _md5_cache.get(key)
+    if hit is not None:
+        return hit
+    h = hashlib.md5()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError:
+        return ""
+    out = h.hexdigest().upper()
+    _md5_cache[key] = out
+    return out
+
+
+def cloud_only_books(rows: list[dict] | None = None) -> list[dict]:
+    """云端有笔记/书签、但书库里没有这本书 (取不到原文, 划不了线)。
+
+    只看「有内容」的书; 返回 [{book_id, name, notes, marks}]。
+    """
+    rows = _sync.links() if rows is None else rows
+    have = {i for r in rows for i in cloud_ids(r)}
+    out: list[dict] = []
+    try:
+        nbs = notebooks()
+    except Exception:           # noqa: BLE001
+        return out
+    for nb in nbs:
+        bid = hex32(str(nb.get("bookid") or nb.get("bookId") or ""))
+        if not bid or bid in have:
+            continue
+        try:
+            n = int(nb.get("notenum") or 0)
+            m = int(nb.get("marknum") or 0)
+        except (TypeError, ValueError):
+            continue
+        if n + m <= 0:
+            continue
+        out.append({"book_id": bid, "name": str(nb.get("name") or nb.get("bookname") or ""),
+                    "notes": n, "marks": m})
+    return out
+
+
 def positions_payload(book32: str, epub_path: str) -> dict:
     """云端版本表 → 条目 (正文从原书切)。"""
     v = data_ver(book32)
@@ -443,15 +570,24 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
     added = updated = deleted = skipped = unchanged = 0
     report: list[dict] = []
     for r in rows:
-        book32 = kb32(r["id32"] or r["id64"])
-        if not book32:
+        ids = cloud_ids(r)
+        if not ids:
             continue
-        ver = cloud_versions(book32)
+        book32 = ids[0]
+        ver = cloud_versions_multi(ids)
         if not ver["note"] and not ver["mark"] and not ver["del"]:
             skipped += 1
             report.append({"book": r["title"], "skipped": "cloud-empty"})
             continue
         epub = r["path"]
+        local_md5 = file_md5(epub)
+        have_src = {str(k).upper() for k in (ver.get("sources") or {})}
+        if local_md5 and have_src and local_md5 not in have_src:
+            # 云端位置按**它那份文件**的字节算; 本地不是同一份 → 切出来的正文必错
+            skipped += 1
+            report.append({"book": r["title"], "skipped": "text-mismatch",
+                           "local_id": local_md5, "cloud_ids": sorted(have_src)})
+            continue
         geo = _sync._geometry_of(epub)
 
         def _label(spine: int) -> str:
@@ -459,6 +595,8 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
             return _label_at_spine(geo, spine)
 
         item = {"book": r["title"], "notes": 0, "marks": 0, "deleted": 0}
+        if len(ver["ids"]) > 1:
+            item["cloud_keys"] = len(ver["ids"])
         for uc, marktime in ver["note"].items():
             poses = _split_positions(uc)
             if len(poses) < 2:
@@ -515,19 +653,27 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
                 item["deleted"] += 1
                 continue
             c = reader_state.conn()
-            c.execute("DELETE FROM rnote WHERE book=? AND zy_key=?", (r["key"], uc))
-            c.execute("DELETE FROM rbookmark WHERE book=? AND zy_key=?", (r["key"], uc))
+            gone = c.execute("DELETE FROM rnote WHERE book=? AND zy_key=?",
+                             (r["key"], uc)).rowcount or 0
+            gone += c.execute("DELETE FROM rbookmark WHERE book=? AND zy_key=?",
+                              (r["key"], uc)).rowcount or 0
             c.commit()
             _seen_del(book32, "note", uc)
             _seen_del(book32, "mark", uc)
-            item["deleted"] += 1
-            deleted += 1
+            # 云端墓碑只算"真的删掉了本地条目", 否则每轮都会报一次"删除 19"
+            item["deleted"] += gone
+            deleted += gone
         report.append(item)
+    unmapped = cloud_only_books(_sync.links())
     if not (quiet and not (added or updated or deleted)):
         _sync.audit("拉取划线 · 新增 %d · 更新 %d · 删除 %d · 未变 %d",
                     added, updated, deleted, unchanged)
+    if unmapped and not quiet:
+        _sync.audit("云端另有 %d 本有笔记、书库里没有 (拉不下来): %s", len(unmapped),
+                    "、".join(u["name"] or u["book_id"] for u in unmapped[:3]))
     return {"added": added, "updated": updated, "deleted": deleted,
-            "skipped": skipped, "unchanged": unchanged, "books": report}
+            "skipped": skipped, "unchanged": unchanged, "books": report,
+            "unmapped": unmapped}
 
 
 # --------------------------------------------------------------------------
@@ -563,11 +709,20 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
     errors: list[str] = []
     report: list[dict] = []
     for r in rows:
-        book32 = kb32(r["id32"] or r["id64"])
-        if not book32:
+        ids = cloud_ids(r)
+        if not ids:
             continue
-        ver = cloud_versions(book32)
+        book32 = ids[0]
+        ver = cloud_versions_multi(ids)
         epub = r["path"]
+        local_md5 = file_md5(epub)
+        have_src = {str(k).upper() for k in (ver.get("sources") or {})}
+        if local_md5 and have_src and local_md5 not in have_src:
+            # 位置是按字节算的: 本地与云端不是同一份文件时, 推上去会让 App 跳到错处
+            skipped += 1
+            report.append({"book": r["title"], "skipped": "text-mismatch",
+                           "local_id": local_md5, "cloud_ids": sorted(have_src)})
+            continue
         geo = _sync._geometry_of(epub)
         notes = reader_state.list_notes(r["key"])
         marks = reader_state.list_bookmarks(r["key"])
@@ -726,4 +881,4 @@ def status() -> dict:
         out.append({"book": r["title"], "notes": len(notes), "bookmarks": len(marks),
                     "synced_notes": sum(1 for n in notes if n.get("zy_key")),
                     "synced_marks": sum(1 for m in marks if m.get("zy_key"))})
-    return {"books": out, "count": len(out)}
+    return {"books": out, "count": len(out), "cloud_only": cloud_only_books(rows)}

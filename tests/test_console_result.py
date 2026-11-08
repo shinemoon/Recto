@@ -105,6 +105,15 @@ ok("def audit(" in sync_src, "提供 audit() 供 notes/sessions 共用同一份�
 notes_src = (ROOT / "src/recto/services/notes.py").read_text(encoding="utf-8")
 ok("_sync.audit(" in notes_src, "划线同步也写日志")
 ok("unchanged" in notes_src, "拉取划线能认出'未变' (不每次报更新 28 条)")
+ok("def cloud_ids(" in notes_src and "def cloud_versions_multi(" in notes_src,
+   "笔记按多个云端身份合并 (大小写 / id64 前缀)")
+ok("text-mismatch" in notes_src and "def file_md5(" in notes_src,
+   "本地文件与云端不一致时拒绝按位置切/写")
+ok("unmapped" in notes_src, "书库外有笔记的书会被单列出来")
+for why in ["text-mismatch", "cloud-only"]:
+    ok(f'"{why}":' in JS, f"笔记跳过原因有译文: {why}")
+ok("b.unchanged" in JS and "b.skipped" in JS, "每本书那一行会写清未变/跳过原因")
+ok("云端还有" in JS, "拉取结果里会提示书库外的笔记")
 
 print(f"\n{ok_n} PASS, {len(bad)} FAIL")
 if bad:
