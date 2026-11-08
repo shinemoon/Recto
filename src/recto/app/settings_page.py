@@ -221,13 +221,19 @@ _JS = r"""
       if (!tk.enabled) tst.textContent = '已关闭';
       else {
         var bits = ['每 ' + (tk.interval_sec || 0) + ' 秒'];
+        if (tk.settle) bits.push('含收尾补推 ' + (tk.settle_sec || 180) + 's');
         if (!tk.running) bits.push('心跳未运行');
+        // 动作名翻成人话 (settle 是"补上最后那一小截", 不是"在读")
+        var ACT = { progress: '进度', settle: '收尾', notes: '划线', time: '时长' };
+        var actTxt = function (list) {
+          return (list || []).map(function (a) { return ACT[a] || a; }).join(' / ');
+        };
         if (tk.last_at) {
           bits.push('上次 ' + String(tk.last_at).slice(11, 19));
-          if ((tk.last_keys || []).length) {
-            bits.push((tk.last_actions || []).length
-              ? '同步了 ' + (tk.last_actions || []).join(' / ')
-              : (tk.last_keys || []).length + ' 本无变化');
+          if ((tk.last_actions || []).length) {
+            bits.push('同步了 ' + actTxt(tk.last_actions));
+          } else if ((tk.last_keys || []).length) {
+            bits.push((tk.last_keys || []).length + ' 本无变化');
           } else {
             bits.push('最近没在读');
           }

@@ -74,6 +74,24 @@ def _sync_cfg(name: str, default=None):
         return default
 
 
+def _push_tol() -> float:
+    """进度差多小就当作"已经同步"。
+
+    默认 1e-6 (百万分之一: 40MB 的书约 40 字节) —— 基本等于精确: 读者停下
+    时候看到的位置就是云端的位置。曾经是 0.0005 (0.05%, 40MB 书约 20KB),
+    那意味着**最后那一小截永远推不上去** —— 云端停在半路, 下次打开书又被
+    拉回到那个半路位置。云端按 float32 存, 相对误差约 1e-7, 所以别调到
+    1e-7 以下 (否则每轮都判"有变化")。
+    """
+    try:
+        v = float(_sync_cfg("push_tol", 1e-6))
+    except (TypeError, ValueError):
+        v = 1e-6
+    if v <= 0:               # 0 / 负数 = 没配好, 回到默认 (0 会让每轮都判"有变化")
+        v = 1e-6
+    return max(1e-8, v)
+
+
 def _setup_log() -> None:
     if log.handlers:
         return
@@ -592,6 +610,7 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
         want = set(keys)
         rows = [r for r in rows if r["key"] in want]
     state = _cloud_state(auth, rows)
+    tol = _push_tol()
     pushed = skipped = failed = 0
     detail: list[dict] = []
     for r in rows:
@@ -623,6 +642,7 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
         # 云端那条记录是不是比本地这条更新 (手机刚读过) —— 是的话这次先让一让
         cloud_newer = _cloud_is_newer(cur, prog)
         allow, why = push_decision(cur_pct, bool(cur.get("finished")), pct, done,
+                                   tol=tol,
                                    allow_rewind=allow_rewind or wins,
                                    meta_stale=meta_stale,
                                    cloud_newer=cloud_newer and not wins)
@@ -630,6 +650,9 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
             allow, why = True, "force"
         if not allow:
             skipped += 1
+            # 记住"这个位置被闸门挡回去了": 定时器的收尾补推据此跳过它,
+            # 免得每 3 分钟为同一本早已推不上去的书白问一次云端。
+            _note_skip(key, pct, why)
             detail.append({"book": r["title"], "skipped": why,
                            "pct": round(pct, 8), "cloud": cur_pct,
                            "bytes": reader_state.book_bytes(key)})
@@ -657,6 +680,7 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
                 errs.append(f"{bid[:8]}:{e}")
         if ok_keys:
             pushed += 1
+            _note_pushed(key)
             _touch = {"last_push_at": _now(),
                       "last_push_pct": round(pct, 8), "total_count": total_count}
             if wins:
@@ -726,6 +750,9 @@ def tick_settings() -> dict:
         "notes_sec": max(30.0, _num("tick_notes_sec", 300)),
         "time": bool(_sync_cfg("tick_time", True)),
         "time_sec": max(60.0, _num("tick_time_sec", 600)),
+        # 收尾补推: 已经离开"最近读过"窗口, 但本地还比上次推上去的更靠前
+        "settle": bool(_sync_cfg("tick_settle", True)),
+        "settle_sec": max(30.0, _num("tick_settle_sec", 180)),
     }
 
 
@@ -928,6 +955,64 @@ def _iso_to_epoch(s: str | None) -> float | None:
             return None
 
 
+def _note_skip(key: str, pct: float, why: str) -> None:
+    """记下"这个位置推不上去"(云端更靠前 / 已读完 / 持平)。位置一变就重新考虑。"""
+    with _PUSH_LOCK:
+        rec = _PUSH_STATE.setdefault(key, {})
+        rec["skip_pct"] = round(float(pct), 8)
+        rec["skip_why"] = str(why or "")
+
+
+def _note_pushed(key: str) -> None:
+    with _PUSH_LOCK:
+        rec = _PUSH_STATE.setdefault(key, {})
+        rec.pop("skip_pct", None)
+        rec.pop("skip_why", None)
+
+
+def _skip_known(key: str, pct: float) -> bool:
+    """这个位置是不是刚被闸门挡过 (同一位置不必再问云端)。"""
+    rec = _PUSH_STATE.get(key) or {}
+    try:
+        return (abs(float(rec.get("skip_pct")) - float(pct)) <= 1e-9
+                and bool(rec.get("skip_why")))
+    except (TypeError, ValueError):
+        return False
+
+
+def _tail_keys(exclude: Iterable[str] = (), tol: float | None = None) -> list[str]:
+    """还差一截没推上去的书 —— **不看活跃窗口**。
+
+    读者半小时前就合上书走了, 最后那一小截照样得补上; 只靠
+    `active_keys` (最近 30 分钟) 的话, 云端会永远停在半路。
+    """
+    tol = _push_tol() if tol is None else float(tol)
+    skip = set(exclude or ())
+    out: list[str] = []
+    for r in links():
+        key = str(r.get("key") or "")
+        if not key or key in skip:
+            continue
+        prog = reader_state.get_progress(key) or {}
+        if not prog:
+            continue
+        pct = float(prog.get("percent") or 0.0)
+        link = sidecar.cloud_link(r.get("path") or "") or {}
+        last = link.get("last_push_pct")
+        if last in (None, ""):
+            if pct <= 0:
+                continue          # 从没读过, 推个 0 上去没意义
+            ahead = True
+        else:
+            try:
+                ahead = (pct - float(last)) > tol
+            except (TypeError, ValueError):
+                ahead = True
+        if ahead and not _skip_known(key, pct):
+            out.append(key)
+    return out
+
+
 def active_keys(window_sec: float | None = None) -> list[str]:
     """最近动过进度的书 (默认 `[sync] tick_active_min` 分钟), 且跟云端有映射。
 
@@ -970,11 +1055,46 @@ def _changed_keys(keys: list[str]) -> list[str]:
         link = sidecar.cloud_link(row["path"]) or {}
         last = link.get("last_push_pct")
         try:
-            if last is None or abs(float(last) - pct) > 1e-9:
+            # 只认"前进": 心跳通道永远不往回拨, 落后于上次推送的位置
+            # (读者回翻 / 别处更旧的会话) 交给翻页通道去决定。
+            if last is None or (pct - float(last)) > _push_tol():
                 out.append(key)
         except (TypeError, ValueError):
             out.append(key)
     return out
+
+
+def _settle_step(out: dict, now: float, tk: dict, *, exclude=(), force: bool = False) -> None:
+    """收尾补推: 把"还差一截没上去"的书补上 (不看活跃窗口)。
+
+    翻页推送 + 心跳进度步骤都只管"最近读过的书"。读者合上书走了之后, 最后
+    那一小截若因节流 / 网络抖动 / 被闸门挡过一次而没写上去, 就再没有第二次
+    机会 —— 云端永远停在半路, 下次打开书又被拉回半路。
+
+    只推"前进"方向 (push_once 默认只前进), 且同一位置被闸门挡过的书不再问
+    云端 (`_note_skip` 记着), 所以这一步通常很安静。
+    """
+    if not tk["settle"]:
+        return
+    if not force and now - float(_TICK_STATE.get("settle_at") or 0) < tk["settle_sec"]:
+        return
+    _TICK_STATE["settle_at"] = now
+    tail = _tail_keys(exclude=exclude)
+    if not tail:
+        return
+    try:
+        res = push_once(keys=tail)
+        stl = {k: int(res.get(k) or 0) for k in ("pushed", "skipped", "failed")}
+        stl["keys"] = tail
+        out["settle"] = stl
+        if stl["pushed"]:
+            out["actions"].append("settle")
+    except Exception as e:  # noqa: BLE001
+        out["settle_error"] = f"{type(e).__name__}: {e}"
+        log.warning("定时同步 · 收尾补推失败 · %s", e)
+    with _PUSH_LOCK:
+        for k in tail:
+            _PUSH_STATE.setdefault(k, {})["at"] = now
 
 
 def tick_once(*, force: bool = False) -> dict:
@@ -997,6 +1117,10 @@ def tick_once(*, force: bool = False) -> dict:
     out["keys"] = keys
     if not keys:
         out["activity"] = "idle"
+        # 没人在读也要看一眼"尾巴": 半小时前合上书走了, 最后那一小截仍然得补上
+        _settle_step(out, now, tk, force=force)
+        if out["actions"]:
+            out["activity"] = "settle"
         _TICK_STATE["last"] = out
         _TICK_STATE["error"] = None
         return out
@@ -1016,6 +1140,9 @@ def tick_once(*, force: bool = False) -> dict:
         with _PUSH_LOCK:
             for k in push_keys:
                 _PUSH_STATE.setdefault(k, {})["at"] = now
+
+    # 1b) 收尾补推 —— 本地比"上次推上去的"还靠前, 但已离开活跃窗口的书
+    _settle_step(out, now, tk, exclude=keys, force=force)
 
     # 2) 划线 / 书签 (稀疏得多)
     if tk["notes"] and (force or now - float(_TICK_STATE.get("notes_at") or 0) >= tk["notes_sec"]):
@@ -1069,6 +1196,8 @@ def tick_state() -> dict:
         "active_min": int(round(tk["active_min"])),
         "notes": tk["notes"], "notes_sec": int(round(tk["notes_sec"])),
         "time": tk["time"], "time_sec": int(round(tk["time_sec"])),
+        "settle": tk["settle"], "settle_sec": int(round(tk["settle_sec"])),
+        "push_tol": _push_tol(),
         "running": bool((_TICK_STATE.get("thread") or {}).is_alive())
         if hasattr(_TICK_STATE.get("thread"), "is_alive") else False,
         "runs": int(_TICK_STATE.get("runs") or 0),

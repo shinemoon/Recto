@@ -163,9 +163,10 @@ rtime.cloud_minutes  = 云端 read_report/book 给的当天分钟 (App / 其它�
 | 云端 → 阅读器 | 读者选「跳到云端」 | 这时才写本地并跳到那个位置 |
 | 阅读器 → 云端 | 读者选「留在本地」 | 边车记 `local_wins_at`（24 小时），本书记录允许回拨 → 立刻按本地覆盖云端，之后照常按节流推 |
 | 云端 → 阅读器 | 自动 pull（`only_forward`） | 只在云端更靠前时覆盖 |
-| 阅读器 → 云端 | 阅读中每翻一段（后台线程，节流 `push_debounce_sec`） | 写掌阅 `uploadProcess`（双 key：32 hex 文件 MD5 + 64 hex 云书架 id）；**读者自己动的位置就是准，包括比云端更靠后**（`why=rewind`）；节流到点自动补推 |
+| 阅读器 → 云端 | 阅读中每翻一段（后台线程，节流 `push_debounce_sec`，容差 `push_tol` 默认 1e-6 近乎精确） | 写掌阅 `uploadProcess`（双 key：32 hex 文件 MD5 + 64 hex 云书架 id）；**读者自己动的位置就是准，包括比云端更靠后**（`why=rewind`）；节流到点自动补推 |
 | 阅读器 → 云端 | 切后台 / 离开页面（`flush_on_hide`） | 绕过节流补最后一推（`keepalive` fetch，页面走了也发得出去） |
 | 阅读器 → 云端 | **定时心跳**（`interval_sec`，默认 60s） | 只碰「最近 `tick_active_min` 分钟读过」的书；本地进度变了才推，且**只前进**；顺带按 `tick_notes_sec` / `tick_time_sec` 同步划线与今天的时长。没活动不联网 |
+| 阅读器 → 云端 | **收尾补推**（`tick_settle_sec`，默认 180s） | 不看活跃窗口：本地还比「上次推上去的」靠前就补一次。读者合上书走了之后，最后那一小截照样落地；同一位置被闸门挡过的书不重复问云端 |
 | 手动 push | API「推到掌阅」/ `recto push` | 批量推送不认读者意图，默认挡回退（`--allow-rewind` / `force` 可强推） |
 | 手动修复 | `recto align --fix` | 按云端自己的百分比重算 `readPosition`（不动进度值） |
 

@@ -170,6 +170,7 @@ class Config:
             "RECTO_SYNC_AUTO": ("sync", "auto"),
             "RECTO_SYNC_PULL_ON_OPEN": ("sync", "pull_on_open"),
             "RECTO_SYNC_PUSH_DEBOUNCE": ("sync", "push_debounce_sec"),
+            "RECTO_SYNC_PUSH_TOL": ("sync", "push_tol"),
             "RECTO_SYNC_PULL_GAP": ("sync", "pull_gap_sec"),
             "RECTO_SYNC_FLUSH_ON_HIDE": ("sync", "flush_on_hide"),
             "RECTO_SYNC_STAMP": ("sync", "stamp"),
@@ -178,6 +179,8 @@ class Config:
             "RECTO_SYNC_TICK_ACTIVE_MIN": ("sync", "tick_active_min"),
             "RECTO_SYNC_TICK_NOTES": ("sync", "tick_notes"),
             "RECTO_SYNC_TICK_TIME": ("sync", "tick_time"),
+            "RECTO_SYNC_TICK_SETTLE": ("sync", "tick_settle"),
+            "RECTO_SYNC_TICK_SETTLE_SEC": ("sync", "tick_settle_sec"),
         }
         for env, (sec, key) in env_map.items():
             v = os.environ.get(env)
