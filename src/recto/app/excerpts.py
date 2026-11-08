@@ -839,7 +839,9 @@ def _render_excerpts(
             eid = e.get("id", "")
             cc = _char_count(e)
             content = _highlight(e.get("content", ""), q)
-            if not (e.get("content") or "").strip():
+            if e.get("_noText"):
+                content = '<span class="muted">（原文不在书库，只记录了位置）</span>'
+            elif not (e.get("content") or "").strip():
                 content = '<span class="muted">（无正文的定位书签）</span>'
             copy_text = (e.get("content", "") or "").replace("\\", "\\\\").replace("'", "\\'")
             del_confirm = ("确认删除这条本地记录？掌阅/云端仍保留, 下次同步会重新拉回"
@@ -2020,14 +2022,15 @@ def _recto_rows() -> tuple[list[dict], dict[str, dict]]:
             "author": str(r.get("book_author") or "").strip(),
         })
         chapter = int(r.get("chapter") or 0)
-        label, pct = "", 0.0
+        label, pct = str(r.get("chapter_label") or ""), 0.0
         path = str(r.get("book_path") or "")
+        no_text = not str(r.get("summary") or "").strip()
         if path:
             try:
                 geo = _geometry_for(path)
             except Exception:                       # noqa: BLE001
                 geo = None
-            if geo is not None:
+            if geo is not None and not label:
                 label = _spine_label(geo, chapter)
                 try:
                     # rnote.chapter 是篇下标 (= 云端 chapterId + 1)
@@ -2039,13 +2042,15 @@ def _recto_rows() -> tuple[list[dict], dict[str, dict]]:
             "bookId": bid,
             "content": str(r.get("summary") or ""),
             "idea": remark,
-            "chapter": label or "未分章",
+            # 云端有划线、书库里没有原文 → 书切不出来, 只记位置
+            "chapter": label or (f"第 {max(1, chapter)} 篇" if no_text else "未分章"),
             "createdTime": _iso_ms(r.get("created_at") or ""),
             "_pct": max(0, min(100, int(round(pct)))),
             "_firstSeenDeck": "recto",
             "_recto": True,
             "_kind": kind,
             "_rid": r.get("id"),
+            "_noText": bool(no_text and kind == "note"),
         })
 
     for r in notes:
@@ -2252,6 +2257,9 @@ def _build_zhijian_payloads(
         author_v = (books.get(bid0) or {}).get("author", "")
         entries: list[dict] = []
         for e in es:
+            if e.get("_noText") or not str(e.get("content") or "").strip():
+                # 书库里没有原文的云端划线 / 纯定位书签: 推一条空摘录只是噪声
+                continue
             ms = _ts_ms(e) // 1000 if _ts_ms(e) else int(datetime.now().timestamp())
             entries.append({
                 "page": _entry_page_pct(e),
@@ -2281,6 +2289,8 @@ def _build_zhijian_payloads(
                 if rec.get("durations"):
                     # 纸间 /send 顶层字段: 精确阅读时长明细 (开始/结束 Unix 秒)
                     pl["preciseReadingDurations"] = rec["durations"]
+        if not entries:
+            continue
         payloads.append(pl)
 
     out = {

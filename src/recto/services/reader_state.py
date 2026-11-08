@@ -148,6 +148,9 @@ def conn() -> sqlite3.Connection:
                    "cloud_at": "TEXT DEFAULT ''"}),
         # 上一次写进度的那个阅读器会话 (见 save_progress 的"别被旧标签页拽回去")
         ("rprogress", {"sid": "TEXT DEFAULT ''"}),
+        # 划线所属的展示名 (「卷名 章名」/「第 N 页」)。书库里没有原文的书
+        # 没有目录可查, 只能把拉取时算出的名字存下来。
+        ("rnote", {"chapter_label": "TEXT DEFAULT ''"}),
     ):
         have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
         for col, ddl in cols.items():
@@ -277,11 +280,13 @@ def scan(force: bool = False, max_files: int = 4000) -> list[dict]:
             else:
                 c.execute("UPDATE rbook SET seen_at=? WHERE key=?", (_now(), key))
             seen.append(key)
+    # kind='cloud' 的占位书目 (云端有笔记、书库里没有那本书) 不参与扫描:
+    # 它们没有文件, 每次重扫都出现在"没见过"里就会被清掉。
     if seen:
         q = ",".join("?" * len(seen))
-        c.execute(f"DELETE FROM rbook WHERE key NOT IN ({q})", seen)
+        c.execute(f"DELETE FROM rbook WHERE kind<>'cloud' AND key NOT IN ({q})", seen)
     else:
-        c.execute("DELETE FROM rbook")
+        c.execute("DELETE FROM rbook WHERE kind<>'cloud'")
     c.commit()
     return list_books()
 
@@ -630,7 +635,7 @@ def all_notes() -> list[dict]:
     rows = c.execute(
         """SELECT n.id, n.book, n.chapter, n.start_off, n.end_off,
                   n.summary, n.remark, n.color, n.created_at, n.updated_at,
-                  n.src,
+                  n.src, COALESCE(n.chapter_label, '') AS chapter_label,
                   COALESCE(b.title, '')  AS book_title,
                   COALESCE(b.author, '') AS book_author,
                   COALESCE(b.path, '')   AS book_path

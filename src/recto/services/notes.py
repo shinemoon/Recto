@@ -143,6 +143,46 @@ def _utf8_char_len(raw: bytes, off: int) -> int:
     return n if off + n <= len(raw) else 0
 
 
+_SENT_END = "。！？…"
+_SENT_CLOSERS = "”’」』）】》〉\"'"
+
+
+def _snap_to_sentence(raw: bytes, hi: int, max_chars: int = 18) -> int:
+    """把截断的划线尾补到本句结束。
+
+    实测 (30/30 条云端划线): App 记的 `positionend` 一律停在**最后一个完整
+    句子之前**，相差 2-10 个字，且再往后读必是句末标点。位置作为条目身份
+    不能改，但**正文**必须按 App 里看到的那段补齐。
+
+    只在同一段文本内前进：遇到标签 / 换行 / 空白就放弃，补的长度不超过
+    `max_chars` 个字；找不到句末标点也不动 —— 宁可短，不可跨句。
+    """
+    if not raw or hi <= 0 or hi >= len(raw):
+        return hi
+    i, n = hi, 0
+    while i < len(raw) and n < max_chars:
+        ln = _utf8_char_len(raw, i)
+        if not ln:
+            return hi
+        ch = raw[i:i + ln].decode("utf-8", "replace")
+        if ch == "<" or ch.isspace():
+            return hi
+        i += ln
+        n += 1
+        if ch in _SENT_END:
+            while i < len(raw):
+                m = _utf8_char_len(raw, i)
+                if not m:
+                    break
+                c2 = raw[i:i + m].decode("utf-8", "replace")
+                if c2 in _SENT_CLOSERS:
+                    i += m
+                    continue
+                break
+            return i
+    return hi
+
+
 def text_of_span(epub_path: str, pos_s: str, pos_e: str = "",
                  *, end_inclusive: bool = True) -> str:
     """云端位置区间 → 划线正文 (从原书字节切)。
@@ -167,6 +207,8 @@ def text_of_span(epub_path: str, pos_s: str, pos_e: str = "",
             cand = raw[hi:hi + n].decode("utf-8", "ignore")
             if cand and cand != "<" and not cand.isspace():
                 hi = min(len(raw), hi + n)
+        # App 的末位还常停在句末标点前几个字, 补到本句结束
+        hi = _snap_to_sentence(raw, hi)
     if hi <= lo:
         try:
             idx = geometry.build_doc_index(epub_path, ch + 1)
@@ -182,6 +224,43 @@ def text_of_span(epub_path: str, pos_s: str, pos_e: str = "",
     txt = re.sub(r"<[^>]*$", "", txt)
     txt = re.sub(r"\s+", " ", txt).strip()
     return txt[:200]
+
+
+def parse_pdf_span(uniquecheck: str) -> tuple[int, int, int] | None:
+    """PDF/图片型书籍的 uniquecheck → (页号, 起字符, 止字符)。
+
+    这类书没有 `$##` 那套字节坐标, 云端给的是一串数字, 实测三种写法:
+
+        bookid_1-1-76-91.276062-718.933044-1491-1-76-225.626068-500.254028-414
+        bookid_1-1-47-101.764679-252.0159911-1-47-162.213623-92.214470
+        bookid_176#&#0001000000001.0000000...
+
+    第 3 段一律是**页号**; 两个位置的边界常被粘在一起 (数字紧邻数字),
+    所以字符偏移只在恰好 12 段时才取 —— 我们只需要"哪一页", 没有原文可切。
+    """
+    tail = (uniquecheck or "").split("_", 1)[-1]
+
+    def _int(x: str) -> int:
+        try:
+            return int(float(x))
+        except (TypeError, ValueError):
+            return 0
+
+    m = re.search(r"(\d+)#&#", tail)
+    if m:
+        page = _int(m.group(1))
+        return (page, 0, 0) if page > 0 else None
+
+    parts = tail.split("-")
+    if len(parts) < 6:
+        return None
+    page = _int(parts[2])
+    if page <= 0:
+        return None
+    if len(parts) == 12:
+        start, end = _int(parts[5]), _int(parts[11])
+        return page, start, max(start, end)
+    return page, 0, 0
 
 
 def _split_positions(uniquecheck: str) -> list[str]:
@@ -412,6 +491,129 @@ def cloud_only_books(rows: list[dict] | None = None) -> list[dict]:
     return out
 
 
+CLOUD_ONLY_PREFIX = "cloud:"
+_UNMAPPED_AT = {"ts": 0.0}
+
+
+def cloud_book_key(bid: str) -> str:
+    """书库里没有这本书时的本地书目键 (带前缀, 与真实文件书分开)。"""
+    return f"{CLOUD_ONLY_PREFIX}{hex32(bid)}"
+
+
+def _ensure_cloud_book(bid: str, name: str) -> str:
+    key = cloud_book_key(bid)
+    c = reader_state.conn()
+    row = c.execute("SELECT key, title FROM rbook WHERE key=?", (key,)).fetchone()
+    title = (name or "").strip() or hex32(bid)
+    if row is None:
+        c.execute(
+            """INSERT INTO rbook(key,path,kind,title,author,bytes,chapters,size,
+                                 mtime,cover,added_at,seen_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (key, "", "cloud", title, "", 0, 0, 0, 0, "",
+             reader_state._now(), reader_state._now()))
+        c.commit()
+    elif title and row["title"] != title:
+        c.execute("UPDATE rbook SET title=? WHERE key=?", (title, key))
+        c.commit()
+    return key
+
+
+def _locate_any(uniquecheck: str, *, span: bool) -> tuple[int, int, int, str] | None:
+    """两种位置格式 → (章/页序号, 起, 止, 展示名)。
+
+    - epub: `$##` 字节坐标 → 篇下标 = chapterId + 1
+    - PDF/图片: 12 段数字 → 页号
+    """
+    poses = _split_positions(uniquecheck)
+    if poses:
+        a = parse_chapter_offset(poses[0])
+        if not a:
+            return None
+        b = parse_chapter_offset(poses[1]) if (span and len(poses) > 1) else None
+        spine = a[0] + 1
+        end = b[1] if b else a[1]
+        return spine, a[1], max(a[1], end), f"第 {spine} 篇"
+    pdf = parse_pdf_span(uniquecheck)
+    if pdf:
+        page, start, end = pdf
+        return page, start, end, f"第 {page} 页"
+    return None
+
+
+def pull_unmapped(quiet: bool = False, *, force: bool = False,
+                  min_gap: float = 600.0) -> dict:
+    """云端有笔记、书库里没有的书 → 也落到本地 (只有位置, 没有正文)。
+
+    正文只能从原书字节切, 没有那份文件就切不出来 —— 这些条目照样进摘录,
+    只是正文留空 (界面显示「原文不在书库」), 不去云端猜内容。
+    """
+    import time as _time
+
+    now = _time.time()
+    if not force and now - float(_UNMAPPED_AT["ts"]) < float(min_gap):
+        return {"books": 0, "notes": 0, "marks": 0, "cached": True}
+    _UNMAPPED_AT["ts"] = now
+
+    have = {i for r in _sync.links() for i in cloud_ids(r)}
+    try:
+        nbs = notebooks()
+    except Exception:                              # noqa: BLE001
+        return {"books": 0, "notes": 0, "marks": 0, "error": "notebooks"}
+    books = notes_n = marks_n = 0
+    detail: list[dict] = []
+    for nb in nbs:
+        bid = hex32(str(nb.get("bookid") or nb.get("bookId") or ""))
+        if not bid or bid in have:
+            continue
+        try:
+            want_n = int(nb.get("notenum") or 0)
+            want_m = int(nb.get("marknum") or 0)
+        except (TypeError, ValueError):
+            want_n = want_m = 0
+        if want_n + want_m <= 0:
+            continue
+        try:
+            ver = cloud_versions_multi([bid])
+        except Exception:                          # noqa: BLE001
+            continue
+        if not ver["note"] and not ver["mark"]:
+            continue
+        key = _ensure_cloud_book(bid, str(nb.get("name") or nb.get("bookname") or ""))
+        got_n = got_m = 0
+        for uc, marktime in ver["note"].items():
+            loc = _locate_any(uc, span=True)
+            if not loc:
+                continue
+            chapter, start, end, label = loc
+            _upsert_note(key, chapter=chapter, start=start, end=end,
+                         summary="", remark="", color="", zy_key=uc,
+                         marktime=marktime,
+                         zy_sig=_sig("note", uc, "", "", label),
+                         src="cloud-only", label=label)
+            got_n += 1
+        for uc, marktime in ver["mark"].items():
+            loc = _locate_any(uc, span=False)
+            if not loc:
+                continue
+            chapter, start, _end, label = loc
+            _upsert_bookmark(key, chapter=chapter, offset=start, summary="",
+                             title=label, zy_key=uc, marktime=marktime,
+                             zy_sig=_sig("bookmark", uc, "", label),
+                             src="cloud-only")
+            got_m += 1
+        if got_n or got_m:
+            books += 1
+            notes_n += got_n
+            marks_n += got_m
+            detail.append({"book": nb.get("name") or bid, "notes": got_n,
+                           "marks": got_m, "book_id": bid})
+    if not quiet and (books or notes_n or marks_n):
+        _sync.audit("拉取云端笔记 · 书库没有的书 %d 本 · 划线 %d · 书签 %d "
+                    "(只有位置, 原文不在书库)", books, notes_n, marks_n)
+    return {"books": books, "notes": notes_n, "marks": marks_n, "detail": detail}
+
+
 def positions_payload(book32: str, epub_path: str) -> dict:
     """云端版本表 → 条目 (正文从原书切)。"""
     v = data_ver(book32)
@@ -490,7 +692,8 @@ def _seen_del(book32: str, kind: str, key: str) -> None:
 
 def _upsert_note(book_key: str, *, chapter: int, start: int, end: int,
                  summary: str, remark: str, color: str, zy_key: str,
-                 marktime: int, zy_sig: str = "", src: str = "cloud") -> int:
+                 marktime: int, zy_sig: str = "", src: str = "cloud",
+                 label: str = "") -> int:
     """按 zy_key 命中就更新, 否则按位置命中认领, 都不行就插入。返回行 id。"""
     c = reader_state.conn()
     row = c.execute("SELECT * FROM rnote WHERE book=? AND zy_key=?",
@@ -504,21 +707,23 @@ def _upsert_note(book_key: str, *, chapter: int, start: int, end: int,
         new_remark = row["remark"] or remark      # 本地批注优先 (云端拿不到)
         new_color = color or row["color"]
         c.execute("""UPDATE rnote SET chapter=?, start_off=?, end_off=?, summary=?, remark=?, color=?,
-                     zy_key=?, zy_marktime=?, src=?, zy_sig=?, updated_at=?
+                     zy_key=?, zy_marktime=?, src=?, zy_sig=?, updated_at=?,
+                     chapter_label=?
                      WHERE id=?""",
                   (chapter, start, end, new_summary, new_remark, new_color,
                    zy_key or (row["zy_key"] or ""), int(marktime or 0), src,
                    zy_sig or _sig("note", zy_key, new_summary, new_remark),
-                   reader_state._now(), int(row["id"])))
+                   reader_state._now(), label or (row["chapter_label"] or ""),
+                   int(row["id"])))
         c.commit()
         return int(row["id"])
     c.execute("""INSERT INTO rnote(book,chapter,start_off,end_off,summary,remark,color,anchors,
-                 created_at,updated_at,zy_key,zy_marktime,src,zy_sig)
-                 VALUES(?,?,?,?,?,?,?,'',?,?,?,?,?,?)""",
+                 created_at,updated_at,zy_key,zy_marktime,src,zy_sig,chapter_label)
+                 VALUES(?,?,?,?,?,?,?,'',?,?,?,?,?,?,?)""",
               (book_key, chapter, start, end, summary[:4000], remark[:4000],
                color[:24], reader_state._now(), reader_state._now(),
                zy_key, int(marktime or 0), src,
-               zy_sig or _sig("note", zy_key, summary, remark)))
+               zy_sig or _sig("note", zy_key, summary, remark), label[:120]))
     c.commit()
     return int(c.execute("SELECT id FROM rnote WHERE book=? AND zy_key=?",
                          (book_key, zy_key)).fetchone()["id"])
@@ -611,7 +816,8 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
                 continue
             spine = a[0] + 1          # 云端 chapterId 是"读完的上一篇", 阅读器用篇下标
             row_old = reader_state.conn().execute(
-                "SELECT id, zy_sig, zy_marktime, remark FROM rnote WHERE book=? AND zy_key=?",
+                "SELECT id, zy_sig, zy_marktime, remark, chapter_label "
+                "FROM rnote WHERE book=? AND zy_key=?",
                 (r["key"], uc)).fetchone()
             # 指纹里的 remark 用**本地已有的批注** — 云端拿不到 remark,
             # 若这里按空串算, 本地批注过的那条会被判成"变了", 每轮心跳都推一遍。
@@ -623,10 +829,16 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
                 # 一字不差就别重写库 —— 否则每次拉取都显示"更新 28 条", 读起来像在干活。
                 unchanged += 1
                 item["unchanged"] = item.get("unchanged", 0) + 1
+                if row_old is not None and not (row_old["chapter_label"] or ""):
+                    c2 = reader_state.conn()
+                    c2.execute("UPDATE rnote SET chapter_label=? WHERE id=?",
+                               (_label(spine), int(row_old["id"])))
+                    c2.commit()
             else:
                 _upsert_note(r["key"], chapter=spine, start=a[1], end=b[1],
                              summary=text, remark="", color="",
-                             zy_key=uc, marktime=marktime, zy_sig=sig)
+                             zy_key=uc, marktime=marktime, zy_sig=sig,
+                             label=_label(spine))
                 if row_old is not None:
                     updated += 1
                 else:
@@ -664,6 +876,11 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
             item["deleted"] += gone
             deleted += gone
         report.append(item)
+    # 书库里没有的书: 云端划线也要落到本地 (只有位置), 否则「明明划了却看不到」
+    try:
+        pulled_unmapped = pull_unmapped(quiet=quiet)
+    except Exception:                              # noqa: BLE001
+        pulled_unmapped = {}
     unmapped = cloud_only_books(_sync.links())
     if not (quiet and not (added or updated or deleted)):
         _sync.audit("拉取划线 · 新增 %d · 更新 %d · 删除 %d · 未变 %d",
@@ -673,7 +890,7 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
                     "、".join(u["name"] or u["book_id"] for u in unmapped[:3]))
     return {"added": added, "updated": updated, "deleted": deleted,
             "skipped": skipped, "unchanged": unchanged, "books": report,
-            "unmapped": unmapped}
+            "unmapped": unmapped, "unmapped_pulled": pulled_unmapped}
 
 
 # --------------------------------------------------------------------------
@@ -872,6 +1089,22 @@ def _mark_pushed_row(kind: str, row_id: int, key: str, sig: str, marktime: int) 
     c.commit()
 
 
+def _cloud_only_local() -> list[dict]:
+    """已落到本地 (只有位置) 的「书库没有的书」。"""
+    try:
+        c = reader_state.conn()
+        rows = c.execute(
+            """SELECT b.key, b.title,
+                      (SELECT COUNT(*) FROM rnote n WHERE n.book=b.key) AS notes,
+                      (SELECT COUNT(*) FROM rbookmark m WHERE m.book=b.key) AS marks
+                 FROM rbook b WHERE b.kind='cloud' ORDER BY b.title""").fetchall()
+    except Exception:                              # noqa: BLE001
+        return []
+    return [{"book": r["title"], "book_id": r["key"],
+             "notes": int(r["notes"] or 0), "marks": int(r["marks"] or 0)}
+            for r in rows if (r["notes"] or r["marks"])]
+
+
 def status() -> dict:
     rows = _sync.links()
     out = []
@@ -881,4 +1114,5 @@ def status() -> dict:
         out.append({"book": r["title"], "notes": len(notes), "bookmarks": len(marks),
                     "synced_notes": sum(1 for n in notes if n.get("zy_key")),
                     "synced_marks": sum(1 for m in marks if m.get("zy_key"))})
-    return {"books": out, "count": len(out), "cloud_only": cloud_only_books(rows)}
+    return {"books": out, "count": len(out), "cloud_only": cloud_only_books(rows),
+            "cloud_only_local": _cloud_only_local()}
