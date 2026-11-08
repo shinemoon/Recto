@@ -491,6 +491,10 @@ _EXTRA_CSS = """
   color:var(--rc-dim);font-family:var(--rc-serif);margin-top:6px}
 .rc-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media (max-width:700px){.rc-pair{grid-template-columns:1fr}}
+/* 「只记录了位置」/「无正文」的条目: 一行说明就够, 不铺满整段高度 */
+.tl-mini{color:var(--rc-mute);font-size:var(--rc-fs-xs);font-style:italic;
+  line-height:1.5}
+.tl-content:has(> .tl-mini){padding:2px 0}
 """
 
 # ---------- Page renderers ----------
@@ -834,15 +838,26 @@ def _render_excerpts(
             b = books.get(bid) or {}
             bname = b.get("name", f"#{bid}")
             bauthor = b.get("author", "")
-            chap = e.get("chapter", "")
+            chap = str(e.get("chapter") or "").strip()
             idea = e.get("idea", "")
             eid = e.get("id", "")
             cc = _char_count(e)
-            content = _highlight(e.get("content", ""), q)
-            if e.get("_noText"):
-                content = '<span class="muted">（原文不在书库，只记录了位置）</span>'
-            elif not (e.get("content") or "").strip():
-                content = '<span class="muted">（无正文的定位书签）</span>'
+            raw_content = str(e.get("content") or "").strip()
+            has_text = bool(raw_content)
+            pct_v = e.get("_pct")
+            # 位置那一段: 有章名/比例才写; 都没有就是「位置未知」——
+            # 这种行本来就是"只有位置"的历史残留, 别再堆 0 字/未分章 之类噪声。
+            pos_bits = ["位置未知"] if e.get("_noPos") else [chap or "未分章"]
+            if pct_v is not None:
+                pos_bits.append(f"{int(pct_v)}%")
+            pos_txt = " · ".join(pos_bits)
+            if has_text:
+                content = _highlight(raw_content, q)
+            elif e.get("_noText"):
+                content = ('<div class="tl-mini">仅记录了位置，原文不在书库'
+                           '（补上原书后可补齐正文）</div>')
+            else:
+                content = '<div class="tl-mini">（无正文的定位书签）</div>'
             copy_text = (e.get("content", "") or "").replace("\\", "\\\\").replace("'", "\\'")
             del_confirm = ("确认删除这条本地记录？掌阅/云端仍保留, 下次同步会重新拉回"
                            if e.get("_recto") else "确认删除这条摘录？")
@@ -852,6 +867,17 @@ def _render_excerpts(
                 f"&author={urllib.parse.quote(author)}&from={day_from}&to={day_to}"
                 f"&page={page}&source={source}&chars={chars}"
             )
+            # 有正文的才给书票/复制 —— 空正文的"只记录位置"条目做这两件事没有意义
+            cta = ""
+            if has_text:
+                cta = (
+                    f'<a class="btn-link" href="/admin/api/bookplate?id={_e(eid)}'
+                    f'&style={_render.DEFAULT_BOOKPLATE_STYLE}" target="_blank"'
+                    f' title="生成纸间书票 PNG (skill 默认风格)">书票</a>'
+                    f'<button class="btn-link" onclick="copyEx(this, {chr(39)}{copy_text}{chr(39)})">复制</button>'
+                )
+            meta_extra = f" · {cc} 字" if has_text else ""
+            id_hint = f' · <span class="id-hint">#{_e(eid)}</span>' if has_text else ""
             timeline.append(
                 f'<div class="tl-item">'
                 f'  <input type="checkbox" class="excerpt-check" value="{_e(eid)}">'
@@ -862,14 +888,11 @@ def _render_excerpts(
                 f'      <a href="/admin/?pane=book&id={urllib.parse.quote(str(bid))}"'
                 f'         data-pane-target="book"><b>{_e(bname)}</b></a>'
                 f'      {("<span class=muted>· " + _e(bauthor) + "</span>") if bauthor else ""}'
-                f'      · <b>{_e(chap) or "未分章"}</b> · {cc} 字 · <span class="id-hint">#{_e(eid)}</span>'
+                f'      · <b>{_e(pos_txt)}</b>{meta_extra}{id_hint}'
                 f'    </div>'
                 f'    <div class="tl-content">{content}</div>'
                 f'    {f"<div class=tl-idea>— {_e(idea)}</div>" if idea else ""}'
-                f'    <div class="tl-footer">'
-                f'      <a class="btn-link" href="/admin/api/bookplate?id={_e(eid)}&style={_render.DEFAULT_BOOKPLATE_STYLE}" target="_blank" title="生成纸间书票 PNG (skill 默认风格)">书票</a>'
-                f'      <span style="flex:1"></span>'
-                f'      <button class="btn-link" onclick="copyEx(this, \'{copy_text}\')">复制</button>'
+                f'    <div class="tl-footer">{cta}<span style="flex:1"></span>'
                 f'      <a class="btn-link" href="/admin/api/delete?id={urllib.parse.quote(str(eid))}&back={urllib.parse.quote(back)}" '
                 f'         onclick="return confirm(\'{del_confirm}\')">删除</a>'
                 f'    </div>'
@@ -2022,21 +2045,30 @@ def _recto_rows() -> tuple[list[dict], dict[str, dict]]:
             "author": str(r.get("book_author") or "").strip(),
         })
         chapter = int(r.get("chapter") or 0)
-        label, pct = str(r.get("chapter_label") or ""), 0.0
+        label = str(r.get("chapter_label") or "")
+        # 位置比例优先用**入库时的快照** —— 读者删掉本地书以后就再没有字节可量
+        try:
+            pct = float(r.get("pct") if r.get("pct") is not None else -1)
+        except (TypeError, ValueError):
+            pct = -1.0
         path = str(r.get("book_path") or "")
         no_text = not str(r.get("summary") or "").strip()
-        if path:
+        if path and (not label or pct < 0):
+            # 老行 (入库时还没存快照) 或刚导入 → 现算一次; 书还在才有这个机会
             try:
                 geo = _geometry_for(path)
             except Exception:                       # noqa: BLE001
                 geo = None
-            if geo is not None and not label:
-                label = _spine_label(geo, chapter)
-                try:
-                    # rnote.chapter 是篇下标 (= 云端 chapterId + 1)
-                    pct = float(geo.percent(max(0, chapter - 1), start)) * 100.0
-                except Exception:                   # noqa: BLE001
-                    pct = 0.0
+            if geo is not None:
+                if not label:
+                    label = _spine_label(geo, chapter)
+                if pct < 0:
+                    try:
+                        # rnote.chapter 是篇下标 (= 云端 chapterId + 1)
+                        pct = float(geo.percent(max(0, chapter - 1), start)) * 100.0
+                    except Exception:               # noqa: BLE001
+                        pct = -1.0
+        has_pos = bool(label) or pct >= 0
         rows.append({
             "id": f"recto-{'note' if kind == 'note' else 'bm'}-{r.get('id')}",
             "bookId": bid,
@@ -2045,12 +2077,13 @@ def _recto_rows() -> tuple[list[dict], dict[str, dict]]:
             # 云端有划线、书库里没有原文 → 书切不出来, 只记位置
             "chapter": label or (f"第 {max(1, chapter)} 篇" if no_text else "未分章"),
             "createdTime": _iso_ms(r.get("created_at") or ""),
-            "_pct": max(0, min(100, int(round(pct)))),
+            "_pct": max(0, min(100, int(round(pct)))) if pct >= 0 else None,
             "_firstSeenDeck": "recto",
             "_recto": True,
             "_kind": kind,
             "_rid": r.get("id"),
             "_noText": bool(no_text and kind == "note"),
+            "_noPos": not has_pos,
         })
 
     for r in notes:
@@ -2124,6 +2157,30 @@ def _reader_db_sig() -> tuple:
 
 
 _VIEW_CACHE: dict[str, Any] = {"key": None, "value": None}
+# 摘录快照补齐的节流 (每个页面访问最多打一次; 没缺口时只是几条 COUNT 查询)
+_SNAPSHOT: dict[str, float] = {"ts": 0.0}
+_SNAPSHOT_GAP = 60.0
+
+
+def _materialize_snapshots() -> None:
+    """进入摘录库之前, 把缺的快照 (正文/书名/章名/位置) 补进 reader.sqlite。
+
+    读者以后可能删掉本地书 —— 那时既没有目录可查, 也没有字节可量。所以
+    **每次进摘录库都先确认正文等字段已经存在行里** (幂等: 没缺口时只跑几条
+    COUNT, 不开任何文件)。
+    """
+    now = time.time()
+    if now - float(_SNAPSHOT["ts"]) < _SNAPSHOT_GAP:
+        return
+    _SNAPSHOT["ts"] = now
+    try:
+        from recto.services import notes as _notes
+
+        out = _notes.materialize(quiet=True, limit_books=4)
+    except Exception:                               # noqa: BLE001
+        return
+    if out.get("rows"):
+        _VIEW_CACHE["key"] = None                   # 快照落库了 → 重新组装视图
 
 
 def _load_view(data_dir: Path) -> tuple[list[dict], dict]:
@@ -2134,6 +2191,7 @@ def _load_view(data_dir: Path) -> tuple[list[dict], dict]:
     缓存按两侧文件 (aggregate.jsonl / books.jsonl / reader.sqlite + wal)
     的 mtime+size 失效, 所以写完立刻可见, 不需要重启。
     """
+    _materialize_snapshots()
     agg, bks = _aggregate_paths(data_dir)
 
     def _sig(p: Path) -> tuple:

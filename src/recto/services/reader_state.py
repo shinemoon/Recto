@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS rbookmark (
     zy_marktime INTEGER DEFAULT 0,
     zy_sig TEXT DEFAULT '',
     src TEXT DEFAULT 'local',
+    -- 自足快照: 书被删掉之后, 摘录仍要能显示书名/章名/位置
+    chapter_label TEXT DEFAULT '',
+    pct REAL DEFAULT -1,
+    book_title TEXT DEFAULT '',
+    book_author TEXT DEFAULT '',
     UNIQUE(book, chapter, offset)
 );
 CREATE TABLE IF NOT EXISTS rnote (
@@ -88,7 +93,12 @@ CREATE TABLE IF NOT EXISTS rnote (
     zy_key TEXT DEFAULT '',
     zy_marktime INTEGER DEFAULT 0,
     zy_sig TEXT DEFAULT '',
-    src TEXT DEFAULT 'local'
+    src TEXT DEFAULT 'local',
+    -- 自足快照 (见 rbookmark 同名注释)
+    chapter_label TEXT DEFAULT '',
+    pct REAL DEFAULT -1,
+    book_title TEXT DEFAULT '',
+    book_author TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS rsession (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,6 +161,12 @@ def conn() -> sqlite3.Connection:
         # 划线所属的展示名 (「卷名 章名」/「第 N 页」)。书库里没有原文的书
         # 没有目录可查, 只能把拉取时算出的名字存下来。
         ("rnote", {"chapter_label": "TEXT DEFAULT ''"}),
+        # 摘录自足快照 (2026-11-08): 读者以后可能删掉本地书, 删了书就再没有
+        # 目录/字节比例可算 —— 书名、章名、位置比例都得在**入库时**存好。
+        ("rnote", {"pct": "REAL DEFAULT -1", "book_title": "TEXT DEFAULT ''",
+                   "book_author": "TEXT DEFAULT ''"}),
+        ("rbookmark", {"chapter_label": "TEXT DEFAULT ''", "pct": "REAL DEFAULT -1",
+                       "book_title": "TEXT DEFAULT ''", "book_author": "TEXT DEFAULT ''"}),
     ):
         have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
         for col, ddl in cols.items():
@@ -303,6 +319,27 @@ def _under(path: str, roots: list[str]) -> bool:
     return False
 
 
+def snapshot_book_meta(key: str, title: str = "", author: str = "") -> int:
+    """把书名/作者抄进划线/书签行 (只填空位, 不覆盖已有值)。
+
+    为什么需要: 摘录库要能独立存活。读者删掉本地书以后 `rbook` 那行就没了,
+    再也不能 join 出书名 —— 只能靠入库时抄下来的快照。
+    """
+    c = conn()
+    n = 0
+    for table in ("rnote", "rbookmark"):
+        cur = c.execute(
+            f"""UPDATE {table} SET book_title=CASE WHEN COALESCE(book_title,'')=''
+                                            THEN ? ELSE book_title END,
+                                   book_author=CASE WHEN COALESCE(book_author,'')=''
+                                            THEN ? ELSE book_author END
+                 WHERE book=? AND (COALESCE(book_title,'')='' OR COALESCE(book_author,'')='')""",
+            (str(title or ""), str(author or ""), key))
+        n += cur.rowcount or 0
+    c.commit()
+    return n
+
+
 def delete_book(key: str, *, keep_file: bool = False) -> dict:
     """把一本书从书架移除。
 
@@ -343,6 +380,8 @@ def delete_book(key: str, *, keep_file: bool = False) -> dict:
         path.unlink()
         out["file_removed"] = True
 
+    # 删掉书目之前先把书名/作者抄进每一行摘录 —— 摘录要能独立活下去
+    snapshot_book_meta(key, str(row.get("title") or ""), str(row.get("author") or ""))
     c.execute("DELETE FROM rbook WHERE key=?", (key,))
     c.commit()
     # 下载索引若登记过这个文件, 一并清掉 (否则「已下载」列表还指着不存在的路径)
@@ -605,13 +644,28 @@ def list_bookmarks(key: str) -> list[dict]:
 
 
 def add_bookmark(key: str, chapter: int, offset: int, summary: str = "",
-                 title: str = "") -> dict:
+                 title: str = "", *, chapter_label: str = "",
+                 pct: float = -1.0) -> dict:
+    """新建书签 (同 add_note: 章名/位置/书名都落库当快照)。"""
     c = conn()
-    c.execute("""INSERT INTO rbookmark(book,chapter,offset,summary,title,created_at)
-                 VALUES(?,?,?,?,?,?)
+    btitle, bauthor = _book_meta(key)
+    c.execute("""INSERT INTO rbookmark(book,chapter,offset,summary,title,created_at,
+                 chapter_label,pct,book_title,book_author)
+                 VALUES(?,?,?,?,?,?,?,?,?,?)
                  ON CONFLICT(book,chapter,offset) DO UPDATE SET summary=excluded.summary,
-                   title=excluded.title""",
-              (key, int(chapter), int(offset), summary[:400], title[:120], _now()))
+                   title=excluded.title,
+                   chapter_label=CASE WHEN COALESCE(rbookmark.chapter_label,'')=''
+                                      THEN excluded.chapter_label ELSE rbookmark.chapter_label END,
+                   pct=CASE WHEN rbookmark.pct IS NULL OR rbookmark.pct < 0
+                            THEN excluded.pct ELSE rbookmark.pct END,
+                   book_title=CASE WHEN COALESCE(rbookmark.book_title,'')=''
+                                   THEN excluded.book_title ELSE rbookmark.book_title END,
+                   book_author=CASE WHEN COALESCE(rbookmark.book_author,'')=''
+                                    THEN excluded.book_author ELSE rbookmark.book_author END""",
+              (key, int(chapter), int(offset), summary[:400], title[:120], _now(),
+               str(chapter_label or title or "")[:120],
+               float(pct) if pct is not None and float(pct) >= 0 else -1.0,
+               btitle[:200], bauthor[:120]))
     c.commit()
     r = c.execute("SELECT * FROM rbookmark WHERE book=? AND chapter=? AND offset=?",
                   (key, int(chapter), int(offset))).fetchone()
@@ -636,8 +690,9 @@ def all_notes() -> list[dict]:
         """SELECT n.id, n.book, n.chapter, n.start_off, n.end_off,
                   n.summary, n.remark, n.color, n.created_at, n.updated_at,
                   n.src, COALESCE(n.chapter_label, '') AS chapter_label,
-                  COALESCE(b.title, '')  AS book_title,
-                  COALESCE(b.author, '') AS book_author,
+                  COALESCE(n.pct, -1) AS pct,
+                  COALESCE(NULLIF(n.book_title, ''), b.title, '')   AS book_title,
+                  COALESCE(NULLIF(n.book_author, ''), b.author, '') AS book_author,
                   COALESCE(b.path, '')   AS book_path
              FROM rnote n LEFT JOIN rbook b ON b.key = n.book
             ORDER BY n.created_at""").fetchall()
@@ -645,12 +700,18 @@ def all_notes() -> list[dict]:
 
 
 def all_bookmarks() -> list[dict]:
-    """全部书的书签 —— 导出用 (带书名/作者/路径)。"""
+    """全部书的书签 —— 导出用 (带书名/作者/路径)。
+
+    书名/作者/章名/位置比例都用行内快照优先: 书被删掉以后 `rbook` 里那行没了,
+    只靠 join 会变成空书名 + 位置 0。
+    """
     c = conn()
     rows = c.execute(
         """SELECT m.id, m.book, m.chapter, m.offset, m.summary, m.created_at,
-                  COALESCE(b.title, '')  AS book_title,
-                  COALESCE(b.author, '') AS book_author,
+                  COALESCE(m.chapter_label, '') AS chapter_label,
+                  COALESCE(m.pct, -1) AS pct,
+                  COALESCE(NULLIF(m.book_title, ''), b.title, '')   AS book_title,
+                  COALESCE(NULLIF(m.book_author, ''), b.author, '') AS book_author,
                   COALESCE(b.path, '')   AS book_path
              FROM rbookmark m LEFT JOIN rbook b ON b.key = m.book
             ORDER BY m.created_at""").fetchall()
@@ -663,16 +724,38 @@ def list_notes(key: str) -> list[dict]:
         "SELECT * FROM rnote WHERE book=? ORDER BY chapter, start_off", (key,))]
 
 
+def _book_meta(key: str) -> tuple[str, str]:
+    """书目里的书名/作者 —— 写进摘录行当快照 (书删了也还知道出自哪本)。"""
+    try:
+        row = conn().execute("SELECT title, author FROM rbook WHERE key=?", (key,)).fetchone()
+    except Exception:                               # noqa: BLE001
+        return "", ""
+    if row is None:
+        return "", ""
+    return str(row["title"] or ""), str(row["author"] or "")
+
+
 def add_note(key: str, chapter: int, start_off: int, end_off: int,
              summary: str, remark: str = "", color: str = "",
-             anchors: str = "") -> dict:
+             anchors: str = "", *, chapter_label: str = "",
+             pct: float = -1.0) -> dict:
+    """新建划线。
+
+    `chapter_label` / `pct` 是**入库时的快照**: 读者以后删掉本地书, 就没有目录
+    可查、没有字节可量, 摘录只能靠自己身上这几个字段说话。
+    """
     c = conn()
     if end_off < start_off:
         start_off, end_off = end_off, start_off
-    c.execute("""INSERT INTO rnote(book,chapter,start_off,end_off,summary,remark,color,anchors,created_at,updated_at)
-                 VALUES(?,?,?,?,?,?,?,?,?,?)""",
+    title, author = _book_meta(key)
+    c.execute("""INSERT INTO rnote(book,chapter,start_off,end_off,summary,remark,color,anchors,
+                 created_at,updated_at,src,chapter_label,pct,book_title,book_author)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,'local',?,?,?,?)""",
               (key, int(chapter), int(start_off), int(end_off), summary[:4000],
-               remark[:4000], color[:24], anchors[:400], _now(), _now()))
+               remark[:4000], color[:24], anchors[:400], _now(), _now(),
+               str(chapter_label or "")[:120],
+               float(pct) if pct is not None and float(pct) >= 0 else -1.0,
+               title[:200], author[:120]))
     c.commit()
     return dict(c.execute("SELECT * FROM rnote WHERE id=last_insert_rowid()").fetchone())
 

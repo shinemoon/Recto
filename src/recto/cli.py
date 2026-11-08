@@ -251,7 +251,10 @@ def cmd_notes(args) -> int:
     from recto.services import notes
 
     keys = args.book or None
-    if args.action == "pull":
+    if args.action == "materialize":
+        # 把摘录行缺的快照 (正文/章名/位置/书名) 从原书补齐 (摘录库进页面时也会跑)
+        out = notes.materialize(keys, quiet=False)
+    elif args.action == "pull":
         out = notes.pull(keys, dry_run=args.dry_run)
     elif args.action == "push":
         out = notes.push(keys, dry_run=args.dry_run)
@@ -360,7 +363,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_daemon.set_defaults(func=cmd_daemon)
 
     p_nt = sub.add_parser("notes", help="划线/书签 双向同步")
-    p_nt.add_argument("action", choices=("sync", "pull", "push"))
+    p_nt.add_argument("action", choices=("sync", "pull", "push", "materialize"))
     p_nt.add_argument("--book", action="append", default=[], help="只处理这本书")
     p_nt.add_argument("--dry-run", action="store_true")
     p_nt.set_defaults(func=cmd_notes)

@@ -580,6 +580,7 @@ def pull_unmapped(quiet: bool = False, *, force: bool = False,
         if not ver["note"] and not ver["mark"]:
             continue
         key = _ensure_cloud_book(bid, str(nb.get("name") or nb.get("bookname") or ""))
+        cloud_title = str(nb.get("name") or nb.get("bookname") or "")
         got_n = got_m = 0
         for uc, marktime in ver["note"].items():
             loc = _locate_any(uc, span=True)
@@ -590,7 +591,7 @@ def pull_unmapped(quiet: bool = False, *, force: bool = False,
                          summary="", remark="", color="", zy_key=uc,
                          marktime=marktime,
                          zy_sig=_sig("note", uc, "", "", label),
-                         src="cloud-only", label=label)
+                         src="cloud-only", label=label, book_title=cloud_title)
             got_n += 1
         for uc, marktime in ver["mark"].items():
             loc = _locate_any(uc, span=False)
@@ -600,7 +601,7 @@ def pull_unmapped(quiet: bool = False, *, force: bool = False,
             _upsert_bookmark(key, chapter=chapter, offset=start, summary="",
                              title=label, zy_key=uc, marktime=marktime,
                              zy_sig=_sig("bookmark", uc, "", label),
-                             src="cloud-only")
+                             src="cloud-only", book_title=cloud_title)
             got_m += 1
         if got_n or got_m:
             books += 1
@@ -693,8 +694,13 @@ def _seen_del(book32: str, kind: str, key: str) -> None:
 def _upsert_note(book_key: str, *, chapter: int, start: int, end: int,
                  summary: str, remark: str, color: str, zy_key: str,
                  marktime: int, zy_sig: str = "", src: str = "cloud",
-                 label: str = "") -> int:
-    """按 zy_key 命中就更新, 否则按位置命中认领, 都不行就插入。返回行 id。"""
+                 label: str = "", pct: float = -1.0,
+                 book_title: str = "", book_author: str = "") -> int:
+    """按 zy_key 命中就更新, 否则按位置命中认领, 都不行就插入。返回行 id。
+
+    `pct` / `book_title` / `book_author` / `label` 都是**入库时的快照**:
+    读者以后删掉本地书, 摘录仍要能显示"哪本书 · 哪个位置", 而不是一片空白。
+    """
     c = reader_state.conn()
     row = c.execute("SELECT * FROM rnote WHERE book=? AND zy_key=?",
                     (book_key, zy_key)).fetchone() if zy_key else None
@@ -706,24 +712,30 @@ def _upsert_note(book_key: str, *, chapter: int, start: int, end: int,
         new_summary = summary or row["summary"]
         new_remark = row["remark"] or remark      # 本地批注优先 (云端拿不到)
         new_color = color or row["color"]
+        new_pct = float(pct) if pct is not None and float(pct) >= 0 else float(row["pct"] if row["pct"] is not None else -1)
         c.execute("""UPDATE rnote SET chapter=?, start_off=?, end_off=?, summary=?, remark=?, color=?,
                      zy_key=?, zy_marktime=?, src=?, zy_sig=?, updated_at=?,
-                     chapter_label=?
+                     chapter_label=?, pct=?, book_title=?, book_author=?
                      WHERE id=?""",
                   (chapter, start, end, new_summary, new_remark, new_color,
                    zy_key or (row["zy_key"] or ""), int(marktime or 0), src,
                    zy_sig or _sig("note", zy_key, new_summary, new_remark),
                    reader_state._now(), label or (row["chapter_label"] or ""),
+                   new_pct, book_title or (row["book_title"] or ""),
+                   book_author or (row["book_author"] or ""),
                    int(row["id"])))
         c.commit()
         return int(row["id"])
     c.execute("""INSERT INTO rnote(book,chapter,start_off,end_off,summary,remark,color,anchors,
-                 created_at,updated_at,zy_key,zy_marktime,src,zy_sig,chapter_label)
-                 VALUES(?,?,?,?,?,?,?,'',?,?,?,?,?,?,?)""",
+                 created_at,updated_at,zy_key,zy_marktime,src,zy_sig,chapter_label,
+                 pct,book_title,book_author)
+                 VALUES(?,?,?,?,?,?,?,'',?,?,?,?,?,?,?,?,?,?)""",
               (book_key, chapter, start, end, summary[:4000], remark[:4000],
                color[:24], reader_state._now(), reader_state._now(),
                zy_key, int(marktime or 0), src,
-               zy_sig or _sig("note", zy_key, summary, remark), label[:120]))
+               zy_sig or _sig("note", zy_key, summary, remark), label[:120],
+               float(pct) if pct is not None and float(pct) >= 0 else -1.0,
+               book_title[:200], book_author[:120]))
     c.commit()
     return int(c.execute("SELECT id FROM rnote WHERE book=? AND zy_key=?",
                          (book_key, zy_key)).fetchone()["id"])
@@ -731,7 +743,8 @@ def _upsert_note(book_key: str, *, chapter: int, start: int, end: int,
 
 def _upsert_bookmark(book_key: str, *, chapter: int, offset: int, summary: str,
                      title: str, zy_key: str, marktime: int,
-                     zy_sig: str = "", src: str = "cloud") -> int:
+                     zy_sig: str = "", src: str = "cloud", pct: float = -1.0,
+                     book_title: str = "", book_author: str = "") -> int:
     c = reader_state.conn()
     row = c.execute("SELECT * FROM rbookmark WHERE book=? AND zy_key=?",
                     (book_key, zy_key)).fetchone() if zy_key else None
@@ -740,18 +753,27 @@ def _upsert_bookmark(book_key: str, *, chapter: int, offset: int, summary: str,
                            AND (zy_key IS NULL OR zy_key='') LIMIT 1""",
                         (book_key, chapter, offset)).fetchone()
     if row is not None:
+        new_pct = float(pct) if pct is not None and float(pct) >= 0 else float(row["pct"] if row["pct"] is not None else -1)
         c.execute("""UPDATE rbookmark SET chapter=?, offset=?, summary=?, title=?, zy_key=?, zy_marktime=?,
-                     src=?, zy_sig=? WHERE id=?""",
+                     src=?, zy_sig=?, chapter_label=?, pct=?, book_title=?, book_author=? WHERE id=?""",
                   (chapter, offset, summary or row["summary"], title or row["title"],
                    zy_key or (row["zy_key"] or ""), int(marktime or 0), src,
-                   zy_sig or _sig("bookmark", zy_key, summary, title), int(row["id"])))
+                   zy_sig or _sig("bookmark", zy_key, summary, title),
+                   (title or row["chapter_label"] or ""), new_pct,
+                   book_title or (row["book_title"] or ""),
+                   book_author or (row["book_author"] or ""),
+                   int(row["id"])))
         c.commit()
         return int(row["id"])
     c.execute("""INSERT INTO rbookmark(book,chapter,offset,summary,title,created_at,
-                 zy_key,zy_marktime,src,zy_sig) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                 zy_key,zy_marktime,src,zy_sig,chapter_label,pct,book_title,book_author)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (book_key, chapter, offset, summary[:400], title[:120],
                reader_state._now(), zy_key, int(marktime or 0), src,
-               zy_sig or _sig("bookmark", zy_key, summary, title)))
+               zy_sig or _sig("bookmark", zy_key, summary, title),
+               title[:120],
+               float(pct) if pct is not None and float(pct) >= 0 else -1.0,
+               book_title[:200], book_author[:120]))
     c.commit()
     return int(c.execute("SELECT id FROM rbookmark WHERE book=? AND zy_key=?",
                          (book_key, zy_key)).fetchone()["id"])
@@ -760,6 +782,139 @@ def _upsert_bookmark(book_key: str, *, chapter: int, offset: int, summary: str,
 # --------------------------------------------------------------------------
 # PULL: 云端 → 阅读器
 # --------------------------------------------------------------------------
+
+def _pct_at(geo, spine: int, offset: int) -> float:
+    """篇下标 + 章内字节偏移 → 全书字节比例 (0-100)。没有几何就 -1。
+
+    入库时算一次并落库 —— 读者删掉本地书以后就再没有字节可量, 摘录里的
+    "位置"只能靠这份快照。
+    """
+    if geo is None:
+        return -1.0
+    try:
+        return float(geo.percent(max(0, int(spine) - 1), int(offset))) * 100.0
+    except Exception:                              # noqa: BLE001
+        return -1.0
+
+
+def _fill_mark_fields(table: str, rid: int, *, label: str = "", pct: float = -1.0,
+                      title: str = "", author: str = "") -> bool:
+    """把缺的快照字段补进一行 (只填空位, 不覆盖已有值)。返回是否写了。"""
+    c = reader_state.conn()
+    row = c.execute(f"SELECT * FROM {table} WHERE id=?", (int(rid),)).fetchone()
+    if row is None:
+        return False
+    sets, args = [], []
+    if label and not (row["chapter_label"] or ""):
+        sets.append("chapter_label=?"); args.append(label[:120])
+    if pct is not None and float(pct) >= 0 and float(row["pct"] if row["pct"] is not None else -1) < 0:
+        sets.append("pct=?"); args.append(float(pct))
+    if title and not (row["book_title"] or ""):
+        sets.append("book_title=?"); args.append(title[:200])
+    if author and not (row["book_author"] or ""):
+        sets.append("book_author=?"); args.append(author[:120])
+    if not sets:
+        return False
+    args.append(int(rid))
+    c.execute(f"UPDATE {table} SET {', '.join(sets)} WHERE id=?", tuple(args))
+    c.commit()
+    return True
+
+
+def materialize(keys: Iterable[str] | None = None, *, quiet: bool = True,
+                limit_books: int = 0) -> dict:
+    """把摘录行的「快照」补齐 (正文 / 书名 / 章名 / 位置比例)。
+
+    为什么这是一个独立步骤: 摘录要能**独立存活**。读者以后可能删掉本地书,
+    删了以后就没有目录可查、没有字节可量。所以每次进入摘录库之前, 只要书还在,
+    就把缺的字段补进 `rnote` / `rbookmark` 自己身上 (幂等, 没缺口不干活)。
+
+    只填空位: 已有的正文/章名/书名一律不动 (云端拉来的正文是权威,
+    人工改过的批注也不许被覆盖)。
+    """
+    c0 = reader_state.conn()
+    # 书库里的**所有**书, 不只看已映射到云端的那些 —— 本地书也会被划线和删掉
+    rows = [dict(r) for r in c0.execute(
+        """SELECT b.key, b.path, COALESCE(b.title,'') AS title,
+                  COALESCE(b.author,'') AS author
+             FROM rbook b
+            WHERE EXISTS (SELECT 1 FROM rnote n WHERE n.book=b.key AND
+                          (n.pct IS NULL OR n.pct < 0 OR COALESCE(n.chapter_label,'')=''
+                           OR COALESCE(n.book_title,'')='' OR COALESCE(n.summary,'')=''))
+               OR EXISTS (SELECT 1 FROM rbookmark m WHERE m.book=b.key AND
+                          (m.pct IS NULL OR m.pct < 0 OR COALESCE(m.chapter_label,'')=''
+                           OR COALESCE(m.book_title,'')=''))
+            ORDER BY b.key""").fetchall()]
+    if keys is not None:
+        want = set(keys)
+        rows = [r for r in rows if r["key"] in want]
+    out = {"books": 0, "rows": 0, "texts": 0, "labels": 0, "pcts": 0,
+           "titles": 0, "skipped": 0}
+    for r in rows:
+        key = r["key"]
+        c = reader_state.conn()
+        gaps_n = c.execute(
+            """SELECT COUNT(*) FROM rnote WHERE book=? AND
+               (pct IS NULL OR pct < 0 OR COALESCE(chapter_label,'')=''
+                OR COALESCE(book_title,'')='' OR COALESCE(summary,'')='')""",
+            (key,)).fetchone()[0]
+        gaps_m = c.execute(
+            """SELECT COUNT(*) FROM rbookmark WHERE book=? AND
+               (pct IS NULL OR pct < 0 OR COALESCE(chapter_label,'')=''
+                OR COALESCE(book_title,'')='')""",
+            (key,)).fetchone()[0]
+        if not gaps_n and not gaps_m:
+            continue
+        epub = str(r.get("path") or "")
+        if not epub or not Path(epub).exists():
+            out["skipped"] += 1
+            continue
+        geo = _sync._geometry_of(epub)
+        out["books"] += 1
+        title, author = str(r.get("title") or ""), str(r.get("author") or "")
+        for kind, table in (("note", "rnote"), ("bookmark", "rbookmark")):
+            gap_rows = c.execute(
+                f"""SELECT * FROM {table} WHERE book=? AND
+                    (pct IS NULL OR pct < 0 OR COALESCE(chapter_label,'')=''
+                     OR COALESCE(book_title,'')=''{" OR COALESCE(summary,'')=''" if kind == "note" else ""})""",
+                (key,)).fetchall()
+            for row in gap_rows:
+                spine = int(row["chapter"] or 0)
+                start = int(row["start_off"] if kind == "note" else row["offset"] or 0)
+                label = row["chapter_label"] or _label_at_spine(geo, spine)
+                pct = _pct_at(geo, spine, start)
+                summary = row["summary"] or ""
+                if kind == "note" and not summary.strip():
+                    pos_a = geometry.build_position(max(0, spine - 1), start)
+                    end = int(row["end_off"] or 0)
+                    pos_b = geometry.build_position(max(0, spine - 1), end) if end > start else ""
+                    try:
+                        summary = text_of_span(epub, pos_a, pos_b)
+                    except Exception:              # noqa: BLE001
+                        summary = ""
+                    # 偏移若落在字中间, 首尾会解出替换符 U+FFFD —— 去掉边缘的
+                    summary = summary.strip().strip("\ufffd").strip() if summary else ""
+                    if summary:
+                        rr = reader_state.conn()
+                        rr.execute("UPDATE rnote SET summary=? WHERE id=?", (summary[:4000], int(row["id"])))
+                        rr.commit()
+                        out["texts"] += 1
+                if _fill_mark_fields(table, int(row["id"]), label=label, pct=pct,
+                                     title=title, author=author):
+                    out["rows"] += 1
+                    if row["pct"] is None or float(row["pct"]) < 0:
+                        out["pcts"] += 1
+                    if not (row["chapter_label"] or ""):
+                        out["labels"] += 1
+                    if not (row["book_title"] or ""):
+                        out["titles"] += 1
+        if limit_books and out["books"] >= limit_books:
+            break
+    if not quiet and out["rows"]:
+        _sync.audit("摘录快照补齐 · %d 行 (正文 %d · 章名 %d · 位置 %d)",
+                    out["rows"], out["texts"], out["labels"], out["pcts"])
+    return out
+
 
 def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
          quiet: bool = False) -> dict:
@@ -816,29 +971,31 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
                 continue
             spine = a[0] + 1          # 云端 chapterId 是"读完的上一篇", 阅读器用篇下标
             row_old = reader_state.conn().execute(
-                "SELECT id, zy_sig, zy_marktime, remark, chapter_label "
+                "SELECT id, zy_sig, zy_marktime, remark, chapter_label, pct, book_title "
                 "FROM rnote WHERE book=? AND zy_key=?",
                 (r["key"], uc)).fetchone()
             # 指纹里的 remark 用**本地已有的批注** — 云端拿不到 remark,
             # 若这里按空串算, 本地批注过的那条会被判成"变了", 每轮心跳都推一遍。
             local_remark = (row_old["remark"] or "") if row_old is not None else ""
-            sig = _sig("note", uc, text, local_remark, _label(spine))
+            label = _label(spine)
+            pct = _pct_at(geo, spine, a[1])
+            sig = _sig("note", uc, text, local_remark, label)
             item["notes"] += 1
             if (row_old is not None and (row_old["zy_sig"] or "") == sig
                     and int(row_old["zy_marktime"] or 0) == int(marktime or 0)):
                 # 一字不差就别重写库 —— 否则每次拉取都显示"更新 28 条", 读起来像在干活。
                 unchanged += 1
                 item["unchanged"] = item.get("unchanged", 0) + 1
-                if row_old is not None and not (row_old["chapter_label"] or ""):
-                    c2 = reader_state.conn()
-                    c2.execute("UPDATE rnote SET chapter_label=? WHERE id=?",
-                               (_label(spine), int(row_old["id"])))
-                    c2.commit()
+                if row_old is not None:
+                    # 内容没变, 但快照字段可能是老行缺的 (外加读者可能删过书) → 补上
+                    _fill_mark_fields("rnote", int(row_old["id"]), label=label, pct=pct,
+                                      title=r["title"], author=str(r.get("author") or ""))
             else:
                 _upsert_note(r["key"], chapter=spine, start=a[1], end=b[1],
                              summary=text, remark="", color="",
                              zy_key=uc, marktime=marktime, zy_sig=sig,
-                             label=_label(spine))
+                             label=label, pct=pct, book_title=r["title"],
+                             book_author=str(r.get("author") or ""))
                 if row_old is not None:
                     updated += 1
                 else:
@@ -855,9 +1012,12 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
                 item["marks"] += 1
                 continue
             spine = a[0] + 1
+            label = _label(spine)
             _upsert_bookmark(r["key"], chapter=spine, offset=a[1], summary="",
-                             title=_label(spine), zy_key=uc, marktime=marktime,
-                             zy_sig=_sig("bookmark", uc, "", _label(spine)))
+                             title=label, zy_key=uc, marktime=marktime,
+                             zy_sig=_sig("bookmark", uc, "", label),
+                             pct=_pct_at(geo, spine, a[1]), book_title=r["title"],
+                             book_author=str(r.get("author") or ""))
             item["marks"] += 1
             _seen_put(book32, "mark", uc, marktime)
         for uc in ver["del"]:
@@ -881,6 +1041,11 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
         pulled_unmapped = pull_unmapped(quiet=quiet)
     except Exception:                              # noqa: BLE001
         pulled_unmapped = {}
+    # 摘录要能独立存活: 趁书还在, 把缺的快照 (正文/章名/位置/书名) 补齐
+    try:
+        materialize(quiet=quiet)
+    except Exception:                              # noqa: BLE001
+        pass
     unmapped = cloud_only_books(_sync.links())
     if not (quiet and not (added or updated or deleted)):
         _sync.audit("拉取划线 · 新增 %d · 更新 %d · 删除 %d · 未变 %d",

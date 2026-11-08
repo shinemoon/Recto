@@ -390,8 +390,14 @@ inline 排布在 100% 宽的字段后面**必然换行**, 该行比相邻行高 
   新划的线刷页面就能看到, 不需要重启进程。
 - 删除: 设备摘录改 `aggregate.jsonl`; 阅读器记录只删本地 `reader.sqlite` ——
   掌阅云端还在, 下次 `notes.pull` 会重新拉回 (弹窗里写明了)。
+- **摘录行自带快照** (`summary` / `chapter_label` / `pct` / `book_title` /
+  `book_author`): 本地书被删掉以后, 摘录仍能说出"哪本书 · 哪个位置 · 什么正文"。
+  进摘录库时 `_load_view()` 先调 `notes.materialize()` 补缺口 (节流 60s, 幂等,
+  没缺口只跑几条 COUNT)。
+- **简化显示**: 没有正文的条目 (`_noText` / 无位置 `_noPos`) 只渲染一行灰字
+  (`.tl-mini`), 不给「0 字」/书票/复制; 位置能算就写 `章名 · 32%`, 都没有写「位置未知」。
 
-回归: `tests/test_admin_reader_notes.py`。
+回归: `tests/test_admin_reader_notes.py`、`tests/test_excerpt_persist.py`。
 
 ## 7 什么时候不该用这套
 

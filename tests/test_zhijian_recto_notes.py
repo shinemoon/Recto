@@ -69,10 +69,13 @@ _c.executescript(
                        start_off INTEGER, end_off INTEGER, summary TEXT, remark TEXT,
                        color TEXT, anchors TEXT, created_at TEXT, updated_at TEXT,
                        zy_key TEXT, zy_marktime INTEGER, zy_sig TEXT, src TEXT,
-                       chapter_label TEXT DEFAULT '');
+                       chapter_label TEXT DEFAULT '', pct REAL DEFAULT -1,
+                       book_title TEXT DEFAULT '', book_author TEXT DEFAULT '');
     CREATE TABLE rbookmark(id INTEGER PRIMARY KEY, book TEXT, chapter INTEGER,
                            offset INTEGER, summary TEXT, title TEXT, created_at TEXT,
-                           zy_key TEXT, zy_marktime INTEGER, zy_sig TEXT, src TEXT);
+                           zy_key TEXT, zy_marktime INTEGER, zy_sig TEXT, src TEXT,
+                           chapter_label TEXT DEFAULT '', pct REAL DEFAULT -1,
+                           book_title TEXT DEFAULT '', book_author TEXT DEFAULT '');
     """
 )
 _c.execute("INSERT INTO rbook(key,path,kind,title,author) VALUES(?,?,?,?,?)",

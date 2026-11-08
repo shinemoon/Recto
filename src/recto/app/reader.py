@@ -514,7 +514,10 @@ def handle(h) -> bool:
             off = max(0, int(body.get("offset") or 0))
             summary = str(body.get("summary") or "")[:400]
             title = doc.chapters[ch].title
-            row = rs.add_bookmark(key, ch, off, summary or f"{title} · {_pct_text(doc.percent(ch, off))}", title)
+            row = rs.add_bookmark(key, ch, off,
+                                  summary or f"{title} · {_pct_text(doc.percent(ch, off))}",
+                                  title, chapter_label=title,
+                                  pct=float(doc.percent(ch, off)) * 100.0)
             h._json(200, {"ok": True, "bookmark": row})
             return True
 
@@ -537,7 +540,9 @@ def handle(h) -> bool:
             anchors = json.dumps(body.get("anchors") or {}, ensure_ascii=False)
             row = rs.add_note(key, ch, s_off, e_off, summary,
                               str(body.get("remark") or ""),
-                              str(body.get("color") or ""), anchors)
+                              str(body.get("color") or ""), anchors,
+                              chapter_label=doc.chapters[ch].title,
+                              pct=float(doc.percent(ch, s_off)) * 100.0)
             h._json(200, {"ok": True, "note": row})
             return True
 
