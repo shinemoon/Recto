@@ -149,8 +149,10 @@ check("划线 / 时长各有稀疏周期", int(sec["tick_notes_sec"]) == 300
 
 tk = sync.tick_settings()
 check("tick_settings 暴露节奏", set(tk) == {"interval_sec", "active_min", "notes",
-      "notes_sec", "time", "time_sec", "settle", "settle_sec"}, tk)
+      "notes_sec", "time", "time_sec", "settle", "settle_sec",
+      "drift", "drift_sec"}, tk)
 check("默认开收尾补推 (3 分钟一次)", tk["settle"] is True and int(tk["settle_sec"]) == 180, tk)
+check("默认开漂移核对 (10 分钟一次)", tk["drift"] is True and int(tk["drift_sec"]) == 600, tk)
 check("sync_settings 带 interval_sec", sync.sync_settings()["interval_sec"] == 60.0,
       sync.sync_settings())
 

@@ -97,3 +97,5 @@ tick_time = true                # 顺带推送今天的阅读时长
 tick_time_sec = 600             # 时长多久推一次
 tick_settle = true              # 收尾补推: 离开阅读后仍把最后那一小截补上去 (不看活跃窗口)
 tick_settle_sec = 180          # 补推多久看一次
+tick_drift = true               # 漂移核对: App 读书时会把云端那条回写成它的旧位置, 定期核对并补回
+tick_drift_sec = 600            # 漂移核对多久看一次

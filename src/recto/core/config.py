@@ -82,6 +82,16 @@ DEFAULTS: dict[str, Any] = {
         "pull_gap_sec": 120,         # 同一本书两次自动拉取的间隔
         "flush_on_hide": True,       # 切后台/离开页面时立刻把最后位置推上去
         "stamp": True,               # 阅读页右下角显示云端同步时间/进度
+        # 定时通道 (心跳)。0 = 关; 各步骤有自己更稀疏的周期
+        "tick_notes": True,
+        "tick_notes_sec": 300,
+        "tick_time": True,
+        "tick_time_sec": 600,
+        "tick_settle": True,          # 收尾补推: 离开阅读后仍把最后那一小截补上
+        "tick_settle_sec": 180,
+        # 漂移核对: 本地没动过, 但 App 读书时会把云端那条回写成它的旧位置
+        "tick_drift": True,
+        "tick_drift_sec": 600,
     },
 }
 
@@ -181,6 +191,8 @@ class Config:
             "RECTO_SYNC_TICK_TIME": ("sync", "tick_time"),
             "RECTO_SYNC_TICK_SETTLE": ("sync", "tick_settle"),
             "RECTO_SYNC_TICK_SETTLE_SEC": ("sync", "tick_settle_sec"),
+            "RECTO_SYNC_TICK_DRIFT": ("sync", "tick_drift"),
+            "RECTO_SYNC_TICK_DRIFT_SEC": ("sync", "tick_drift_sec"),
         }
         for env, (sec, key) in env_map.items():
             v = os.environ.get(env)

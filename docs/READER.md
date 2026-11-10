@@ -42,7 +42,17 @@ readPercent = (Σ bytes(spine[0..chapterId]) + f3) / Σ bytes(spine)
 ```bash
 python3 -m recto.cli align            # 逐本列出两侧 pct 与"按位置反解出来的 pct"
 python3 -m recto.cli align --fix      # 按云端自己的 readPercent 重写 readPosition
+python3 tools/audit_progress.py 剑来  # 逐条列出云端每份记录 (32/64/笔记本) 并核差几字节
 ```
+
+> **2026-11-10 复核**：用 `tools/audit_progress.py` 对 4 本书 × 我们写的 / App 写的 /
+> App 笔记本三类记录逐条验过，`readPosition` 反算出的比例与记录里的 `readPercent`
+> 差 **0.0–0.8 字节** —— 两边的**计算与定位口径完全一致**。
+> 那次的"跳到别处"不是公式问题，是**云端同一本书有两份进度记录**：
+> 掌阅 App 只读写 `32 hex`（文件内容 MD5）那份，而且它一读书就把那份**回写成自己的
+> 位置**；我们推的双写里 `64 hex` 还留着我们的值，旧闸门看 max 就判 noop，于是永不补推。
+> 现在按 key 判定（`why=key-drift`）并由 `tick_drift` 定期核对补回；详见 README
+> 「云端同一本书有两份进度记录」一节。
 
 历史事故（2026-11-05 修）：push 时把 spine 下标直接当 `chapterId` 交给
 `build_position()`，写出的 `pre` **超前一整章** —— `readPercent` 是 34.0034%

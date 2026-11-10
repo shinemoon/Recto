@@ -150,6 +150,12 @@ def app_book_keys(zy_book_id: str) -> list[str]:
     return keys
 
 
+def _key_label(bid: str) -> str:
+    """云端记录的分类: `32` = App 读写的那个 key, `64` = 云书架的 book_id。"""
+    k = str(bid or "").strip().upper()
+    return "32" if k[:32] == k else "64"
+
+
 def file_md5(path: str | Path) -> str:
     h = hashlib.md5()
     with open(path, "rb") as f:
@@ -406,13 +412,15 @@ def _cloud_state(auth: dict, rows: Iterable[dict]) -> dict[str, dict]:
             ts = float(rec.get("updateTime") or rp.get("lastReadDate") or 0)
         except (TypeError, ValueError):
             ts = 0.0
+        kk = str(k).strip().upper()
         cands.setdefault(bid, []).append({
             "pct": pct if ok else None,
             "finished": str(rp.get("readComplete") or "0").strip() == "1",
             "chapter_id": (str(rp["chapterId"]) if rp.get("chapterId") not in (None, "") else None),
             "total_count": _int_or_none(rp.get("totalCount")),
             "ts": ts,
-            "src": "progress32" if str(k).strip().upper()[:32] == str(k).strip().upper() else "progress64",
+            "key": "32" if kk[:32] == kk else "64",
+            "src": "progress32" if kk[:32] == kk else "progress64",
             "position": pos,
             "pos_chapter": parsed.get("chapter_id"),
             "pos_f3": _int_or_none(parsed.get("f3")),
@@ -441,6 +449,16 @@ def _cloud_state(auth: dict, rows: Iterable[dict]) -> dict[str, dict]:
         chosen = dict(good[-1])
         chosen["max_pct"] = max(float(c.get("pct") or 0) for c in good)
         chosen["records"] = len(good)
+        # 逐 key 的现值。掌阅把 32 hex / 64 hex 当**两份独立记录**, 而 App
+        # 只读它自己那个 (32 hex, 文件内容 MD5 大写)。所以"云端有没有我们
+        # 的位置"必须按 key 看 —— 只看 max 会把"64 是我们上次推的、32 已被
+        # App 回写覆盖成旧值"误判成"云端已经是最新", 于是永远不再补推。
+        per_key: dict[str, float] = {}
+        for c in good:
+            kk = str(c.get("key") or "")
+            if kk:
+                per_key[kk] = max(per_key.get(kk, 0.0), float(c.get("pct") or 0.0))
+        chosen["per_key"] = per_key
         out[bid] = chosen
     return out
 
@@ -648,6 +666,24 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
                                    cloud_newer=cloud_newer and not wins)
         if force and not allow:
             allow, why = True, "force"
+        # ---- 逐 key 判定 --------------------------------------------------
+        # 掌阅把 32 hex / 64 hex 当两份**独立记录**。App 只读它自己那个
+        # (32 hex = 文件内容 MD5 大写), 而它一读书就会把它那条**回写成自己的
+        # 位置** —— 我们推上去的值在 App 侧于是被悄悄退回旧位置, 而 64 hex
+        # 上还留着我们那条, max_pct 看起来"云端已经是最新", 闸门于是永远
+        # 给 noop, 再也不会补推。2026-11-10 实测: 本地 33.0710% / 32 hex
+        # 被 App 回写成 32.9993% / 64 hex 还是 33.0710% → 一直是 noop。
+        keys_all = app_book_keys(r["id64"] or r["id32"])
+        per_key = cur.get("per_key") or {}
+        if not per_key:
+            behind = list(keys_all)      # 云端一条都没有 → 两条都写
+        else:
+            behind = [k for k in keys_all
+                      if per_key.get(_key_label(k)) is not None
+                      and pct - float(per_key[_key_label(k)]) > tol]
+        if (not allow and behind and per_key
+                and pct >= float(cur_pct or 0.0) - tol):
+            allow, why = True, "key-drift"
         if not allow:
             skipped += 1
             # 记住"这个位置被闸门挡回去了": 定时器的收尾补推据此跳过它,
@@ -657,14 +693,28 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
                            "pct": round(pct, 8), "cloud": cur_pct,
                            "bytes": reader_state.book_bytes(key)})
             continue
+        # 该写哪几条: 回拨 / meta 修正 / 本地优先 → 全部重写; 否则只补
+        # "落后于本地或压根没有"的那几条 (App 刚写过的 key 不去覆盖)。
+        if allow_rewind or wins or meta_stale or why in ("force", "no-baseline",
+                                                         "no-progress"):
+            targets = keys_all
+        else:
+            targets = behind
+        if not targets and not dry_run:
+            skipped += 1
+            _note_skip(key, pct, "noop")
+            detail.append({"book": r["title"], "skipped": "noop",
+                           "pct": round(pct, 8), "cloud": cur_pct,
+                           "bytes": reader_state.book_bytes(key)})
+            continue
         if dry_run:
             detail.append({"book": r["title"], "dry": True, "why": why,
                            "pct": round(pct, 8), "chapter": catalog_ch,
-                           "total": total_count,
+                           "total": total_count, "keys": targets,
                            "bytes": reader_state.book_bytes(key)})
             continue
         ok_keys, errs = [], []
-        for bid in app_book_keys(r["id64"] or r["id32"]):
+        for bid in targets:
             try:
                 cloud.upload_progress(
                     auth, book_id=bid, book_name=r["name"],
@@ -753,6 +803,9 @@ def tick_settings() -> dict:
         # 收尾补推: 已经离开"最近读过"窗口, 但本地还比上次推上去的更靠前
         "settle": bool(_sync_cfg("tick_settle", True)),
         "settle_sec": max(30.0, _num("tick_settle_sec", 180)),
+        # 漂移核对: 本地没动过, 但云端那条可能被 App 回写成旧位置
+        "drift": bool(_sync_cfg("tick_drift", True)),
+        "drift_sec": max(60.0, _num("tick_drift_sec", 600)),
     }
 
 
@@ -1013,6 +1066,45 @@ def _tail_keys(exclude: Iterable[str] = (), tol: float | None = None) -> list[st
     return out
 
 
+def _drift_keys(exclude: Iterable[str] = (), limit: int = 10) -> list[str]:
+    """本地进度没动过、但云端那条可能被 App 回写成旧位置的书。
+
+    App 每次读书都会把它自己那条 (32 hex) 回写成"它读到的位置"。我们推上去
+    的位置于是被悄悄退回去, 而 64 hex 上还留着我们的值 —— 只看 max 会误判
+    "云端已是最新", 闸门永远给 noop, 再也不会补推。2026-11-10 实测:
+    本地 33.0710%, 32 hex 被 App 写回 32.9993%, 64 hex 还是 33.0710%。
+
+    这一步只挑"我们上次推的位置跟本地一致"(= 本地没再动)的书去核一眼,
+    真漂移了 push_once 会只补那条落后的 key; 没漂移就是一次 noop (不写盘)。
+    """
+    tol = _push_tol()
+    skip = set(exclude or ())
+    out: list[str] = []
+    for r in links():
+        key = str(r.get("key") or "")
+        if not key or key in skip:
+            continue
+        prog = reader_state.get_progress(key) or {}
+        if not prog:
+            continue
+        pct = float(prog.get("percent") or 0.0)
+        if pct <= 0:
+            continue
+        link = sidecar.cloud_link(r.get("path") or "") or {}
+        last = link.get("last_push_pct")
+        if last in (None, ""):
+            continue
+        try:
+            same = abs(pct - float(last)) <= tol
+        except (TypeError, ValueError):
+            same = False
+        if same and not _skip_known(key, pct):
+            out.append(key)
+            if len(out) >= max(1, int(limit)):
+                break
+    return out
+
+
 def active_keys(window_sec: float | None = None) -> list[str]:
     """最近动过进度的书 (默认 `[sync] tick_active_min` 分钟), 且跟云端有映射。
 
@@ -1081,20 +1173,41 @@ def _settle_step(out: dict, now: float, tk: dict, *, exclude=(), force: bool = F
     _TICK_STATE["settle_at"] = now
     tail = _tail_keys(exclude=exclude)
     if not tail:
-        return
+        tail = []
     try:
-        res = push_once(keys=tail)
-        stl = {k: int(res.get(k) or 0) for k in ("pushed", "skipped", "failed")}
-        stl["keys"] = tail
-        out["settle"] = stl
-        if stl["pushed"]:
-            out["actions"].append("settle")
+        if tail:
+            res = push_once(keys=tail)
+            stl = {k: int(res.get(k) or 0) for k in ("pushed", "skipped", "failed")}
+            stl["keys"] = tail
+            out["settle"] = stl
+            if stl["pushed"]:
+                out["actions"].append("settle")
     except Exception as e:  # noqa: BLE001
         out["settle_error"] = f"{type(e).__name__}: {e}"
         log.warning("定时同步 · 收尾补推失败 · %s", e)
     with _PUSH_LOCK:
         for k in tail:
             _PUSH_STATE.setdefault(k, {})["at"] = now
+    # 漂移核对 (更稀疏): 本地没动过, 但 App 可能把云端那条回写成旧位置
+    if tk.get("drift", True) and now - float(_TICK_STATE.get("drift_at") or 0) >= tk.get("drift_sec", 600.0):
+        _TICK_STATE["drift_at"] = now
+        cand = _drift_keys(exclude=set(tail) | set(exclude or ()))
+        if cand:
+            try:
+                res2 = push_once(keys=cand)
+                drf = {k: int(res2.get(k) or 0) for k in ("pushed", "skipped", "failed")}
+                drf["keys"] = cand
+                out["drift"] = drf
+                if drf["pushed"]:
+                    out["actions"].append("drift")
+                    log.info("云端那条被 App 回写成旧位置 · 已按本地补回 · %s",
+                             ", ".join(cand))
+            except Exception as e:  # noqa: BLE001
+                out["drift_error"] = f"{type(e).__name__}: {e}"
+                log.warning("定时同步 · 漂移核对失败 · %s", e)
+            with _PUSH_LOCK:
+                for k in cand:
+                    _PUSH_STATE.setdefault(k, {})["at"] = now
 
 
 def tick_once(*, force: bool = False) -> dict:
