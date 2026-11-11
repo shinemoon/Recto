@@ -11,7 +11,8 @@
 
 模块划分:
     config      — LLM / 解析 / 分类 配置的读写
-    llm         — 极简 OpenAI 兼容 / Anthropic 兼容客户端 (含配额熔断 / 硬超时)
+    llmconfig   — 共用的 LLM 零件 (脱敏 / 模型库 / key 覆盖判定) —— 在 core
+    llm         — 极简 OpenAI 兼容 / Anthropic 兼容客户端 (在 core, 含配额熔断 / 硬超时)
     epub_parse  — EPUB 解析 (OPF / spine / TOC / 正文抽取)
     analyze     — 分块 + LLM 抽取 + 合并去重 → 关键字 JSON (含断点续跑)
     store       — 每本书的磁盘产物

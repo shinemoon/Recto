@@ -165,7 +165,7 @@ def test_document_shape():
 def test_nav_single_source():
     keys = [k for k, _l, _h in shell.NAV]
     ok(keys == ["library", "sync",
-                "excerpts", "corpus", "appearance"], "导航顺序固定且唯一")
+                "excerpts", "pet", "corpus", "appearance"], "导航顺序固定且唯一")
     ok(len(set(keys)) == len(keys), "导航 key 不重复")
     pane_keys = {k for k in keys if k in shell.PANE_KEYS}
     ok(pane_keys == {"library", "sync"},

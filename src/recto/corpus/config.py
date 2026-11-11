@@ -29,10 +29,22 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import threading
 from pathlib import Path
 from typing import Any
+
+# 共用的 LLM 零件在 core —— 语料与书宠共用一份 (脱敏 / 模型库 / key 覆盖判定)。
+from recto.core.llmconfig import (  # noqa: F401 — 兼容层: 老代码按 corpus.config 引用
+    THINK_MODES,
+    apply_model_to_llm,
+    is_masked,
+    mask_key,
+    model_library,
+    normalize_model_entry,
+    normalize_provider,
+    normalize_thinking,
+    resolve_api_key,
+)
 
 # 路径全部由云阅 Recto 的配置派生: `[corpus] dir` (默认 <data_dir>/corpus)。
 # 语料根之下:
@@ -178,143 +190,6 @@ def save_config(cfg: dict[str, Any]) -> None:
     with tmp.open("w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
     os.replace(tmp, CONFIG_PATH)
-
-
-def mask_key(key: str) -> str:
-    """脱敏显示 api key."""
-    if not key:
-        return ""
-    if len(key) <= 10:
-        return key[:2] + "*" * (len(key) - 2)
-    return key[:6] + "*" * 8 + key[-4:]
-
-
-def is_masked(key: str) -> bool:
-    """判断一个 key 是不是**脱敏串** (mask_key 的产物).
-
-    为什么需要这个:
-        GET /api/models 和 /api/config 都会把 key 脱敏后发给前端.
-        前端保存时会把那个脱敏串原样回传 —— 它是 truthy, 所以前端
-        的 "空 = 不改" 分支不触发; 服务端的 "== '***' = 不改" 分支
-        也不触发. 结果真 key 被脱敏串**覆盖**, 之后每次请求 401.
-
-    所以凡是要"拿 key 当真值用"的地方, 必须先过这一关.
-    """
-    return bool(key) and "*" in key
-
-
-# ───────────────────────── 模型库 ─────────────────────────
-
-_ID_RE = re.compile(r"[^a-zA-Z0-9_\-]+")
-
-
-def _slug(name: str) -> str:
-    """从名字生成 id: 保留字母数字下划线连字符, 其余转 -."""
-    s = _ID_RE.sub("-", (name or "").strip()).strip("-")
-    return s.lower() or "model"
-
-
-_THINK_MODES = ("off", "on", "auto")
-
-
-def normalize_thinking(value: Any, default: str = "off") -> str:
-    v = str(value or "").strip().lower()
-    return v if v in _THINK_MODES else default
-
-
-def normalize_model_entry(raw: dict[str, Any], used_ids: set[str]) -> dict[str, Any]:
-    """归一化一条模型配置. 保证有 id / provider / base_url / model 字段.
-
-    磁盘上存的是**真 key** (调用要用). data/ 整个目录已 gitignore.
-    对外输出时才脱敏 (见 model_library).
-    """
-    raw = raw or {}
-    name = (raw.get("name") or "").strip()
-    mid = (raw.get("id") or "").strip() or _slug(name) or "model"
-    # id 冲突时加序号
-    base = mid
-    n = 2
-    while mid in used_ids:
-        mid = f"{base}-{n}"
-        n += 1
-    used_ids.add(mid)
-    provider = (raw.get("provider") or "openai").strip().lower()
-    if provider not in ("openai", "anthropic"):
-        provider = "openai"
-    return {
-        "id": mid,
-        "name": name or mid,
-        "provider": provider,
-        "base_url": (raw.get("base_url") or "").strip().rstrip("/"),
-        "api_key": (raw.get("api_key") or "").strip(),
-        "model": (raw.get("model") or "").strip(),
-        "note": (raw.get("note") or "").strip(),
-        # 思考开关: off = 抽取时不要推理 (默认); on = 允许; auto = 同 off
-        "thinking": normalize_thinking(raw.get("thinking")),
-    }
-
-
-def model_library(cfg: dict[str, Any]) -> list[dict[str, Any]]:
-    """返回模型库 (脱敏 key, 带 has_key)."""
-    from .llm import looks_reasoning_model
-
-    out = []
-    for m in cfg.get("models") or []:
-        e = dict(m)
-        e["api_key"] = mask_key(e.get("api_key", ""))
-        e["has_key"] = bool(m.get("api_key"))
-        e["thinking"] = normalize_thinking(e.get("thinking"))
-        # 只读标记: UI 用它给推理模型挂角标 / 提示换模型
-        e["reasoning_model"] = looks_reasoning_model(e.get("model", ""), e.get("base_url", ""))
-        out.append(e)
-    return out
-
-
-def resolve_api_key(incoming: str, previous: str) -> str:
-    """决定保存时该写入哪个 key.
-
-    incoming  = 前端回传的值
-    previous  = 磁盘上已有的值
-
-    规则:
-        - 空串          → 不改 (前端没填)
-        - "***"         → 不改 (前端明确说"沿用旧值")
-        - 脱敏串 (含 *) → 不改 (前端拿的是展示用脱敏值, 不是真 key)
-        - 其它          → 用新值
-
-    is_masked 这一条是必须的: 前端拿到的永远是 mask_key() 的产物,
-    它是 truthy, 所以前端的 "空 = 不改" 和服务端的 "== '***' = 不改"
-    两条兜底都不会触发 —— 真 key 会被脱敏串静默覆盖, 之后所有请求 401.
-    """
-    val = (incoming or "").strip()
-    if not val or val == "***" or is_masked(val):
-        return previous
-    return val
-
-
-def apply_model_to_llm(cfg: dict[str, Any], model_id: str) -> bool:
-    """把模型库里的某条套到 llm 段. 找不到返回 False.
-
-    注意: llm 段的 timeout / max_tokens / temperature / max_concurrency
-    保留用户设置 —— 模型库只管"连哪台机器 + 跑哪个模型 + 用哪把 key".
-    """
-    mid = (model_id or "").strip()
-    if not mid:
-        return False
-    for m in cfg.get("models") or []:
-        if m.get("id") == mid:
-            for k in ("provider", "base_url", "model"):
-                if m.get(k):
-                    cfg["llm"][k] = m[k]
-            cfg["llm"]["thinking"] = normalize_thinking(m.get("thinking"))
-            # key: 只在条目自己**没有** key 时才沿用 llm 段的;
-            # 条目有 key 就用它 (哪怕它已被脱敏串污染, 也不该用
-            # llm 段那个可能被污染的值去覆盖).
-            if m.get("api_key"):
-                cfg["llm"]["api_key"] = m["api_key"]
-            cfg["active_model_id"] = mid
-            return True
-    return False
 
 
 def enabled_categories(cfg: dict[str, Any]) -> list[dict[str, Any]]:

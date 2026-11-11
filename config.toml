@@ -40,6 +40,11 @@ data_dir = ""                     # 空 = <data_dir>
 [corpus]
 dir = ""                          # 空 = <data_dir>/corpus
 
+# --- 书宠 (陪读精灵, 本服务内置) ---
+# 书宠根之下: config.json (模型端点/模型库/人格) · state.json (心情/亲密度/记忆)
+[pet]
+dir = ""                          # 空 = <data_dir>/pet
+
 # --- 阅读高亮 (语料分解 json → 阅读器里的关键词滤镜) ---
 # 这里是**部署默认值**; 用的人在设置页「阅读高亮」卡里改的覆盖项存在
 # <data_dir>/reading_mark.json, 缺的键就跟随这里。

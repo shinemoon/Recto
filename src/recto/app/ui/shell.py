@@ -30,6 +30,7 @@ NAV: list[tuple[str, str, str]] = [
     ("library", "书架", "/#library"),
     ("sync", "云端同步", "/#sync"),
     ("excerpts", "摘录", "/admin/"),
+    ("pet", "书宠", "/pet/"),
     ("corpus", "语料", "/corpus/"),
     ("appearance", "外观", "/appearance"),
 ]

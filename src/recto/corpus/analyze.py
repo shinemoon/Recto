@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import llm
+from recto.core import llm
 
 SYSTEM_PROMPT = """You are a literary analyst extracting a controlled keyword vocabulary from a book.
 

@@ -1,0 +1,135 @@
+/* 书宠 (陪读精灵) —— 云阅 Recto 原生分区
+ *
+ * 版式跟语料分区**同族**: 卡片合并成一层 (只有高度阴影 + 卡头一条分隔线),
+ * 字段是无边框填充式 (40px 高, 与按钮同高), 颜色全走 --rc-* token。
+ * 语料那边怎么做的, 这里就怎么做 —— 免得两个分区看起来像两个产品。
+ */
+:root{
+  --bg: var(--rc-bg);
+  --panel: var(--rc-surface);
+  --ink: var(--rc-fg);
+  --ink-dim: var(--rc-dim);
+  --line: var(--rc-outline-variant, var(--rc-line));
+  --accent: var(--rc-primary);
+  --ok: var(--rc-ok);
+  --err: var(--rc-err);
+  --warn: var(--rc-warn);
+}
+
+.rc-pet { max-width: var(--rc-measure); }
+@media (max-width: 860px) { .rc-pet { max-width: none; } }
+
+/* ── 卡片: 只留高度阴影, 卡头一条极淡分隔线 ───────────────────────────── */
+.rc-pet .card { padding: 0; border: 0; overflow: hidden; }
+.rc-pet .card-head {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 14px var(--rc-pad);
+  background: transparent;
+  border-bottom: 1px solid var(--line);
+}
+.rc-pet .card-head h2 {
+  margin: 0; font-size: var(--rc-fs-sm, 13.5px);
+  font-weight: 650; letter-spacing: .01em;
+}
+.rc-pet .card-head .hint { font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-mute); }
+.rc-pet .card-body { padding: var(--rc-pad); }
+
+/* ── 网格与字段 ─────────────────────────────────────────────────────── */
+.rc-pet .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+.rc-pet label { display: block; font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-dim); }
+.rc-pet label.inline { display: inline-flex; align-items: center; gap: 6px; }
+
+/* 填充式字段: 无描边, 一层极淡底色, 聚焦时底色加深 + 底部一道主色指示线 */
+.rc-pet :where(input, select, textarea) {
+  border: 0; box-shadow: none; outline: none;
+  background: color-mix(in srgb, var(--rc-fg) 6%, var(--rc-surface));
+  border-radius: var(--rc-radius-field, 0);
+  min-height: 40px; padding: 0 12px;
+  transition: background .15s ease, box-shadow .15s ease;
+}
+.rc-pet :where(input, select, textarea):hover {
+  background: color-mix(in srgb, var(--rc-fg) 9%, var(--rc-surface));
+}
+.rc-pet :where(input, select, textarea):focus {
+  background: color-mix(in srgb, var(--rc-fg) 11%, var(--rc-surface));
+  box-shadow: inset 0 -2px 0 var(--rc-primary);
+}
+.rc-pet textarea { font-family: ui-monospace, Menlo, monospace; font-size: 12px; resize: vertical; }
+.rc-pet input[type="range"] {
+  min-height: 0; padding: 0; border: 0; background: transparent;
+}
+.rc-pet label.inline input { margin-top: 0; }
+
+.rc-pet .row {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-top: 12px;
+}
+
+/* ── 提示与状态 ─────────────────────────────────────────────────────── */
+.rc-pet .tip {
+  font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-mute);
+  line-height: 1.75; margin: 10px 0 0;
+}
+.rc-pet .tip.warn { color: var(--rc-warn); }
+.rc-pet .tips {
+  font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-mute);
+  line-height: 1.85; margin: 8px 0 0; padding-left: 18px;
+}
+.rc-pet .status { font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-mute); }
+.rc-pet .status.ok { color: var(--rc-ok); }
+.rc-pet .status.err { color: var(--rc-err); }
+
+/* ── 书宠预览 ───────────────────────────────────────────────────────── */
+.rc-pet .pet-preview {
+  display: flex; align-items: center; gap: 16px;
+  margin-top: 14px; padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--rc-radius-card, 16px);
+  background: color-mix(in srgb, var(--rc-primary) 5%, var(--rc-surface));
+}
+/* 头像: 跟全站一致走直角口径 (radius_scale=0 时就是方的) —— 不另开一个圆形特例。 */
+.rc-pet .pet-avatar {
+  width: 64px; height: 64px; flex: 0 0 64px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--rc-radius-card, 0);
+  border: 1px solid var(--line);
+  background: var(--rc-surface);
+}
+.rc-pet .pet-face { font-size: 22px; color: var(--rc-dim); letter-spacing: 1px; }
+.rc-pet .pet-meta { flex: 1 1 auto; min-width: 0; }
+.rc-pet .pet-name { font-size: 15px; font-weight: 650; }
+.rc-pet .pet-state-line { font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-mute); margin-top: 2px; }
+.rc-pet .pet-bars { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; }
+.rc-pet .pet-bars label.inline { gap: 8px; }
+.rc-pet .pet-bars input[type="range"] { width: 140px; }
+
+/* ── 模型库表格 ─────────────────────────────────────────────────────── */
+.rc-pet .models-wrap { overflow-x: auto; }
+.rc-pet table.cats {
+  width: 100%; border-collapse: collapse; font-size: var(--rc-fs-xs, 11.5px);
+}
+.rc-pet table.cats th, .rc-pet table.cats td {
+  text-align: left; padding: 6px 8px;
+  border-bottom: 1px solid var(--line); vertical-align: middle;
+}
+.rc-pet table.cats th { color: var(--rc-mute); font-weight: 600; white-space: nowrap; }
+.rc-pet table.cats input, .rc-pet table.cats select {
+  margin-top: 0; min-width: 90px; min-height: 34px;
+}
+.rc-pet table.cats td.mdl-ops { white-space: nowrap; }
+.rc-pet table.cats td.mdl-ops button { margin-right: 4px; }
+.rc-pet .badge-warn {
+  display: inline-block; padding: 0 5px; font-size: 10px;
+  border-radius: 4px; color: var(--rc-warn);
+  border: 1px solid color-mix(in srgb, var(--rc-warn) 45%, transparent);
+}
+
+/* ── 窄屏 ───────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .rc-pet .grid { grid-template-columns: 1fr; }
+  .rc-pet .pet-preview { flex-direction: column; align-items: flex-start; }
+}

@@ -19,7 +19,8 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from recto.corpus import analyze, config, llm  # noqa: E402
+from recto.core import llm  # noqa: E402
+from recto.corpus import analyze, config  # noqa: E402
 
 PASS = 0
 FAIL = 0

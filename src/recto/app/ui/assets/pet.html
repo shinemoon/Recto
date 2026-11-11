@@ -1,0 +1,160 @@
+<!-- 书宠分区正文 —— 陪读精灵 (陪伴宠物)。
+     外壳 (顶栏 / 导航 / 页脚 / 皮肤) 由 recto.app.ui.shell 提供;
+     接口前缀 (/pet) 由 pet.js 里的 PET_BASE 负责。 -->
+<div class="rc-pet">
+
+<!-- ── 0. 状态 ───────────────────────────────── -->
+<section class="card" id="card-status">
+  <div class="card-head">
+    <h2>书宠</h2>
+    <span class="hint">陪读精灵 · 陪着你把这本书读完</span>
+    <span class="pill" id="pet-state">读取中…</span>
+  </div>
+  <div class="card-body">
+    <p class="tip" id="pet-intro">
+      还没做出来的部分 (别急, 这一步先把地基打好):
+      记住你在读哪本书、探头说话、养熟。
+      现在这一页只做<b>模型接入配置</b> —— 书宠要开口, 总得先有个能说话的大脑。
+    </p>
+    <div class="pet-preview">
+      <div class="pet-avatar" id="pet-avatar" aria-hidden="true">
+        <span class="pet-face">◕‿◕</span>
+      </div>
+      <div class="pet-meta">
+        <div class="pet-name" id="pet-name">小墨</div>
+        <div class="pet-state-line" id="pet-state-line">还没醒过来</div>
+        <div class="pet-bars">
+          <label class="inline">亲密度
+            <input id="pet-intimacy" type="range" min="0" max="100" value="0" disabled>
+          </label>
+          <label class="inline">心情
+            <input id="pet-mood" type="range" min="0" max="100" value="60" disabled>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 1. 人格 ───────────────────────────────── -->
+<section class="card" id="card-persona">
+  <div class="card-head">
+    <h2>1 · 人格</h2>
+    <span class="hint">书宠是谁 · 怎么说话</span>
+  </div>
+  <div class="card-body">
+    <div class="grid">
+      <label>名字
+        <input id="pet-name-input" placeholder="小墨">
+      </label>
+      <label>说话风格
+        <input id="pet-style" placeholder="安静, 偶尔吐槽, 不剧透">
+      </label>
+      <label>话痨程度 (1-5)
+        <input id="pet-chattiness" type="number" min="1" max="5" step="1">
+      </label>
+    </div>
+    <p class="tip">
+      人格还没接进对话 (那是下一步)。先存着, 免得到时候再让你填一遍。
+    </p>
+    <div class="row">
+      <button class="primary" id="btn-persona-save">保存人格</button>
+      <span id="persona-status" class="status"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ── 2. 模型接入 ───────────────────────────── -->
+<section class="card" id="card-llm">
+  <div class="card-head">
+    <h2>2 · 模型接入</h2>
+    <span class="hint">书宠的大脑 —— 接哪个模型</span>
+    <button class="mini" id="btn-llm-toggle">收起</button>
+  </div>
+  <div class="card-body" id="llm-body">
+    <div class="grid">
+      <label>端点预设
+        <select id="llm-preset">
+          <option value="">— 选择预设 —</option>
+        </select>
+      </label>
+      <label>模型库
+        <select id="llm-model-sel">
+          <option value="">— 手动配置 (不用模型库) —</option>
+        </select>
+      </label>
+      <label>协议
+        <select id="llm-provider">
+          <option value="openai">OpenAI 兼容 (MiniMax / OpenAI / vLLM / Ollama)</option>
+          <option value="anthropic">Anthropic Messages</option>
+        </select>
+      </label>
+      <label>Base URL
+        <input id="llm-base" placeholder="https://apihub.agnes-ai.com/v1">
+      </label>
+      <label>模型
+        <input id="llm-model" placeholder="agnes-2.5-flash">
+      </label>
+      <label>API Key
+        <input id="llm-key" type="password" placeholder="sk-..." autocomplete="off">
+      </label>
+      <label>超时 (秒)
+        <input id="llm-timeout" type="number" min="5" max="300" step="5">
+      </label>
+      <label>max_tokens
+        <input id="llm-maxtok" type="number" min="128" max="8192" step="128">
+      </label>
+      <label>温度
+        <input id="llm-temp" type="number" min="0" max="2" step="0.05">
+      </label>
+      <label>思考 (推理)
+        <select id="llm-thinking">
+          <option value="off">关闭 (陪聊推荐)</option>
+          <option value="on">允许 (会慢)</option>
+        </select>
+      </label>
+    </div>
+    <p class="tip" id="llm-reasoning-tip"></p>
+    <p class="tip" id="llm-tip"></p>
+    <div class="row">
+      <button class="primary" id="btn-llm-save">保存配置</button>
+      <button id="btn-llm-test">测试连通</button>
+      <span id="llm-status" class="status"></span>
+    </div>
+    <ul class="tips" id="llm-tips"></ul>
+  </div>
+</section>
+
+<!-- ── 3. 模型库 ─────────────────────────────── -->
+<section class="card" id="card-models">
+  <div class="card-head">
+    <h2>3 · 模型库</h2>
+    <span class="hint">多套端点 / 多把 key · 陪聊要快, 429 时随手换</span>
+    <button class="mini" id="btn-models-toggle">收起</button>
+  </div>
+  <div class="card-body" id="models-body">
+    <div class="models-wrap">
+    <table class="cats models">
+      <thead>
+        <tr>
+          <th></th><th>ID</th><th>名称</th><th>协议</th>
+          <th>Base URL</th><th>模型</th><th>思考</th><th>API Key</th><th>备注</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="model-rows"></tbody>
+    </table>
+    </div>
+    <div class="row">
+      <button class="primary" id="btn-models-save">保存模型库</button>
+      <button id="btn-model-add">新增模型</button>
+      <button id="btn-model-import">从当前配置导入</button>
+      <span id="models-status" class="status"></span>
+    </div>
+    <p class="tip">
+      「使用」= 把这行的端点 / 模型 / key 套进「2 · 模型接入」, 立即生效。
+      改了上面并保存 = 回到手动模式。
+    </p>
+  </div>
+</section>
+
+</div>

@@ -6,7 +6,7 @@ import { chromium } from './_env.mjs';
 const { execFileSync } = require('child_process');
 
 const BASE = process.env.RECTO_BASE || 'http://127.0.0.1:5015';
-const PAGES = ['/', '/appearance', '/admin/', '/corpus/'];
+const PAGES = ['/', '/appearance', '/admin/', '/corpus/', '/pet/'];
 
 const collect = () => {
   // 例外白名单: 书架页头的「右侧操作轨」圆钮 —— 2026-11-04 用户点名要圆形,

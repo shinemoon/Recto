@@ -22,7 +22,7 @@ import traceback
 import urllib.parse
 from http.server import ThreadingHTTPServer
 
-from recto.app import console, corpus, excerpts, reader, webauth
+from recto.app import console, corpus, excerpts, pet, reader, webauth
 from recto.core import paths
 from recto.core.config import get_config
 
@@ -95,6 +95,15 @@ class Handler(console.Handler):
             return True
         return corpus.dispatch(self)
 
+    # ---- 书宠 (陪读精灵) ----------------------------------------------
+    def _serve_pet(self) -> bool:
+        path = urllib.parse.urlparse(self.path).path
+        if not (path == pet.PREFIX or path.startswith(pet.PREFIX + "/")):
+            return False
+        if not self._gate():
+            return True
+        return pet.dispatch(self)
+
     # ---- 内置阅读器 (/read) --------------------------------------------
     def _serve_read(self) -> bool:
         path = urllib.parse.urlparse(self.path).path
@@ -104,10 +113,12 @@ class Handler(console.Handler):
             return True
         return reader.handle(self)
 
-    # ---- 派发顺序: 内置阅读器 → 语料 → 摘录 → 控制台 -------------------
+    # ---- 派发顺序: 内置阅读器 → 书宠 → 语料 → 摘录 → 控制台 ------------
     def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler 契约
         path = urllib.parse.urlparse(self.path).path
         if self._serve_read():
+            return
+        if self._serve_pet():
             return
         if path.startswith(corpus.PREFIX) and self._serve_corpus():
             return
@@ -119,6 +130,8 @@ class Handler(console.Handler):
         path = urllib.parse.urlparse(self.path).path
         if self._serve_read():
             return
+        if self._serve_pet():
+            return
         if path.startswith(corpus.PREFIX) and self._serve_corpus():
             return
         if path.startswith("/admin") and self._serve_admin():
@@ -127,6 +140,8 @@ class Handler(console.Handler):
 
     def do_DELETE(self):  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
+        if self._serve_pet():
+            return
         if path.startswith(corpus.PREFIX) and self._serve_corpus():
             return
         if path.startswith("/admin") and self._serve_admin():

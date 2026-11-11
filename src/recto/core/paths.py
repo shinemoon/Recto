@@ -33,6 +33,7 @@ class Paths:
     download_dir: Path         # 云端下载落点 (= 书库 + download_subdir)
     cloud_auth_file: Path
     corpus_dir: Path
+    pet_dir: Path
     webauth_dir: Path
     device_data_dir: Path
     bookplate_data_dir: Path
@@ -55,6 +56,7 @@ def resolve() -> Paths:
         download_dir=c.cloud_dl_dir,
         cloud_auth_file=c.cloud_auth_file,
         corpus_dir=c.corpus_dir,
+        pet_dir=c.pet_dir,
         webauth_dir=c.auth_shared_dir,
         device_data_dir=c.device_data_dir,
         bookplate_data_dir=c.bookplate_data_dir,
@@ -74,6 +76,7 @@ LIBRARY_DIRS = PATHS.library_dirs
 CLOUD_DL_DIR = str(PATHS.download_dir)
 ZY_AUTH_FILE = PATHS.cloud_auth_file
 CORPUS_DIR = PATHS.corpus_dir
+PET_DIR = PATHS.pet_dir
 WEBAUTH_DIR = PATHS.webauth_dir
 DATA_ROOT = PATHS.device_data_dir
 BOOKPLATE_DATA_DIR = PATHS.bookplate_data_dir
@@ -105,6 +108,7 @@ def reload() -> Paths:
     g["CLOUD_DL_DIR"] = str(PATHS.download_dir)
     g["ZY_AUTH_FILE"] = PATHS.cloud_auth_file
     g["CORPUS_DIR"] = PATHS.corpus_dir
+    g["PET_DIR"] = PATHS.pet_dir
     g["WEBAUTH_DIR"] = PATHS.webauth_dir
     g["DATA_ROOT"] = PATHS.device_data_dir
     g["BOOKPLATE_DATA_DIR"] = PATHS.bookplate_data_dir

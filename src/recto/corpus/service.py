@@ -17,7 +17,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import analyze, epub_parse, llm, store
+from recto.core import llm
+
+from . import analyze, epub_parse, store
 from .config import (
     DEFAULT_CATEGORIES,
     apply_model_to_llm,

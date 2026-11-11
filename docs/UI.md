@@ -196,6 +196,30 @@ EPUB2 `<meta name="cover">`，取不到再按文件名带 `cover` 的图兜底�
 3. 真需要独立页面 (登录 / 外观 / 语料反代): `shell.document(...)`,
    页头统一 `shell.head(kicker, title, sub, actions)`。
 
+### 4.0.1 独立分区 (像「书宠」「语料」那样)
+
+上面说的"能做成面板就别做成新页面"是**控制台单页内**的规矩。
+一个功能如果**自己的状态机跟别的不一样**(比如语料是离线批处理、书宠是在线陪读),
+就该独立成区, 独立成区的好处是: 配置、节奏、失败处理互不干扰。
+
+独立分区长这样 (以书宠为例, 照抄这一套):
+
+| 层 | 文件 | 干什么 |
+|---|---|---|
+| 业务 | `src/recto/pet/config.py` | 纯逻辑, 不碰 HTTP |
+| HTTP | `src/recto/app/pet.py` | 只做路径分派, 业务全在上一层 |
+| 页面 | `src/recto/app/ui/assets/pet.{html,css,js}` | 正文片段 + 该分区的样式与脚本 |
+| 接线 | `src/recto/app/server.py` 的 `Handler._serve_pet()` | 派发 + 过登录门 |
+
+要点:
+
+- **页面用 `shell.document(...)`** —— 顶栏 / 导航 / 皮肤 / 登录全部共用, 不要自己再画一套。
+- **`pet.css` 只管正文区块**, 顶栏与页脚归外壳。颜色一律 `--rc-*` token, 换肤跟着变。
+- **静态资产走白名单** (`_ASSETS` 字典), 别把目录整个暴露出去。
+- **导航加一行** `("pet", "书宠", "/pet/")` —— `NAV` 是唯一的一份导航表。
+- **共用零件, 不共用配置**: 书宠与语料的"接一个 LLM 端点"共用 `core/llmconfig.py`
+  与 `core/llm.py`; 但配置文件各写各的 (`data/pet/config.json` vs `data/corpus/config.json`)。
+
 ### 4.1 表格与图表的排版约定
 
 - 表格**一律**套 `.table-wrap` (窄屏横向滚动, 而不是把每列压成一条竖排字);

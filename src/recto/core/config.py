@@ -43,6 +43,10 @@ DEFAULTS: dict[str, Any] = {
     "corpus": {
         "dir": "",                        # 空 = <data_dir>/corpus
     },
+    # 书宠 (陪读精灵) —— 模型接入配置落点
+    "pet": {
+        "dir": "",                        # 空 = <data_dir>/pet
+    },
     # 阅读高亮 (关键词滤镜) 的部署默认值; 用的人的覆盖项在
     # <data_dir>/reading_mark.json (设置页「阅读高亮」卡改的就是它)
     "reader": {
@@ -172,6 +176,7 @@ class Config:
             "RECTO_LIBRARY_DOWNLOAD_SUBDIR": ("library", "download_subdir"),
             "RECTO_CLOUD_AUTH_FILE": ("cloud", "auth_file"),
             "RECTO_CORPUS_DIR": ("corpus", "dir"),
+            "RECTO_PET_DIR": ("pet", "dir"),
             "RECTO_DEVICE_PORT": ("device", "port"),
             "RECTO_TZ": ("ui", "timezone"),
             "RECTO_AUTH_MODE": ("auth", "mode"),
@@ -217,6 +222,7 @@ class Config:
         dev = self.values["device"]
         auth = self.values["auth"]
         corpus = self.values["corpus"]
+        pet = self.values["pet"]
 
         cloud["auth_file"] = str(_abs(cloud.get("auth_file") or "", cfgdir / "secrets" / "cloud.json"))
         cloud["state_dir"] = str(_abs(cloud.get("state_dir") or "", data / "state"))
@@ -227,6 +233,7 @@ class Config:
         dev["data_dir"] = str(_abs(dev.get("data_dir") or "", data))
         auth["shared_dir"] = str(_abs(auth.get("shared_dir") or "", cfgdir / "webauth"))
         corpus["dir"] = str(_abs(corpus.get("dir") or "", data / "corpus"))
+        pet["dir"] = str(_abs(pet.get("dir") or "", data / "pet"))
         bp = self.values["bookplate"]
         bp["data_dir"] = str(_abs(bp.get("data_dir") or "", data / "bookplate"))
         bp["asset_root"] = str(_abs(bp.get("asset_root") or "", data / "assets" / "bookplate"))
@@ -311,6 +318,11 @@ class Config:
     @property
     def corpus_dir(self) -> Path:
         return Path(self.values["corpus"]["dir"])
+
+    @property
+    def pet_dir(self) -> Path:
+        """书宠配置根 (模型接入配置 / 人格 / 陪伴状态)。"""
+        return Path(self.values["pet"]["dir"])
 
     @property
     def auth_shared_dir(self) -> Path:
