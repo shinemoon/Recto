@@ -214,6 +214,18 @@ def password_file() -> Path:
     return Path(_cfg().data_dir) / "admin-password"
 
 
+def _write_secret(path: Path, text: str) -> tuple[bool, str]:
+    """原子写口令文件 (临时文件 → fsync → os.replace)。
+
+    原来是 `f.write_text(...)` 直写: 先 truncate 再写, 写窗口里另一个进程
+    (比如正在登录的 verify) 会读到空串或半截 —— 症状是「刚改完口令, 登录
+    立刻说口令不对」。
+    """
+    from recto.core.secret_io import write_secret
+
+    return write_secret(path, text, mode=0o600)
+
+
 def password() -> str:
     """口令来源: env > config.toml > <data_dir>/admin-password (缺失则生成)。"""
     p = _env("RECTO_AUTH_PASSWORD") or str(_cfg().get("auth", "password", "") or "").strip()
@@ -227,12 +239,14 @@ def password() -> str:
                 return v
         f.parent.mkdir(parents=True, exist_ok=True)
         v = DEFAULT_PASSWORD
-        f.write_text(v + "\n", "utf-8")
-        try:
-            os.chmod(f, 0o600)
-        except OSError:
-            pass
-        _own(f)
+        ok, err = _write_secret(f, v + "\n")
+        if not ok:
+            return ""
+        # 重新生成 = 口令被重置回默认值, 一定留痕。
+        # 以前这里是**静默**的: 谁删了口令文件都查不到, 表现就是「改了口令,
+        # 过一阵又变回 root:root」。这个日志行是这类故障唯一的线索。
+        _audit(f"口令文件缺失, 已重新生成初始默认口令 ({len(v)} 位) "
+               f"-> {f}")
         return v
     except OSError:
         return ""
@@ -271,17 +285,10 @@ def set_password(new: str, *, who: str = "") -> tuple[bool, str]:
         return False, ("口令由环境变量 RECTO_AUTH_PASSWORD 提供 —— 请改环境变量, "
                        "或去掉它再用本页修改")
     f = password_file()
-    try:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(new + "\n", "utf-8")
-        try:
-            os.chmod(f, 0o600)
-        except OSError:
-            pass
-        _own(f)
-    except OSError as e:
-        _audit(f"{tag} 失败: 写 {f} 出错 {e}")
-        return False, f"写口令文件失败: {e}"
+    ok, err = _write_secret(f, new + "\n")
+    if not ok:
+        _audit(f"{tag} 失败: 写 {f} 出错 {err}")
+        return False, f"写口令文件失败: {err}"
     if src == "config":
         from recto.core import config as _conf
 

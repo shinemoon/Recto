@@ -18,7 +18,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 TMP = Path(tempfile.mkdtemp())
-os.environ["RECTO_WEBAUTH_DIR"] = str(TMP)
+# 口令文件在 <data_dir>/admin-password —— 只设 RECTO_WEBAUTH_DIR (会话密钥目录)
+# 不够: set_password 会写到**生产**的口令文件上去 (真实故障: 跑一次测试就把
+# 线上口令改了)。data_dir 必须一起指走。
+os.environ["RECTO_DATA_DIR"] = str(TMP / "data")
+os.environ["RECTO_WEBAUTH_DIR"] = str(TMP / "webauth")
+os.environ["RECTO_AUTH_LOG"] = str(TMP / "logs" / "webauth.log")   # 留痕指到临时目录 (不碰生产)
 os.environ.pop("RECTO_AUTH_PASSWORD", None)  # 让口令走文件来源
 os.environ.pop("RECTO_AUTH_USER", None)
 os.environ.pop("RECTO_AUTH_DISABLE", None)

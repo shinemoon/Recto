@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import sys
 import tempfile
 import time
@@ -13,8 +14,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 TMP = Path(tempfile.mkdtemp())
-os.environ["RECTO_AUTH_LOG"] = "off"   # 测试不写生产留痕 (data/logs/webauth.log)
-os.environ["RECTO_WEBAUTH_DIR"] = str(TMP)
+# 口令文件落在 <data_dir>/admin-password —— **必须**把 data_dir 也指到临时目录。
+# 以前这里只设了 RECTO_WEBAUTH_DIR (那是会话密钥的目录, 不是口令文件的目录),
+# 于是下面第 5 节「删掉口令文件重新生成」删的是**生产文件**:
+# 跑一次测试 = 把线上口令重置回 root。这就是「改了口令, 过一阵又变回 root:root」
+# 的真凶 (2026-11-10 那次全量测试就把线上的口令打回了默认值)。
+os.environ["RECTO_DATA_DIR"] = str(TMP / "data")
+os.environ["RECTO_WEBAUTH_DIR"] = str(TMP / "webauth")
+os.environ["RECTO_AUTH_LOG"] = str(TMP / "logs" / "webauth.log")   # 留痕指到临时目录 (不碰生产)
 os.environ["RECTO_AUTH_PASSWORD"] = "s3cret-pass"
 os.environ.pop("RECTO_AUTH_USER", None)  # 登录名用 config.toml (初始 root)
 os.environ.pop("RECTO_AUTH_DISABLE", None)
@@ -92,8 +99,13 @@ cfg.values["auth"]["password"] = ""
 f = webauth.password_file()
 if f.exists():
     f.unlink()
+logp = pathlib.Path(os.environ["RECTO_AUTH_LOG"])
+before = logp.read_text("utf-8") if logp.exists() else ""
 got = webauth.password()
+after = logp.read_text("utf-8") if logp.exists() else ""
 ok(bool(got) and f.exists(), "缺口令时自动生成 <data_dir>/admin-password")
+ok("重新生成" in after and len(after) > len(before),
+   "重新生成初始默认口令必须留痕 (否则查不到谁把口令删了)")
 ok(oct(f.stat().st_mode & 0o777) == "0o600", "口令文件权限 0600")
 ok(got == webauth.DEFAULT_PASSWORD, "首次生成用初始默认口令 root (不再随机)")
 ok(webauth.verify(USER, got)[0] is True, "生成的口令可用")
