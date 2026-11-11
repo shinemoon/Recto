@@ -404,6 +404,31 @@ def login_body(*, next_url: str = "/", err: str = "", user: str = "",
 </form>"""
 
 
+def first_run_body(*, next_url: str = "/", err: str = "") -> str:
+    """首次登录的「设一个自己的口令」表单。
+
+    用户口径: 第一次登录必须改口令 —— 初始口令是公开仓库里的默认值
+    (root/root), 谁都知道, 不能让人带着它直接进服务。
+
+    这一页只放: 说明一句 + 两个输入框 + 按钮。不写配置项 / 来源 / 时长
+    (那些是维护者视角, 对第一次来的人只是噪声)。
+    """
+    err_html = f'<div class="err">{_e(err)}</div>' if err else ""
+    return f"""<form class="rc-auth-card" method="post" action="/first-run" autocomplete="off">
+  <a class="rc-lockup" href="/" aria-label="{_e(BRAND_FULL)}">{logo_full()}</a>
+  <header class="rc-head"><h1>设一个自己的口令</h1>
+  <div class="rc-sub">初始口令是公开的默认值, 第一次使用请换成你自己的。</div></header>
+  <input type="hidden" name="next" value="{_e(next_url or '/')}">
+  <label class="field"><span>新口令 (至少 6 位)</span>
+    <input name="password" type="password" autocomplete="new-password"
+           autofocus required></label>
+  <label class="field"><span>再输一次</span>
+    <input name="password2" type="password" autocomplete="new-password" required></label>
+  <button type="submit" class="primary">保存并进入</button>
+  {err_html}
+</form>"""
+
+
 # 静态资源白名单 (文件名 → MIME)。只有这里列出来的能从 /assets/ 取到。
 _ASSET_TYPES = {
     "recto.css": "text/css; charset=utf-8",

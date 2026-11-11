@@ -276,6 +276,14 @@ const CORPUS_BASE = window.RC_CORPUS_BASE || '/corpus';
 async function api(url, opts) {""", 1)
     js = js.replace("  const res = await fetch(url, Object.assign({",
                     "  const res = await fetch(CORPUS_BASE + url, Object.assign({", 1)
+    # 401 = 会话过期 → 回登录页; 403 = 初始口令还没改 → 去改口令那一页
+    js = js.replace(
+        "  if (res.status === 401) {",
+        "  if (res.status === 403) {\n"
+        "    location.href = '/first-run';\n"
+        "    throw new Error('请先修改初始口令');\n"
+        "  }\n"
+        "  if (res.status === 401) {", 1)
     # 两处直接跳转的下载链接也要带前缀
     js = js.replace("window.location.href = '/api/keywords/' + state.bookId;",
                     "window.location.href = CORPUS_BASE + '/api/keywords/' + state.bookId;")

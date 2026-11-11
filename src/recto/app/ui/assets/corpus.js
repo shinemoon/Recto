@@ -47,6 +47,11 @@ async function api(url, opts) {
     location.href = '/login?next=' + encodeURIComponent(location.pathname);
     throw new Error('未登录');
   }
+  if (res.status === 403) {
+    // 初始口令还没改 → 去改口令那一页
+    location.href = '/first-run';
+    throw new Error('请先修改初始口令');
+  }
   const txt = await res.text();
   let data;
   try { data = txt ? JSON.parse(txt) : {}; } catch (e) { data = { error: txt.slice(0, 300) }; }

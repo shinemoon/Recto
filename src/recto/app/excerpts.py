@@ -1368,8 +1368,13 @@ _PANE_JS = r"""
     if (s.dataset.paneBusy === '1') return;
     s.dataset.paneBusy = '1';
     fetch(url, { credentials: 'same-origin' })
-      .then(function (r) { return r.text(); })
+      .then(function (r) {
+        if (r.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname); return null; }
+        if (r.status === 403) { location.href = '/first-run'; return null; }
+        return r.text();
+      })
       .then(function (h) {
+        if (h === null) return;
         s.innerHTML = h || '';
         s.dataset.paneLoaded = '1';
         s.dataset.paneSrc = url;

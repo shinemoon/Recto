@@ -207,6 +207,20 @@ def cmd_acquire(args) -> int:
 
 
 # ---------------------------------------------------------------- 服务
+def cmd_auth(_args) -> int:
+    """看登录状态 —— 特别是「第一次登录强制改口令」还欠着没有。"""
+    from recto.app import webauth
+
+    st = webauth.status()
+    st.pop("cached_users", None)
+    _dump(st)
+    if st.get("needs_password_change"):
+        print(f"→ 第一次登录会强制要求改口令 (当前还是初始默认 "
+              f"{webauth.DEFAULT_USER}/{webauth.DEFAULT_PASSWORD})")
+        print("  想在服务器侧直接换: python3 -m recto.cli passwd '你的新口令'")
+    return 0
+
+
 def cmd_passwd(args) -> int:
     """重置 Web 登录口令 (服务器端, 不验旧口令)."""
     from recto.app import webauth
@@ -303,6 +317,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("paths", help="打印关键路径").set_defaults(func=cmd_paths)
     sub.add_parser("selftest", help="自检").set_defaults(func=cmd_selftest)
     sub.add_parser("tz", help="查看时间口径 (时区 / 现在 / 约定)").set_defaults(func=cmd_tz)
+    sub.add_parser("auth", help="查看登录状态 (是否还欠一次首次改口令)").set_defaults(
+        func=cmd_auth)
     p_pw = sub.add_parser("passwd", help="重置 Web 登录口令 (服务器端, 不验旧口令)")
     p_pw.add_argument("new", nargs="?", default="", help="新口令; 省略则交互输入")
     p_pw.set_defaults(func=cmd_passwd)

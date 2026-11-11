@@ -78,6 +78,24 @@ ok(webauth.login_page(err="用户名或口令不对").count('class="err"') == 1,
 ok("用户名或口令不对" in webauth.login_page(err="用户名或口令不对"), "错误文案照原样输出")
 ok("rc-sub" in shell.login_body(note="自定义一句"), "调用方要文案时仍可显示")
 
+# --- 1b. 首次登录的「设口令」页 -------------------------------------------
+# 跟登录页同一副规矩: 不写配置项 / 来源路径那类维护者提示。
+fr = webauth.must_change_page()
+for bad, why in (
+    ("[auth]", "不写 config.toml 段名"),
+    ("admin-password", "不写口令文件路径"),
+    ("RECTO_AUTH_PASSWORD", "不写环境变量名"),
+    ("data_dir", "不写占位变量"),
+    ("口令来源", "不提来源"),
+):
+    ok(bad not in fr, "改口令页" + why + " (无 " + bad + ")")
+ok('name="password"' in fr and 'name="password2"' in fr, "改口令页有两个输入框")
+ok("root" not in fr, "改口令页不印初始口令")
+ok("设一个自己的口令" in fr, "改口令页标题说清要做什么")
+ok(fr.count('class="primary"') == 1, "改口令页有一个主按钮")
+ok(webauth.must_change_page(err="两次输入的口令不一致").count('class="err"') == 1,
+   "改口令页的错误也会显示")
+
 # --- 2. 改口令: 成功留痕 ---------------------------------------------------
 
 ok(not LOG.exists(), "一开始没有日志")

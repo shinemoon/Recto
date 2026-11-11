@@ -251,9 +251,19 @@ class Handler(BaseHTTPRequestHandler):
         if not webauth.enabled():
             return True
         path = urllib.parse.urlparse(self.path).path
-        if path in ("/login", "/logout", "/healthz") or path.startswith("/assets/"):
+        if path in ("/login", "/logout", "/healthz", "/first-run") \
+                or path.startswith("/assets/"):
             return True
         if self._user():
+            # 已登录, 但初始口令还没改 (第一次部署) → 只放行「改口令」那一页。
+            # 初始口令 root/root 在公开仓库里, 谁都知道, 不能带着它进服务。
+            if webauth.needs_password_change():
+                if self.command in ("POST", "PUT", "DELETE") or path.startswith("/api/") \
+                        or "/api/" in path:
+                    self._json(403, {"error": "请先修改初始口令", "redirect": "/first-run"})
+                else:
+                    self._redirect("/first-run?next=" + urllib.parse.quote(path or "/"))
+                return False
             return True
         # 接口一律返 401 JSON: 前端 fetch 拿到 303 会当成"成功但没内容".
         # 判据是"路径里有 /api/ 段" —— 语料 (/corpus/api/) 与阅读器 (/read/api/)
@@ -302,11 +312,52 @@ class Handler(BaseHTTPRequestHandler):
             webauth.rate_clear(ip)
             # cookie 里存规范登录名 (config 的 [auth] user), 不存用户敲的大小写/别名,
             # 否则以后改用户名会让旧会话变成"用户对不上"
+            if webauth.needs_password_change():
+                # 初始口令还没换 → 先去改口令, 别直接进服务
+                self._redirect("/first-run?next=" + urllib.parse.quote(nxt),
+                               webauth.set_cookie(webauth.login_user() or user))
+                return
             self._redirect(nxt, webauth.set_cookie(webauth.login_user() or user))
         else:
             webauth.rate_fail(ip)
             body = webauth.login_page("", nxt, msg, user)
             self._send(401, body.encode("utf-8"), "text/html; charset=utf-8")
+
+    def _first_run_form(self) -> None:
+        """第一次登录: 强制改口令。GET = 表单, POST = 保存并放行。"""
+        ip = (self.client_address or ("",))[0]
+        if not self._user():
+            # 没登录就想改口令 → 回登录页 (改口令要在登录之后做)
+            self._redirect("/login?next=" + urllib.parse.quote("/first-run"))
+            return
+        if self.command == "GET":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            nxt = (q.get("next") or ["/"])[0] or "/"
+            if not nxt.startswith("/") or nxt.startswith("//"):
+                nxt = "/"
+            err = (q.get("err") or [""])[0]
+            self._send(200, webauth.must_change_page(err, nxt).encode("utf-8"),
+                       "text/html; charset=utf-8")
+            return
+        n = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(n) if n else b""
+        form = urllib.parse.parse_qs(raw.decode("utf-8", "replace"))
+        p1 = (form.get("password") or [""])[0]
+        p2 = (form.get("password2") or [""])[0]
+        nxt = (form.get("next") or ["/"])[0] or "/"
+        if not nxt.startswith("/") or nxt.startswith("//"):
+            nxt = "/"
+        if p1 != p2:
+            body = webauth.must_change_page("两次输入的口令不一致", nxt)
+            self._send(400, body.encode("utf-8"), "text/html; charset=utf-8")
+            return
+        ok, err = webauth.set_password(p1, who="first-run/" + ip)
+        if not ok:
+            body = webauth.must_change_page(err or "改不了口令", nxt)
+            self._send(400, body.encode("utf-8"), "text/html; charset=utf-8")
+            return
+        # 口令已换 → 换一张新会话 (旧 cookie 里带的还是旧会话)
+        self._redirect(nxt, webauth.set_cookie(webauth.login_user() or "*"))
 
     def _read_json(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
@@ -331,6 +382,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._redirect("/login", webauth.clear_cookie())
             else:
                 self._login_form()
+            return
+        if path == "/first-run":
+            self._first_run_form()
             return
         if path == "/healthz":
             self._json(200, {"ok": True, "service": "recto", "ts": int(time.time())})
@@ -435,6 +489,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/login":
             self._login_form()
+            return
+        if path == "/first-run":
+            self._first_run_form()
             return
         if not self._gate():
             return
@@ -562,6 +619,7 @@ const ts = (v) => {
 async function api(path, opts) {
   const r = await fetch(path, opts);
   if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); return {}; }
+  if (r.status === 403) { location.href = "/first-run"; return {}; }
   try { return await r.json(); } catch (e) { return { error: "HTTP " + r.status }; }
 }
 

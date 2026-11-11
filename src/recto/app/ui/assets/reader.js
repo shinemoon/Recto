@@ -100,6 +100,7 @@
     var clear = function () { if (timer) { clearTimeout(timer); timer = 0; } };
     return fetch(API + path, opts).then(function (r) {
       if (r.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname); return null; }
+      if (r.status === 403) { location.href = '/first-run'; return null; }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }).then(function (v) { clear(); return v; },

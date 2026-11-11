@@ -69,7 +69,7 @@ timezone = ""                     # 例如 "Asia/Shanghai"
 [auth]
 mode = "password"                 # password | none
 user = "root"                     # 登录用户名 (首次启动的默认值)
-password = ""                     # 空 = 读环境 RECTO_AUTH_PASSWORD 或 <data_dir>/admin-password (首次生成)
+password = ""                     # 空 = 读环境 RECTO_AUTH_PASSWORD 或 <data_dir>/admin-password (首次生成 root; 第一次登录强制改口令)
 shared_dir = ""                   # 空 = <项目根>/config/webauth (同机多服务共享会话密钥时指到同一目录)
 ttl_days = 7
 

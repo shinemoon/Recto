@@ -36,6 +36,9 @@ EXCERPTS_DATA_DIR = paths.PATHS.device_data_dir
 def _admin_allowed(h) -> bool:
     """摘录后台的登录判定 (统一会话优先, 老密码兜底)。"""
     if excerpts._is_authed(h):
+        # 初始口令还没换 → 不放行 (跟主服务一个规矩: 第一次必须改口令)
+        if webauth.needs_password_change():
+            return False
         return True
     # 两个都没配 = 本地开发态, 放行 (与老的 8081 行为一致: 没密码时锁死?
     # 老实现是锁死, 但合并后如果 webauth 也没开就没法登录, 所以这里显式放行)
@@ -60,7 +63,14 @@ class Handler(console.Handler):
             self._redirect("/login?next=" + urllib.parse.quote(nxt))
             return True
         if not _admin_allowed(self):
-            if u.path.startswith("/admin/api/"):
+            logged_in = bool(webauth.current_user(self.headers.get("Cookie")))
+            if logged_in and webauth.needs_password_change():
+                # 已登录但初始口令还没换 → 直奔改口令那一页 (别把人扔回登录页刷一遍)
+                if u.path.startswith("/admin/api/"):
+                    self._json(403, {"error": "请先修改初始口令", "redirect": "/first-run"})
+                else:
+                    self._redirect("/first-run?next=" + urllib.parse.quote("/admin/"))
+            elif u.path.startswith("/admin/api/"):
                 self._json(401, {"error": "unauthorized", "login": "/login"})
             else:
                 self._redirect("/login?next=" + urllib.parse.quote(self.path or "/admin/"))
@@ -154,10 +164,11 @@ def _warn_default_login() -> None:
         if not webauth.enabled():
             print("[recto] 登录已关闭 (auth.mode = none): 只在完全可信的本机上这么做", flush=True)
             return
-        if webauth.password() == webauth.DEFAULT_PASSWORD:
+        if webauth.needs_password_change():
             print(
-                "[recto] ⚠ 正在使用默认账号 " + webauth.DEFAULT_USER + "/" + webauth.DEFAULT_PASSWORD
-                + " —— 请立刻在 /settings 改口令 (或 python3 -m recto.cli passwd)", flush=True)
+                "[recto] ⚠ 初始口令 " + webauth.DEFAULT_USER + "/" + webauth.DEFAULT_PASSWORD
+                + " —— 第一次登录会强制要求改口令 (或先跑 "
+                "python3 -m recto.cli passwd)", flush=True)
     except Exception:  # noqa: BLE001 — 提示失败不该挡启动
         pass
 
@@ -204,7 +215,7 @@ def _start_ticker():
 
 
 def main() -> None:
-    srv = make_server()
+    srv = make_server(host=HOST, port=PORT)
     print(f"recto on http://{HOST}:{PORT}  (library + cloud + reader + excerpts)", flush=True)
     _warn_default_login()
     _start_ticker()

@@ -36,6 +36,10 @@ _FAILS: dict[str, list[float]] = {}
 _RATE_N = 8
 _RATE_WIN = 300
 
+# 「口令还是不是初始默认值」的缓存: (键, 结论)
+# 键 = ("file", mtime_ns, size) 或 ("config", 口令文本)
+_DEFAULT_CACHE: tuple | None = None
+
 
 # ---------------------------------------------------------------- env
 
@@ -261,6 +265,62 @@ def password_source() -> str:
     return "file"
 
 
+def password_is_default() -> bool:
+    """当前口令还是不是初始默认值 (第一次部署, 用户还没改过)。
+
+    判据 = 口令文本等于 DEFAULT_PASSWORD。因为 `set_password` 要求至少 6 位,
+    而 DEFAULT_PASSWORD 只有 4 位, 所以**改过之后不可能再等于默认值** ——
+    这条判据不需要额外的标记文件, 也不会被"用户故意设成 root"误伤。
+
+    每个请求都会问一次 (登录门要用), 所以按「口令来源 + 文件 mtime/size」
+    缓存: 文件没动就不重读。
+    """
+    global _DEFAULT_CACHE
+    try:
+        src = password_source()
+        if src == "env":
+            # 环境变量提供的口令改不了 (set_password 会拒绝), 不该把人逼到
+            # 一个走不通的死路上。
+            return False
+        if src == "config":
+            key = ("config", str(_cfg().get("auth", "password", "") or ""))
+            val = _same(key[1], DEFAULT_PASSWORD)
+            _DEFAULT_CACHE = (key, val)
+            return val
+        f = password_file()
+        st = f.stat()
+        key = ("file", st.st_mtime_ns, st.st_size)
+        if _DEFAULT_CACHE and _DEFAULT_CACHE[0] == key:
+            return _DEFAULT_CACHE[1]
+        try:
+            text = f.read_text("utf-8").strip()
+        except OSError:
+            text = ""
+        val = bool(text) and _same(text, DEFAULT_PASSWORD)
+        _DEFAULT_CACHE = (key, val)
+        return val
+    except Exception:  # noqa: BLE001 — 读不到就当不用改
+        return False
+
+
+def needs_password_change() -> bool:
+    """第一次登录: 必须先改口令, 否则别的地方一律进不去。
+
+    返回 True 时, 已登录的会话只允许去「改口令」那一页。
+    """
+    if not enabled():
+        return False
+    return password_is_default()
+
+
+def must_change_page(err: str = "", next_url: str = "/") -> str:
+    """首次登录的「设一个自己的口令」页 —— 与登录页同一副壳, 同一套皮肤。"""
+    from recto.app.ui import shell
+
+    return shell.auth_page(title=shell.BRAND_FULL,
+                           body=shell.first_run_body(next_url=next_url, err=err))
+
+
 def set_password(new: str, *, who: str = "") -> tuple[bool, str]:
     """改口令。→ (ok, 说明)
 
@@ -289,6 +349,9 @@ def set_password(new: str, *, who: str = "") -> tuple[bool, str]:
     if not ok:
         _audit(f"{tag} 失败: 写 {f} 出错 {err}")
         return False, f"写口令文件失败: {err}"
+    # 缓存立刻作废: 「是不是初始默认值」这个判定刚从旧值算出来过
+    global _DEFAULT_CACHE
+    _DEFAULT_CACHE = None
     if src == "config":
         from recto.core import config as _conf
 
@@ -430,4 +493,6 @@ def login_page(title: str = "", next_url: str = "/", err: str = "",
 def status() -> dict:
     d = _load()
     return {"enabled": enabled(), "mode": mode(), "dir": str(state_dir()),
-            "ttl": ttl(), "cached_users": sorted((d.get("verifier") or {}).keys())}
+            "ttl": ttl(), "cached_users": sorted((d.get("verifier") or {}).keys()),
+            "password_is_default": password_is_default(),
+            "needs_password_change": needs_password_change()}

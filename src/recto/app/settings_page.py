@@ -179,6 +179,7 @@ _JS = r"""
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify(body || {})
     }).then(function(r){
+      if (r.status === 403) { location.href = '/first-run'; return {}; }
       return r.json().catch(function(){ return {}; }).then(function(j){
         if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
         return j;
