@@ -477,7 +477,6 @@ async function loadConfig() {
   const p = state.persona || {};
   $('#pet-name-input').value = p.name || '';
   $('#pet-style').value = p.style || '';
-  $('#pet-chattiness').value = p.chattiness || 3;
 
   const st = await api('/api/status');
   state.ready = !!st.ready;
@@ -524,7 +523,6 @@ $('#btn-persona-save').onclick = async () => {
         persona: {
           name: name,
           style: $('#pet-style').value.trim(),
-          chattiness: Number($('#pet-chattiness').value) || 3,
         }
       })
     });
@@ -700,6 +698,217 @@ $('#btn-models-toggle').onclick = () => {
   $('#btn-models-toggle').textContent = b.classList.contains('hidden') ? '展开' : '收起';
 };
 
+/* ───────────────────────── 游历 (后台推演) ───────────────────────── */
+
+function fmtMin(n) {
+  n = Number(n) || 0;
+  if (n < 60) return n + ' 分钟';
+  return (n / 60).toFixed(1).replace(/\.0$/, '') + ' 小时';
+}
+
+function advParagraphs(body) {
+  return String(body || '').split(/\n{2,}/).map(function (p) {
+    return '<p>' + esc(p) + '</p>';
+  }).join('');
+}
+
+function renderChronicle(v) {
+  const pill = $('#chronicle-pill');
+  const box = $('#chronicle-state');
+  if (!v) return;
+  const c = v.config || {};
+  const st = v.state || {};
+  const tick = v.tick || {};
+  if (pill) {
+    if (!c.enabled) { pill.className = 'pill warn'; pill.textContent = '已关闭'; }
+    else if (tick.running) { pill.className = 'pill'; pill.textContent = '推演中…'; }
+    else { pill.className = 'pill ok'; pill.textContent = (st.cycle || 0) + ' 回合'; }
+  }
+  const rows = [
+    ['上一回合', st.last_at ? st.last_at.replace('T', ' ').slice(0, 16) : '还没跑过'],
+    ['下一回合', st.next_at ? st.next_at.replace('T', ' ').slice(0, 16) : '未定'],
+    ['节奏', c.enabled ? ('每 ' + c.interval_min + ' 分钟 · 看最近 ' + c.lookback_hours + ' 小时')
+                       : '已关闭 (只能手动推演)'],
+    ['游历', (st.adventure_no || 0) + ' 回'],
+  ];
+  if (st.last_summary) rows.push(['上次判词', st.last_summary]);
+  const lore = v.lore || {};
+  rows.push(['书籍底细', (lore.books || 0) + ' 本立卡 · ' + (lore.chapters || 0) +
+    ' 章储备 · 见过 ' + (lore.seen || 0) + ' 章']);
+  if (tick.error) rows.push(['心跳异常', tick.error]);
+  box.innerHTML = rows.map(function (kv) {
+    return '<div class="cs-meta-row"><span class="cs-meta-l">' + esc(kv[0]) +
+      '</span><span class="cs-meta-v">' + esc(String(kv[1])) + '</span></div>';
+  }).join('');
+
+  // 语料遭遇 —— 书宠联想的燃料
+  const enc = v.encounters || {};
+  const chipBox = $('#encounter-chips');
+  if (chipBox) {
+    const top = (enc.top || []).slice(0, 14);
+    chipBox.innerHTML = top.length
+      ? '<div class="cs-meta-row" style="grid-column:1/-1"><span class="cs-meta-l">语料遭遇</span>' +
+        '<span class="cs-meta-v adv-chips">' +
+        top.map(function (t) {
+          return '<span class="adv-chip" title="' + esc(t.cat) + '">' + esc(t.term) +
+            '<b>' + (t.count || 0) + '</b></span>';
+        }).join('') +
+        '</span></div>'
+      : '<div class="cs-meta-row" style="grid-column:1/-1"><span class="cs-meta-l">语料遭遇</span>' +
+        '<span class="cs-meta-v">近 7 天没有记录 (打开有语料的书才会记)</span></div>';
+  }
+
+  // 最新一回
+  const latest = (v.adventures || [])[0];
+  const boxLatest = $('#adventure-latest');
+  if (boxLatest) {
+    if (!latest) {
+      boxLatest.innerHTML = '<p class="tip">还没有游历。它会在下一次推演时自己出门 ——' +
+        ' 也可以点上面的「现在推演一回」。</p>';
+    } else {
+      boxLatest.innerHTML =
+        '<article class="adv-card"><header>' +
+        '<span class="adv-no">第 ' + latest.no + ' 回</span>' +
+        '<h3>' + esc(latest.title) + '</h3>' +
+        (latest.place ? '<span class="adv-place">' + esc(latest.place) + '</span>' : '') +
+        '<span class="adv-at">' + esc(String(latest.at || '').replace('T', ' ').slice(0, 16)) +
+        '</span></header>' +
+        '<div class="adv-body">' + advParagraphs(latest.body) + '</div>' +
+        (latest.terms && latest.terms.length
+          ? '<div class="adv-chips">' + latest.terms.map(function (t) {
+              return '<span class="adv-chip">' + esc(t) + '</span>';
+            }).join('') + '</div>'
+          : '') +
+        '</article>';
+    }
+  }
+
+  // 往期
+  const list = $('#adventure-list');
+  if (list) {
+    const older = (v.adventures || []).slice(1);
+    list.innerHTML = older.length
+      ? older.map(function (a) {
+          return '<details class="adv-item"><summary><b>第 ' + a.no + ' 回</b> ' +
+            esc(a.title) + '<span class="adv-at">' +
+            esc(String(a.at || '').replace('T', ' ').slice(0, 16)) + '</span></summary>' +
+            '<div class="adv-body">' + advParagraphs(a.body) + '</div></details>';
+        }).join('')
+      : '<p class="tip">还没有更早的游历。</p>';
+  }
+}
+
+async function loadChronicle() {
+  try {
+    const v = await api('/api/chronicle');
+    state.chronicle = v;
+    renderChronicle(v);
+    const c = v.config || {};
+    if ($('#ch-enabled')) $('#ch-enabled').checked = !!c.enabled;
+    if ($('#ch-interval')) $('#ch-interval').value = c.interval_min || 120;
+    if ($('#ch-minmin')) $('#ch-minmin').value = c.min_minutes || 0;
+    if ($('#ch-search')) $('#ch-search').checked = c.search !== false;
+  } catch (e) {
+    setStatus($('#chronicle-status'), e.message, 'err');
+  }
+}
+
+function renderRunResult(r) {
+  const box = $('#chronicle-out');
+  if (!box) return;
+  box.hidden = false;
+  if (r.status === 'idle') {
+    box.innerHTML = '<div class="adv-run">这段时间没有新的读书记录 (' +
+      (r.minutes || 0) + ' 分钟) —— 等读了书再来。';
+    return;
+  }
+  if (r.status === 'busy') { box.textContent = '上一次推演还没结束。'; return; }
+  if (r.status === 'error' || r.error) {
+    box.innerHTML = '<div class="adv-run err">推演失败: ' + esc(r.error || '未知错误') + '</div>';
+    return;
+  }
+  if (r.status === 'disabled') { box.textContent = '后台推演已关闭。'; return; }
+  const j = r.judgement || {};
+  const a = j.assessment || {};
+  const g = (r.status === 'dry') ? (j.growth || {}) : (r.growth || {});
+  const lines = [];
+  if (r.status === 'dry') {
+    lines.push('<div class="adv-run-head">这一回合会这么判 (未落地)</div>');
+  } else {
+    lines.push('<div class="adv-run-head">第 ' + (r.cycle || '?') + ' 回合 · ' +
+      fmtMin(r.minutes) + ' · 修为 +' + (g.exp || 0) +
+      (g.levels ? ' · 升 ' + g.levels + ' 级' : '') +
+      (g.fame ? ' · 声望 +' + g.fame : '') + '</div>');
+  }
+  if (a.one_line) lines.push('<div class="adv-run-line">' + esc(a.one_line) + '</div>');
+  if (a.depth || a.breadth) {
+    lines.push('<div class="adv-run-line">深度: ' + esc(a.depth || '-') +
+      ' · 广度: ' + esc(a.breadth || '-') + '</div>');
+  }
+  if (g.reason) lines.push('<div class="adv-run-reason">判词: ' + esc(g.reason) + '</div>');
+  if (r.fallback) lines.push('<div class="adv-run-line warn">模型不可用, 走的是保底规则</div>');
+  const reading = r.reading || [];
+  if (Array.isArray(reading) && reading.length && typeof reading[0] === 'object') {
+    lines.push('<ul class="adv-reading">' + reading.map(function (x) {
+      return '<li>' + esc(x.title || x.book) + ' · ' + fmtMin(x.minutes) +
+        (x.chapters ? ' · 推进 ' + x.chapters + ' 章' : '') +
+        (x.notes ? ' · 划线 ' + x.notes : '') + '</li>';
+    }).join('') + '</ul>');
+  } else if (typeof r.reading === 'number') {
+    lines.push('<div class="adv-run-line">涉及 ' + r.reading + ' 本书</div>');
+  }
+  if (r.adventure) {
+    lines.push('<div class="adv-run-line">游历: ' + esc(r.adventure.title) + '</div>');
+  }
+  box.innerHTML = lines.join('');
+}
+
+$('#btn-chronicle-run').onclick = async () => {
+  const st = $('#chronicle-status');
+  try {
+    setStatus(st, '推演中… (要调两次模型, 约 20~60 秒)');
+    const r = await api('/api/chronicle/run', {
+      method: 'POST', body: JSON.stringify({ force: true })
+    });
+    renderRunResult(r);
+    if (r.char) renderChar(r.char);
+    setStatus(st, r.status === 'ok' ? '完成' : (r.status || 'done'),
+      r.status === 'ok' ? 'ok' : '');
+    await loadChronicle();
+  } catch (e) { setStatus(st, e.message, 'err'); }
+};
+
+$('#btn-chronicle-dry').onclick = async () => {
+  const st = $('#chronicle-status');
+  try {
+    setStatus(st, '试算中…');
+    const r = await api('/api/chronicle/run', {
+      method: 'POST', body: JSON.stringify({ dry: true })
+    });
+    renderRunResult(r);
+    setStatus(st, '只是试算, 没有落地', '');
+  } catch (e) { setStatus(st, e.message, 'err'); }
+};
+
+$('#btn-chronicle-refresh').onclick = () => { loadChronicle(); };
+
+$('#btn-chronicle-save').onclick = async () => {
+  const st = $('#chronicle-cfg-status');
+  try {
+    await api('/api/config', {
+      method: 'POST',
+      body: JSON.stringify({ chronicle: {
+        enabled: $('#ch-enabled').checked,
+        interval_min: Number($('#ch-interval').value) || 120,
+        min_minutes: Number($('#ch-minmin').value) || 0,
+        search: $('#ch-search').checked,
+      } })
+    });
+    setStatus(st, '已保存 (间隔改了下一轮就生效)', 'ok');
+    await loadChronicle();
+  } catch (e) { setStatus(st, e.message, 'err'); }
+};
+
 /* ───────────────────────── 启动 ───────────────────────── */
 
 $('#btn-companion-feed').onclick = async () => {
@@ -709,8 +918,9 @@ $('#btn-companion-feed').onclick = async () => {
     const r = await api('/api/companion', { method: 'POST', body: '{}' });
     const g = r.gain || {};
     if (g.grew) {
-      setStatus(st, '折算 ' + g.minutes + ' 分钟 · 修为 +' + (g.exp || 0) +
-        (g.levels ? ' · 升 ' + g.levels + ' 级' : ''), 'ok');
+      setStatus(st, '折算 ' + g.minutes + ' 分钟' +
+        (g.exp ? (' · 修为 +' + g.exp + (g.levels ? ' · 升 ' + g.levels + ' 级' : ''))
+               : ' (修为归「游历」里的后台推演判定)'), 'ok');
     } else {
       setStatus(st, '没有新增陪读时长 (已折算过)', '');
     }
@@ -724,4 +934,5 @@ $('#btn-companion-feed').onclick = async () => {
   await loadConfig();
   await loadChar();
   await loadCompanion();
+  await loadChronicle();
 })();

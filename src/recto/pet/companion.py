@@ -120,7 +120,17 @@ def feed_once(ch: dict[str, Any]) -> dict[str, Any]:
     from recto.pet import growth
 
     total = total_reading_minutes()
-    gain = growth.credit_reading_minutes(ch, total)
+    # 修为归"后台推演"判 (读书记录 → 模型判定)。这条心只负责:
+    # 累计分钟 / 长「读书悟道」/ 通经脉 —— 若这里也给修为, 同一段阅读会双计。
+    # 推演被关掉时才退回旧的机械口径 (分钟 × 2), 免得关了一个功能就完全不长。
+    grant_exp = True
+    try:
+        from recto.pet import chronicle
+
+        grant_exp = not chronicle.enabled()
+    except Exception:  # noqa: BLE001
+        pass
+    gain = growth.credit_reading_minutes(ch, total, grant_exp=grant_exp)
     if gain.get("grew"):
         log.info("陪读 · 折算 %d 分钟 → 修为 +%d%s", gain["minutes"],
                  gain.get("exp", 0),

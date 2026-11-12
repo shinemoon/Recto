@@ -17,9 +17,11 @@ from pathlib import Path
 
 from recto.app.ui import shell
 from recto.pet import charsheet as cs
+from recto.pet import chronicle as chronicle_mod
 from recto.pet import companion as companion_mod
 from recto.pet import config as petcfg
 from recto.pet import growth as growth_mod
+from recto.pet import lore as lore_mod
 
 PREFIX = "/pet"
 
@@ -152,6 +154,50 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
             gain = companion_mod.feed_now()
             return 200, {"ok": True, "gain": gain, "char": cs.view(cs.load_char())}
         return 200, {**companion_mod.companion_state(), "tick": companion_mod.tick_state()}
+
+    # ── 后台推演 (读账本 → 判成长 → 走一趟) ──────────
+    if path == "/chronicle":
+        if method == "POST":
+            body = _body(h)
+            out = chronicle_mod.run(trigger="manual", force=bool(body.get("force")),
+                                    dry=bool(body.get("dry")))
+            return 200, out
+        return 200, chronicle_mod.state_view()
+
+    if path == "/chronicle/run":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        body = _body(h)
+        return 200, chronicle_mod.run(trigger="manual",
+                                      force=bool(body.get("force")),
+                                      dry=bool(body.get("dry")))
+
+    if path == "/adventures":
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(getattr(h, "path", "")).query)
+        try:
+            limit = max(1, min(100, int((q.get("limit") or ["20"])[0])))
+        except ValueError:
+            limit = 20
+        return 200, {"adventures": chronicle_mod.adventures(limit=limit),
+                     "cycles": chronicle_mod.cycles(limit=8)}
+
+    if path == "/lore":
+        return 200, {"stats": lore_mod.stats(), "books": lore_mod.all_cards()}
+
+    if path == "/lore/refresh":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        body = _body(h)
+        key = str(body.get("book") or "")
+        if not key:
+            return 400, {"error": "缺少 book"}
+        card = lore_mod.build_book(key, force=True,
+                                   search_mode="auto" if body.get("search", True) else "off")
+        if not card:
+            return 400, {"error": "无法为该书写卡 (缺书名或模型不可用)"}
+        for pend in lore_mod.pending_chapters(key, limit=int(body.get("chapters") or 3)):
+            lore_mod.build_chapter(key, int(pend["chapter"]))
+        return 200, {"ok": True, "card": lore_mod.card(key)}
 
     # 模型库
     if path == "/models":

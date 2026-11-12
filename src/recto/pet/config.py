@@ -44,17 +44,28 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # 模型库: 多套端点, 随手换 (书宠要快, 换一把 key 避开 429 很常见)
     "models": [],
     "active_model_id": "",
-    # 陪伴人格 (还没接上, 先把位置留出来)
+    # 人格 —— 不是"跟读者说话的人设", 而是**说书人的口吻**:
+    # 决定游历故事的文风 (书宠在阅读时一句话都不说)。
     "persona": {
         "name": "小墨",
-        "style": "安静, 偶尔吐槽, 不剧透",
-        "chattiness": 3,      # 1-5: 主动搭话的频率
+        "style": "安静寡言, 少形容词, 多动作",
     },
-    # 陪伴参数 (还没接上)
+    # 陪读数据源 —— 只累计时长 / 长技能 / 通经脉, **不给修为**
+    # (修为由"后台推演"按读书记录判定, 两处同时给会双计)
     "companion": {
-        "enabled": False,
-        "auto_chat": True,      # 阅读时主动搭话
-        "max_context_chars": 1200,
+        "enabled": True,
+    },
+    # 后台推演 —— 定期翻账本: 读书记录 → 判成长 → 走一趟游历
+    "chronicle": {
+        "enabled": True,
+        "interval_min": 120,       # 多久推演一回合
+        "lookback_hours": 48,      # 一回合看多长的窗口 (有上次记录时以它为界)
+        "min_minutes": 3,          # 低于这个分钟数且无推进 → 视为没有活动, 不烧 token
+        "max_lore_books": 3,       # 一回合最多为几本书立知识卡
+        "max_lore_chapters": 4,    # 一回合最多补几条章节储备
+        "search": True,            # 立卡时是否联网检索
+        "keep_adventures": 200,    # 游历保留条数
+        "max_exp_per_minute": 6,   # 修为上限 = 分钟 × 此系数
     },
 }
 
@@ -138,6 +149,20 @@ def set_config(body: dict) -> tuple[int, dict]:
         cfg["persona"].update(body["persona"])
     if isinstance(body.get("companion"), dict):
         cfg["companion"].update(body["companion"])
+    if isinstance(body.get("chronicle"), dict):
+        cfg.setdefault("chronicle", {}).update(body["chronicle"])
+        chron = cfg["chronicle"]
+        for k in ("interval_min", "lookback_hours", "min_minutes", "max_lore_books",
+                  "max_lore_chapters", "keep_adventures", "max_exp_per_minute"):
+            if k in chron:
+                try:
+                    chron[k] = int(chron[k])
+                except (TypeError, ValueError):
+                    chron.pop(k, None)
+        if "search" in chron:
+            chron["search"] = bool(chron["search"])
+        if "enabled" in chron:
+            chron["enabled"] = bool(chron["enabled"])
     save_config(cfg)
     return 200, {"ok": True, "config": masked_config()}
 
@@ -310,13 +335,66 @@ _TIPS = [
 ]
 
 
+def effective_llm() -> dict[str, Any]:
+    """实际用来调模型的配置 (本分区没填端点就借用语料那套)。
+
+    为什么允许借用: 同一台机器上"语料抽取"和"书宠写故事"用的是同一把 key、
+    同一个端点, 要求用户在两个页面各填一遍是多余的门槛。用户在书宠页显式
+    填过 → 用书宠的; 没填 → 用语料当前生效的那份 (含模型库里的绑定条目);
+    两边都没有 → 返回本分区原值 (调用方据此判"没就绪")。
+    """
+    cfg = load_config()
+    llm = dict(cfg.get("llm") or {})
+    # 测试 / 临时换端点用: 环境变量优先 (不写盘)
+    env_map = {"base_url": "RECTO_PET_LLM_BASE", "api_key": "RECTO_PET_LLM_KEY",
+               "model": "RECTO_PET_LLM_MODEL", "provider": "RECTO_PET_LLM_PROVIDER"}
+    for k, env in env_map.items():
+        v = os.environ.get(env)
+        if v:
+            llm[k] = v
+    if llm.get("base_url") and llm.get("model"):
+        return llm
+    # 借用可关 (测试 / 想让书宠完全独立时): RECTO_PET_LLM_BORROW=off
+    if str(os.environ.get("RECTO_PET_LLM_BORROW", "on")).lower() in ("0", "off", "no", "false"):
+        return llm
+    try:
+        from recto.corpus import config as corpus_cfg
+
+        c = corpus_cfg.load_config()
+        src = dict(c.get("llm") or {})
+        bound = next((m for m in (c.get("models") or [])
+                      if m.get("id") == c.get("active_model_id")), None)
+        if isinstance(bound, dict):
+            for k in ("provider", "base_url", "model", "api_key"):
+                if bound.get(k):
+                    src[k] = bound[k]
+        if src.get("base_url") and src.get("model"):
+            src.setdefault("thinking", "off")
+            # 书宠写故事是"在线"任务, 不强制"不许思考"(那会让某些端点整轮失败),
+            # 但思考开关仍按本分区的偏好走 (默认 off)。
+            src["strict_no_reasoning"] = bool(llm.get("strict_no_reasoning", False))
+            src["thinking"] = str(llm.get("thinking") or "off")
+            src["timeout"] = min(float(llm.get("timeout") or 60), 60.0)
+            src["max_tokens"] = int(llm.get("max_tokens") or 1024)
+            return src
+    except Exception:  # noqa: BLE001 — 借用失败就用本分区原值
+        pass
+    return llm
+
+
 def status() -> tuple[int, dict]:
-    """书宠分区状态 —— 现在只报"配没配好"。"""
+    """书宠分区状态 —— 报"配没配好"。
+
+    ``effective_llm()`` 会在这边没填端点时借用语料那套 (同一台机器没必要
+    填两遍 base_url / key), 所以"就绪"按实际生效的那份判断。
+    """
     cfg = load_config()
     llm = cfg["llm"]
-    ready = bool(llm.get("base_url") and llm.get("model") and llm.get("api_key"))
+    eff = effective_llm()
+    ready = bool(eff.get("base_url") and eff.get("model") and eff.get("api_key"))
     return 200, {
         "ready": ready,
+        "borrowed": bool(eff) and eff is not llm and not (llm.get("base_url") and llm.get("model")),
         "llm": llmconfig.masked_view(cfg)["llm"],
         "persona": cfg.get("persona", {}),
         "companion": cfg.get("companion", {}),

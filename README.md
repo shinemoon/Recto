@@ -64,7 +64,7 @@
 | **内置阅读器** | 直接读 `library/` 里的原书：滚动 / 左右翻页双模式、排版面板（字号 / 行间距 / 段间距 / 边距 / 宽度 / 字体）、目录分层折叠、划线与书签、阅读时长记录、语料关键词高亮 |
 | **云端同步** | 掌阅双向：进度 / 划线 / 书签 / 阅读时长。「从掌阅拉取」= 进度 + 逐日时长 + 划线书签**一次拉完**；时长「取较大值」融合，不重复计。扫码登录与个人云书籍（列表 / 下载 / 覆盖下载）也在这页。执行结果与日志**写成人话**（结论 + 计数 + 每本书一行），原始 JSON 收进折叠区 |
 | **摘录接入** | 接收墨水屏设备推来的摘录（:8080），入账本，可导出到纸间 |
-| **书宠** | 陪读精灵（陪伴宠物）—— **开发中**：武侠人物属性体系（六项根骨 / 门派 / 技能绝招 / 性情 / 经脉，参数骨架取自 MUD《侠客行》）+ 陪读成长（阅读器时长自动折算成修为）+「模型接入配置」（端点 / 模型库 / 人格）。书宠要开口，总得先有个能说话的大脑 |
+| **书宠** | 陪读精灵 —— **它不跟人说话**：武侠人物属性体系（六项根骨 / 门派 / 技能绝招 / 性情 / 经脉，参数骨架取自 MUD《侠客行》）+ 陪读数据（阅读器真实时长）+ **后台推演**（定期读账本 → 判定成长 → 自己出门走一趟游历）。三份 markdown skill 决定它怎么判、怎么写故事 |
 | **语料** | 内置的 EPUB 关键字精炼：选书 → 分块抽词 → 固定导出（`<书名>-<hash>.json` + `latest.json`），断点续跑、模型库、额度熔断都在里面。同一套外壳与皮肤 |
 | **阅读高亮** | 把语料分解 json（每类关键词 + 别名）当渲染层铺在正文上，零 DOM 改动 |
 | **外观** | 六套皮肤（Material 3 骨架 + 色板替换）、字号缩放、圆角、疏密、自定义 CSS |
@@ -343,7 +343,7 @@ PYTHONPATH=src python3 -m recto.cli align          # 判定: bad: 0 (位置与�
 | `[device]` | `port` | `8080` | 墨水屏接入端口（**固件写死，不要改**） |
 | | `data_dir` | `data/` | 摘录账本目录（`decks/` + `aggregate/` + `events.jsonl`） |
 | `[ui]` | `timezone` | 空 = 跟随系统 | **只影响显示换算**（存盘一律本地时间）。写 IANA 名，如 `Asia/Shanghai`；环境变量 `RECTO_TZ` 优先 |
-| `[pet]` | `dir` | 空 | 书宠配置目录（模型端点 / 人格 / 陪伴状态） |
+| `[pet]` | `dir` | 空 | 书宠数据根（`config.json` 端点人格 / `char.json` 存档 / `pet.sqlite` 书籍底细+语料遭遇+游历 / `chronicle.json` 推演状态）；推演参数在 `config.json` 的 `chronicle` 段 |
 | `[corpus]` | `dir` | 空 | 语料 json 目录（阅读高亮从这里读） |
 | `[reader.mark]` | `enabled` | `true` | 阅读器高亮总开关 |
 | | `mode` | `highlight` | `highlight`（不改 DOM） / `span`（可加粗圆角） |
@@ -752,18 +752,32 @@ index.json         导出清单                    latest.json  最近一次成�
 
 调试口：`window.__RV__.kw()`（开关 / 模式 / 词数 / 命中数 / 语料文件）。
 
-### 书宠（陪读精灵，开发中）
+### 书宠（陪读精灵）
 
-`pet` 分区是云阅 Recto 的一条**新支线**：陪着你把这本书读完的精灵。
+`pet` 分区是云阅 Recto 的一条支线：陪着你把书读完的精灵。
 
-目前有两块：**武侠人物属性体系**（参数骨架取自 MUD《侠客行》）+ **模型接入配置**
-（书宠要开口，总得先有个能说话的大脑）。
+**它不跟人说话。** 没有探头搭话、没有浮窗、没有提醒 —— 书宠的存在方式是
+"隔一段时间自己翻一遍账本，长一点本事，然后出门走一趟"。所有交互都在
+`/pet/` 页面和 CLI 上，阅读器里它一个字都不说。
+
+三块：
+
+1. **武侠人物属性体系**（参数骨架取自 MUD《侠客行》）—— 六项根骨 / 门派 / 技能绝招 / 性情 / 经脉
+2. **陪读数据源** —— 阅读器的真实阅读时长（只累计分钟、长「读书悟道」、推经脉，**不给修为**）
+3. **后台推演** —— 读账本（读书记录 + 语料遭遇 + 书籍底细）→ 判成长 → 写一回游历
 
 ```
 src/recto/pet/charsheet.py   人物属性体系 (六项根骨/门派/技能/绝招/性情/经脉) + 存档
-src/recto/pet/growth.py      成长接口 (陪读分钟 → 修为/升级/潜能/经脉)
-src/recto/pet/companion.py   陪读源 (阅读器时长 → 修为) + 心跳
-src/recto/pet/config.py      业务: 模型端点 / 模型库 / 人格 / 陪伴参数
+src/recto/pet/growth.py      成长接口 (分钟口径 + 判定口径, 上限都集中在这里)
+src/recto/pet/companion.py   陪读源 (阅读器时长 → 分钟/技能/经脉) + 心跳
+src/recto/pet/store.py       书宠自己的库 (pet.sqlite: 书籍底细/章节储备/语料遭遇/回合/游历)
+src/recto/pet/lore.py        书籍底细: 联网检索 + 模型立卡 + 章节典故储备
+src/recto/pet/websearch.py   轻检索 (cn.bing 结果页, 无 key; 失败即"没联网"照跑)
+src/recto/pet/encounters.py  语料遭遇计数 (打开章节时单遍前缀树匹配 → 书×天×词)
+src/recto/pet/chronicle.py   后台推演: 取证据 → 判定 → 落地成长 → 写游历 + 心跳
+src/recto/pet/guidance.py    后台 skill 装载器 (skills/*.md → 提示词, 带版本指纹)
+src/recto/pet/skills/*.md    给模型看的作业指导: lore / chronicle / adventure
+src/recto/pet/config.py      业务: 模型端点 / 模型库 / 人格(说书人口吻) / 推演参数
 src/recto/app/pet.py         HTTP: /pet/* (页面 + 静态资产 + 接口)
 src/recto/app/ui/assets/pet.*  页面 (pet.html / pet.css / pet.js)
 ```
@@ -771,9 +785,10 @@ src/recto/app/ui/assets/pet.*  页面 (pet.html / pet.css / pet.js)
 书宠根（`[pet] dir`，默认 `<data_dir>/pet`）里：
 
 ```
-config.json     模型端点 / 模型库 / 人格 / 陪伴参数    (0600, 含 api key)
+config.json     模型端点 / 模型库 / 人格 / 推演参数        (0600, 含 api key)
 char.json       人物存档 (等级/修为/根骨/门派/技能/性情/经脉)  (0600)
-state.json      心情 / 亲密度 / 记忆 (还没写, 位置先留着)
+pet.sqlite      书籍底细 / 章节储备 / 章节足迹 / 语料遭遇 / 回合 / 游历  (0600)
+chronicle.json  推演状态 (上次/下次回合, 分钟已计入的锚点, 进度快照)   (0600)
 ```
 
 #### 人物属性体系（武侠）
@@ -859,10 +874,12 @@ POST /pet/api/companion   立即折算一次 (心跳之外的手动触发)
 所以书宠这边只有一份 `core/llm.py`，没有第二份 —— 当初为了共享才把它从
 `corpus/llm.py` 挪上来。
 
-配置**不共用**：语料是离线批处理（抽词条，跑完就完），书宠是在线陪读（每次搭话都要快、
-要有上下文、要能记住人）。节奏、失败处理、上下文策略都不一样。
+配置**不共用**：语料是离线批处理（抽词条，跑完就完），书宠是后台推演（每回两次调用：
+判成长 + 写游历，节奏慢、失败要能退回保底规则）。节奏、失败处理、上下文策略都不一样。
+书宠这边**没填端点时会借用语料那套**（同一台机器不必填两遍），填了就用自己的；
+`RECTO_PET_LLM_BORROW=off` 可关掉借用。
 
-页面里的九张卡：
+页面里的十张卡：
 
 1. **书宠 · 人物** —— 品级 / 等级 / 门派 / 四条状态条 / 名片
 2. **六项根骨** —— 当前 / 基础 / 先天 / 上限，潜能点直接加
@@ -871,9 +888,11 @@ POST /pet/api/companion   立即折算一次 (心跳之外的手动触发)
 5. **性情** —— 16 条可觉醒，点了数
 6. **经脉** —— 十层，带进度条
 7. **陪读** —— 换算比例 + 累计陪读分钟 + 读得最多的书 + 心跳状态 + 立即折算
-8. **人格** —— 名字 / 说话风格 / 话痨程度（还没接进对话，先存着）
-9. **模型接入 + 模型库** —— 端点预设 / 协议 / Base URL / 模型 / Key / 超时 / 温度 / 思考开关，
-   外加多套端点随时换（陪聊要快，429 时随手换一把 key）
+8. **游历** —— 推演现状 / 设置（开关·间隔·最少分钟·是否联网）/ 现在推演一回 / 先看会怎么判 /
+   最新一回故事 / 往期 / 语料遭遇
+9. **人格** —— 名字 + 文风（**说书人的口吻**，决定故事怎么写，不是"跟读者怎么聊"）
+10. **模型接入 + 模型库** —— 端点预设 / 协议 / Base URL / 模型 / Key / 超时 / 温度 / 思考开关，
+    外加多套端点随时换。**没填就借用「语料」那套**（同一台机器不必填两遍）
 
 名字只有一处：人格那边改了，人物卡这边跟着变（反之亦然）。
 
@@ -884,8 +903,8 @@ POST /pet/api/companion   立即折算一次 (心跳之外的手动触发)
 
 | 接口 | 做什么 |
 |---|---|
-| `GET /pet/api/status` | 配没配好（`ready`）+ 当前 llm 段 + 人格 |
-| `GET/POST /pet/api/config` | 读写配置（key 脱敏对外） |
+| `GET /pet/api/status` | 配没配好（`ready` / `borrowed`）+ 当前 llm 段 + 人格 |
+| `GET/POST /pet/api/config` | 读写配置（key 脱敏对外；`chronicle` 段也从这里存） |
 | `POST /pet/api/llm/test` | 连通性测试 |
 | `GET/POST /pet/api/models` | 模型库整库读写 |
 | `POST /pet/api/models/apply` | 把某条套进 llm 段（即刻生效） |
@@ -897,14 +916,78 @@ POST /pet/api/companion   立即折算一次 (心跳之外的手动触发)
 | `POST /pet/api/char/school` | 入门 / 叛门 |
 | `POST /pet/api/char/trait` | 觉醒一条性情 |
 | `POST /pet/api/char/name` | 改名字 |
-| `POST /pet/api/char/grow` | 手动记一次陪读（分钟 → 修为） |
+| `POST /pet/api/char/grow` | 手动记一次陪读（分钟 → 修为，调试用） |
 | `POST /pet/api/char/skill` | 研讨长一门功夫 |
 | `GET /pet/api/companion` | 陪读源现状（累计分钟 / 读得最多的书 / 心跳状态） |
 | `POST /pet/api/companion` | 立即折算一次（心跳之外的手动触发） |
+| `GET /pet/api/chronicle` | 推演现状：配置 / 上次·下次 / 最近几回 / 游历 / 书籍底细 / 语料遭遇 / skill 版本 |
+| `POST /pet/api/chronicle/run` | 现在推演一回（`{"dry": true}` 只判不落地；`{"force": true}` 无视最小分钟） |
+| `GET /pet/api/adventures?limit=N` | 游历列表 + 最近几回推演 |
+| `GET /pet/api/lore` | 已立卡的书籍底细 |
+| `POST /pet/api/lore/refresh` | 重建某本书的卡（`{"book": "<key>", "chapters": 3}`） |
 | `POST /pet/api/char/reset` | 重开一只 |
 
-下一步（还没做）：让书宠**开口** —— 记住读到哪一章，在阅读器里探头说话，
-再往上是心情 / 亲密度 / 记忆。
+#### 后台推演（书宠不说话，它自己出门）
+
+一次 **回合** 干三件事，全部由后台心跳驱动（`[pet] chronicle` 段，默认 120 分钟一次）：
+
+1. **取证据**
+   - 阅读量：`reader_state.rtime` 里这段时间**真的在读**的分钟（按 `书|天` 去重计入，
+     重跑同一段不会重复给）
+   - 推进量：`rprogress` 的章号 / 百分比，与上一回合快照比
+   - 动手痕迹：这段时间新增的划线 / 书签
+   - 语料遭遇：这段时间在**打开过的章节正文**里遇到过的语料词及次数（见下）
+   - 书籍底细：这本书是什么（见下）
+2. **判成长** —— 把证据交给模型，按 `src/recto/pet/skills/chronicle.md` 的口径给
+   修为 / 潜能 / 声望 / 心性 / 技能 / 性情。代码只做**夹逼**：`exp ≤ 分钟 × 6`、
+   `pot ≤ 3`、`fame ≤ 20`、`心性 ±5`、技能必须在白名单且每项 +1、性情要走条数/点数校验；
+   **只增不减**。模型不可用 → 按"分钟 × 2"保底，功能不空转。
+3. **走一趟** —— 用书籍母题 + 语料词 + 刚得的成长，按 `skills/adventure.md` 写一回
+   450~700 字的游历，落在 `adventure` 表；下一回合带上上一回的结尾保持连续。
+
+三份 skill 是纯 markdown，改规矩不用动代码（`guidance.version()` 的指纹会进回合留痕）：
+
+```
+src/recto/pet/skills/lore.md       给一本书立档案卡 / 章节典故储备
+src/recto/pet/skills/chronicle.md  读书记录 → 成长数值 (判分口径 + 上限)
+src/recto/pet/skills/adventure.md  母题 + 语料 → 书宠自己的游历
+```
+
+**书籍底细**（`lore`）：每本碰过的书先立一张卡 —— 标题 + 作者**先联网搜一次**
+（`websearch`，cn.bing 结果页，无 key；检索不通记 `searched="off"`，模型凭常识写但置信度低），
+再让模型产出「定位 / 主题 / 设定 / 概要 / 母题」。人**打开过的章**再补一条章节储备
+（`lore_chapter`），依据是 `chapter_seen.excerpt` 里那一段原文 —— 不是凭空想。
+卡片 30 天不重建（`POST /pet/api/lore/refresh` 可强制）。
+
+**语料遭遇**（`encounters`，书宠联想的燃料）：读者打开一章正文章节时，
+后端用**这本书的语料词表**（与阅读器高亮同源，`core.reading_mark`）对该章做一次
+**单遍前缀树最长匹配**，把命中的词按 `书 × 天 × 词` 累加进 `encounter` 表。
+
+- 只统计**真的打开过的章**，不统计全书
+- 同章 6 小时内重复打开不重复计（刷新页面不该让词频翻倍）；隔天再读照常累加
+- 记录在后台线程里做（一章 5 万字 × 6 千词约 1~3 ms），不挡翻页
+- 没有语料的书只记章节足迹（给章节储备用），不产生遭遇行
+
+实测（剑来 第 191 章 · 25,815 字）：301 个不同词 / 1316 次命中 / 8 类全有，
+`陈平安 110` · `符箓 49` · `云上城 20` —— 这些就是下一回游历的素材。
+
+**幂等与"不烧冤枉钱"**：
+
+- 分钟按 `书|天` 记锚点（`chronicle.json` 的 `credit`），重跑同一段不重复给修为
+- 证据里既没分钟、也没语料遭遇 → `status="idle"`，**不调模型、不写回合行**
+- 推演与陪读**不双计**：陪读心跳只累计分钟/技能/经脉，修为归推演判
+  （推演关掉时陪读才退回"分钟 × 2"的机械口径）
+
+命令行（跟页面同一套函数）：
+
+```bash
+PYTHONPATH=src python3 -m recto.cli pet state          # 推演现状
+PYTHONPATH=src python3 -m recto.cli pet run --dry-run  # 只判不落地
+PYTHONPATH=src python3 -m recto.cli pet run            # 真跑一回合
+PYTHONPATH=src python3 -m recto.cli pet adventures     # 往期游历
+PYTHONPATH=src python3 -m recto.cli pet encounters     # 语料遭遇
+PYTHONPATH=src python3 -m recto.cli pet lore           # 已立卡的书籍底细
+```
 
 ### 藏书票（可选）
 

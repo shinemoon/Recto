@@ -230,15 +230,22 @@ def _start_ticker():
 
 
 def _start_pet_ticker():
-    """陪读心跳 (书宠成长)。起不来不致命 —— 其余功能照旧。"""
+    """书宠的两条心: 陪读心跳 (记时长) + 后台推演 (判成长 / 写游历)。
+
+    起不来不致命 —— 其余功能照旧。**书宠不跟人说话**, 这两条心都是后台的。
+    """
     try:
+        from recto.pet import chronicle as _chronicle
         from recto.pet import companion as _companion
 
         if _companion.start_ticker():
             print(f"[recto] 陪读心跳每 {int(_companion.TICK_SEC)} 秒折算一次书宠成长", flush=True)
+        if _chronicle.start_ticker():
+            print(f"[recto] 后台推演每 {int(_chronicle.cfg()['interval_min'])} 分钟一回合 "
+                  f"(读账本 → 判成长 → 走一趟)", flush=True)
         return True
     except Exception as e:  # noqa: BLE001 — 起不来不该挡住服务
-        print(f"[recto] 陪读心跳没能启动 ({e}) —— 其余功能正常", flush=True)
+        print(f"[recto] 书宠心跳没能启动 ({e}) —— 其余功能正常", flush=True)
         return False
 
 

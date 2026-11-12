@@ -156,3 +156,16 @@ def summary() -> dict:
         "offset": local().strftime("%z"),
         "system_tz": os.environ.get("TZ", ""),
     }
+
+
+def fmt_sec(sec: Any, pattern: str = _MM) -> str:
+    """格式化**秒级**时间戳 (``time.time()`` 那种形态)。
+
+    为什么要有它: :func:`fmt` / :func:`parse` 把裸数字一律当**毫秒**
+    (全站存盘口径), 直接把 ``time.time()`` 喂进去会得到 1970 年 ——
+    书宠的推演窗口第一版就这么错了 (窗口起点变成 "1970-01-22")。
+    """
+    try:
+        return fmt(float(sec) * 1000.0, pattern)
+    except (TypeError, ValueError):
+        return ""

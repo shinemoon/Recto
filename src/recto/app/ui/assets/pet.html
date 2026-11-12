@@ -130,7 +130,7 @@
 <section class="card" id="card-growth">
   <div class="card-head">
     <h2>6 · 陪读</h2>
-    <span class="hint">阅读器时长 → 修为</span>
+    <span class="hint">阅读器时长 → 成长证据</span>
     <span class="pill" id="companion-pill">读取中…</span>
   </div>
   <div class="card-body">
@@ -141,33 +141,79 @@
       <span class="status" id="companion-status"></span>
     </div>
     <p class="tip">
-      陪读分钟来自<b>阅读器自己的时长记录</b> (人真的在读的那些分钟, 挂着不读不算) ——
-      所以你读得越久, 它长得越快。换算比例只有一个出处:
-      <code>pet/growth.py</code>, 想改就改那一个文件。
+      陪读分钟来自<b>阅读器自己的时长记录</b> (人真的在读的那些分钟, 挂着不读不算)。
+      它只累计时长 / 长「读书悟道」/ 推经脉 —— <b>修为不在这里给</b>,
+      由下面的「后台推演」按这段时间的读书记录判定 (两处都给会双计)。
     </p>
   </div>
 </section>
 
-<!-- ── 7. 人格 ───────────────────────────────────── -->
+<!-- ── 7. 游历 (后台推演) ───────────────────────── -->
+<section class="card" id="card-chronicle">
+  <div class="card-head">
+    <h2>7 · 游历</h2>
+    <span class="hint">后台定期: 读账本 → 判成长 → 走一趟</span>
+    <span class="pill" id="chronicle-pill">读取中…</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-meta" id="chronicle-state"></div>
+    <details class="tc-sub" id="chronicle-cfg">
+      <summary>推演设置</summary>
+      <div class="grid" style="margin-top:10px">
+        <label class="inline-check"><input type="checkbox" id="ch-enabled"> 启用后台推演</label>
+        <label>间隔 (分钟)
+          <input id="ch-interval" type="number" min="5" max="1440" step="5">
+        </label>
+        <label>最少分钟 (低于此值视为没读)
+          <input id="ch-minmin" type="number" min="0" max="120" step="1">
+        </label>
+        <label class="inline-check"><input type="checkbox" id="ch-search"> 立卡时联网检索</label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btn-chronicle-save">保存设置</button>
+        <span class="status" id="chronicle-cfg-status"></span>
+      </div>
+    </details>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="btn-chronicle-run">现在推演一回</button>
+      <button class="mini" id="btn-chronicle-dry">先看会怎么判</button>
+      <button class="mini" id="btn-chronicle-refresh">刷新</button>
+      <span class="status" id="chronicle-status"></span>
+    </div>
+    <div id="chronicle-out" class="adv-out" hidden></div>
+    <div id="adventure-latest" class="adv-latest"></div>
+    <details class="tc-sub" id="adv-history">
+      <summary>往期游历</summary>
+      <div id="adventure-list"></div>
+    </details>
+    <div class="cs-meta" id="encounter-chips" style="margin-top:12px"></div>
+    <p class="tip">
+      书宠<b>不跟你说话</b>: 它只在你不在的时候自己翻账本 —— 你这几天读了多久、
+      推进了几章、划过几条线, 这段时间正文里反复出现过哪些语料词,
+      然后按 <code>pet/skills/chronicle.md</code> 的口径长本事, 按
+      <code>pet/skills/adventure.md</code> 的口吻走一趟, 故事落在这里。
+      每本书先立一张知识卡 (标题 + 作者先联网搜一次), 读到的章再补一条典故储备。
+    </p>
+  </div>
+</section>
+
+<!-- ── 8. 人格 ───────────────────────────────────── -->
 <section class="card" id="card-persona">
   <div class="card-head">
-    <h2>7 · 人格</h2>
-    <span class="hint">书宠是谁 · 怎么说话</span>
+    <h2>8 · 人格</h2>
+    <span class="hint">书宠是谁 · 故事的口气</span>
   </div>
   <div class="card-body">
     <div class="grid">
       <label>名字
         <input id="pet-name-input" placeholder="小墨">
       </label>
-      <label>说话风格
-        <input id="pet-style" placeholder="安静, 偶尔吐槽, 不剧透">
-      </label>
-      <label>话痨程度 (1-5)
-        <input id="pet-chattiness" type="number" min="1" max="5" step="1">
+      <label>文风 (说书人的口吻)
+        <input id="pet-style" placeholder="安静寡言, 少形容词, 多动作">
       </label>
     </div>
     <p class="tip">
-      人格还没接进对话 (那是下一步)。先存着, 免得到时候再让你填一遍。
+      它不是陪你聊天的人 —— 它不说话。这里的"人格"决定它<b>怎么走路、怎么写自己的游历</b>。
     </p>
     <div class="row">
       <button class="primary" id="btn-persona-save">保存人格</button>
@@ -176,10 +222,10 @@
   </div>
 </section>
 
-<!-- ── 8. 模型接入 ─────────────────────────────── -->
+<!-- ── 9. 模型接入 ─────────────────────────────── -->
 <section class="card" id="card-llm">
   <div class="card-head">
-    <h2>8 · 模型接入</h2>
+    <h2>9 · 模型接入</h2>
     <span class="hint">书宠的大脑 —— 接哪个模型</span>
     <span class="pill" id="pet-state">读取中…</span>
     <button class="mini" id="btn-llm-toggle">收起</button>
@@ -241,7 +287,7 @@
 <!-- ── 8. 模型库 ─────────────────────────────── -->
 <section class="card" id="card-models">
   <div class="card-head">
-    <h2>9 · 模型库</h2>
+    <h2>10 · 模型库</h2>
     <span class="hint">多套端点 / 多把 key · 陪聊要快, 429 时随手换</span>
     <button class="mini" id="btn-models-toggle">收起</button>
   </div>

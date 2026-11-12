@@ -307,6 +307,38 @@ def cmd_time(args) -> int:
     return 0 if not out.get("errors") else 1
 
 
+# ---------------------------------------------------------------- 书宠
+def cmd_pet(args) -> int:
+    """书宠的运维口 (它不说话, 所有交互都在这里 / 页面上)。"""
+    from recto.pet import chronicle, encounters, lore
+
+    act = args.action
+    if act == "state":
+        out = chronicle.state_view()
+    elif act == "run":
+        out = chronicle.run(trigger="cli", force=args.force, dry=args.dry_run)
+    elif act == "story":
+        out = {"story": chronicle.backfill_adventure(args.cycle or None)}
+    elif act == "adventures":
+        out = {"adventures": chronicle.adventures(limit=args.limit)}
+    elif act == "cycles":
+        out = {"cycles": chronicle.cycles(limit=args.limit)}
+    elif act == "encounters":
+        out = encounters.summary(days=args.days)
+    elif act == "lore":
+        if args.refresh:
+            card = lore.build_book(args.refresh, force=True)
+            for pend in lore.pending_chapters(args.refresh, limit=3):
+                lore.build_chapter(args.refresh, int(pend["chapter"]))
+            out = {"card": lore.card(args.refresh), "built": bool(card)}
+        else:
+            out = {"stats": lore.stats(), "books": lore.all_cards()}
+    else:
+        out = {"error": f"未知动作: {act}"}
+    _dump(out)
+    return 0 if not out.get("error") else 1
+
+
 # ---------------------------------------------------------------- 入口
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="recto", description="云阅 Recto —— 阅读留痕一条线")
@@ -392,6 +424,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_tm.add_argument("--book", action="append", default=[], help="只处理这本书")
     p_tm.add_argument("--dry-run", action="store_true")
     p_tm.set_defaults(func=cmd_time)
+
+    p_pet = sub.add_parser("pet", help="书宠: 后台推演 / 游历 / 书籍底细 / 语料遭遇")
+    p_pet.add_argument("action", choices=("state", "run", "story", "adventures", "cycles",
+                                          "encounters", "lore"))
+    p_pet.add_argument("--dry-run", action="store_true", help="run 用: 只判不落地")
+    p_pet.add_argument("--force", action="store_true", help="run 用: 无视最小分钟")
+    p_pet.add_argument("--limit", type=int, default=10)
+    p_pet.add_argument("--days", type=int, default=7)
+    p_pet.add_argument("--refresh", default="", help="lore 用: 重建这本书的卡")
+    p_pet.add_argument("--cycle", type=int, default=0, help="story 用: 指定回合 id (默认最近没故事的那回)")
+    p_pet.set_defaults(func=cmd_pet)
 
     return p
 

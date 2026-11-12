@@ -341,6 +341,23 @@ def _chapter_payload(doc: bookfile.BookDoc, idx: int) -> dict:
             "blocks": [b.as_dict() for b in blocks]}
 
 
+def _track_chapter(key: str, idx: int, payload: dict) -> None:
+    """记"人打开了这一章" —— 章节足迹 + 语料遭遇 (后台线程, 不挡翻页)。
+
+    书宠不长嘴, 但它要记住"陪读过什么": 这一章里出现过哪些语料词、各几次,
+    以后拿它去编写自己的游历 (见 `recto.pet.encounters` / `recto.pet.chronicle`)。
+    """
+    try:
+        text = "".join(b.get("text") or "" for b in (payload.get("blocks") or []))
+        if not text:
+            return
+        from recto.pet import encounters
+
+        encounters.record_async(key, idx, text, str(payload.get("title") or ""))
+    except Exception:  # noqa: BLE001 — 记录失败绝不影响阅读
+        pass
+
+
 def _read_json(h) -> dict:
     n = int(h.headers.get("Content-Length") or 0)
     if not n:
@@ -424,7 +441,10 @@ def handle(h) -> bool:
             h._json(200, _meta(key, doc))
             return True
         if method == "GET" and rest[:1] == ["chapter"] and len(rest) == 2:
-            h._json(200, _chapter_payload(doc, int(rest[1])))
+            idx = int(rest[1])
+            payload = _chapter_payload(doc, idx)
+            _track_chapter(key, idx, payload)
+            h._json(200, payload)
             return True
         if method == "GET" and rest[:1] == ["sync"] and len(rest) == 1:
             # 打开一本书时**只比不写** (节流 [sync] pull_gap_sec)。

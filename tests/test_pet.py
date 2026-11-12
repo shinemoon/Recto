@@ -30,6 +30,7 @@ TMP = Path(tempfile.mkdtemp(prefix="recto-pet-"))
 os.environ["RECTO_DATA_DIR"] = str(TMP / "data")
 os.environ["RECTO_LIBRARY_DIR"] = str(TMP / "library")
 os.environ["RECTO_CLOUD_AUTH_FILE"] = str(TMP / "auth.json")
+os.environ["RECTO_PET_LLM_BORROW"] = "off"   # 本文件验"没配就没就绪", 不借用语料那套
 os.environ["RECTO_PET_DIR"] = str(TMP / "data" / "pet")
 os.environ["RECTO_AUTH_LOG"] = "off"   # 测试不写生产留痕
 os.environ["RECTO_AUTH_PASSWORD"] = "pet-pass"

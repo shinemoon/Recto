@@ -55,9 +55,12 @@ GROWTH_RULES: dict[str, Any] = {
     "auto_skill_minutes_per_level": AUTO_SKILL_MINUTES_PER_LEVEL,
     "max_minutes_per_call": MAX_MINUTES_PER_CALL,
     "one_way": True,
+    # 判定口径 (后台 skill 给数, 代码只夹逼): 每回合上限
+    "judged_caps": {"exp": 3000, "pot": 3, "fame": 20, "skills": 2,
+                    "morality": 5, "trait": 1},
     "pending": [
-        "划线 / 批注 是否额外给修为",
-        "重读同一本书要不要打折",
+        "划线 / 批注 是否额外给修为 (现按「批注加成」间接算进判定)",
+        "重读同一本书要不要打折 (现由模型按 chapters 推进量判断)",
         "每日陪读上限",
         "觉醒点的来源",
     ],
@@ -71,12 +74,17 @@ def exp_for(minutes: int) -> int:
     return max(0, int(minutes)) * EXP_PER_MINUTE
 
 
-def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True) -> dict[str, Any]:
+def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True,
+                  grant_exp: bool = True) -> dict[str, Any]:
     """记一次陪读, 返回这次的变化明细。
 
     ``ch`` 是**就地改**的存档字典 (调用方负责 save)。返回:
         ``{"minutes": n, "exp": n, "levels": n, "pot": n, "fame": n,
            "skills": {id: 增益等级}, "vein": n}``
+
+    ``grant_exp=False``: 只累计分钟 / 长技能 / 通经脉, **不给修为**。
+    阅读器那条路现在走这个 —— 修为改由后台推演按读书记录判定
+    (2026-11 起的口径: 分钟是证据之一, 不是唯一换算), 两处同时给会双计。
 
     规矩: 只增不减。传 0 或负数直接原样返回, 不报错 (调用方是定时器, 不该因
     一次空转就炸)。
@@ -99,12 +107,12 @@ def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True) 
     ch["credited_minutes"] = total_min
 
     # 修为
-    gain = exp_for(n)
+    gain = exp_for(n) if grant_exp else 0
     ch["exp"] = before_exp + gain
 
     # 升级 (可能连升)
     levels = 0
-    while True:
+    while gain:
         need = cs.exp_needed(int(ch.get("level") or 1))
         if int(ch["exp"]) < need:
             break
@@ -149,7 +157,8 @@ def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True) 
     }
 
 
-def credit_reading_minutes(ch: dict[str, Any], total_minutes: int) -> dict[str, Any]:
+def credit_reading_minutes(ch: dict[str, Any], total_minutes: int, *,
+                           grant_exp: bool = True) -> dict[str, Any]:
     """把"阅读器那边累计的陪读分钟"折算成修为, **只喂增量**。
 
     为什么要有这个函数而不是直接调 :func:`award_minutes`:
@@ -189,7 +198,7 @@ def credit_reading_minutes(ch: dict[str, Any], total_minutes: int) -> dict[str, 
     last: dict[str, Any] = {}
     while fed < delta:
         step = min(delta - fed, MAX_MINUTES_PER_CALL)
-        last = award_minutes(ch, step)
+        last = award_minutes(ch, step, grant_exp=grant_exp)
         fed += step
         exp_gain += int(last.get("exp") or 0)
         levels += int(last.get("levels") or 0)
@@ -224,3 +233,85 @@ def skill_boost(ch: dict[str, Any], skill_id: str, levels: int = 1) -> dict[str,
     skills[skill_id] = cur + levels
     ch["skills"] = skills
     return {"ok": True, "skill": skill_id, "level": cur + levels, "cap": cap}
+
+
+# ── 模型判定 (后台 skill 给数, 这里只负责落地与夹逼) ─────────────
+
+#: 一回合最多给多少修为 (模型再兴奋也不越过)
+MAX_EXP_PER_CYCLE = 3000
+#: 一回合最多给几点潜能 / 声望
+MAX_POT_PER_CYCLE = 3
+MAX_FAME_PER_CYCLE = 20
+#: 一回合最多长几门功夫 (每次每门 +1 级)
+MAX_SKILLS_PER_CYCLE = 2
+
+
+def award_judged(ch: dict[str, Any], j: dict[str, Any], *,
+                 max_exp: int | None = None) -> dict[str, Any]:
+    """把模型判定的成长落进存档 (就地改 ``ch``)。
+
+    与 :func:`award_minutes` 的区别: 那个是"按分钟换算"的机械口径, 这个是
+    "读书记录 → 判断"的**判定口径** (分钟只是其中一项证据)。所以:
+
+      · 修为/潜能/声望/心性都由外部给数, 本函数**只做夹逼**, 不自己算比例
+      · 只增不减: 负数一律当 0
+      · 升级循环与 ``award_minutes`` 同一套 (修为够就升, 连升也算)
+      · 技能: 每门最多 +1 级, 且不超过 ``skill_cap`` 上限
+      · 性情: 不在这里授予 (要走 ``charsheet.grant_trait`` 校验条数/点数),
+        这里只把建议值原样带回去让调用方决定
+
+    返回这次的变化明细 (含被夹掉的量, 便于排查"为什么只涨了这么点")。
+    """
+    cap_exp = MAX_EXP_PER_CYCLE if max_exp is None else max(0, int(max_exp))
+    raw_exp = int(j.get("exp") or 0)
+    add_exp = max(0, min(raw_exp, cap_exp))
+    add_pot = max(0, min(int(j.get("pot") or 0), MAX_POT_PER_CYCLE))
+    add_fame = max(0, min(int(j.get("fame") or 0), MAX_FAME_PER_CYCLE))
+    add_mor = max(-5, min(5, int(j.get("morality") or 0)))
+
+    before = {"level": int(ch.get("level") or 1), "exp": int(ch.get("exp") or 0),
+              "pot": int(ch.get("pot") or 0), "fame": int(ch.get("fame") or 0),
+              "morality": int(ch.get("morality") or 0)}
+
+    ch["exp"] = before["exp"] + add_exp
+    levels = 0
+    while True:
+        need = cs.exp_needed(int(ch.get("level") or 1))
+        if int(ch["exp"]) < need:
+            break
+        ch["exp"] = int(ch["exp"]) - need
+        ch["level"] = int(ch.get("level") or 1) + 1
+        levels += 1
+
+    if levels:
+        add_pot += POT_PER_LEVEL * levels
+        add_fame += FAME_PER_LEVEL * levels
+    ch["pot"] = before["pot"] + add_pot
+    ch["fame"] = max(0, before["fame"] + add_fame)
+    ch["morality"] = max(-100, min(100, before["morality"] + add_mor))
+
+    # 技能 (最多 MAX_SKILLS_PER_CYCLE 门, 每门 +1)
+    gained: dict[str, int] = {}
+    skills_in = j.get("skills") or {}
+    if isinstance(skills_in, dict):
+        for sid, lv in list(skills_in.items())[:MAX_SKILLS_PER_CYCLE]:
+            sk = cs.SKILL_BY_ID.get(str(sid))
+            if not sk or int(lv or 0) <= 0:
+                continue
+            cur = int((ch.get("skills") or {}).get(str(sid), 0))
+            cap = min(int(sk.get("cap", 30)),
+                      cs.skill_cap(int(ch.get("exp") or 0),
+                                   cs.effective_attrs(ch).get(sk.get("attr", "wu"), 10)))
+            if cur + 1 > cap:
+                continue
+            ch.setdefault("skills", {})[str(sid)] = cur + 1
+            gained[str(sid)] = cur + 1
+
+    return {
+        "exp": add_exp, "levels": levels,
+        "pot": add_pot, "fame": add_fame, "morality": add_mor,
+        "skills": gained, "trait": str(j.get("trait") or ""),
+        "clamped": {"exp": raw_exp != add_exp,
+                    "exp_raw": raw_exp, "exp_cap": cap_exp},
+        "level": int(ch.get("level") or 1), "exp_now": int(ch["exp"]),
+    }
