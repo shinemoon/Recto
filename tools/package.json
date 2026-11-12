@@ -1,0 +1,8 @@
+{
+  "name": "recto-tools",
+  "private": true,
+  "description": "探针脚本用的 playwright（仓库里不带 node_modules，用前 npm i）",
+  "devDependencies": {
+    "playwright": "1.55.0"
+  }
+}

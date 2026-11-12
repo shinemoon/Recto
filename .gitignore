@@ -15,5 +15,5 @@ venv/
 node_modules/
 .pytest_cache/
 
-tools/node_modules
+
 library/

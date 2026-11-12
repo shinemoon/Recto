@@ -157,6 +157,26 @@ rtime.cloud_minutes  = 云端 read_report/book 给的当天分钟 (App / 其它�
 - 打开书 → `session start`；每 30 秒 `beat`；隐藏/关闭 → `end`（`sendBeacon`）
 - 每次心跳只把「上次心跳 → 现在」的分钟打上位，**空闲保护 2 分钟** ——
   挂着不读不会刷时长（等价于 APK「翻页/切前台才计时」）
+
+### 只有页面在前台才计时（`document.visibilityState`）
+
+"网页没被激活"（切到别的标签页 / 别的网页 / 最小化窗口）**不累计**，三层都在挡：
+
+| 层 | 机制 |
+|---|---|
+| 前端心跳 | `setInterval(beat, 30s)` 里先判 `document.visibilityState === 'hidden'` → 直接 return，**不发请求** |
+| 前端事件 | `visibilitychange → hidden`：`flushProgress()` + `sendBeacon('session end')` 立刻收尾；`→ visible`：`session start` 重新开锚点 |
+| 服务端 | `session_beat` 只算「上次心跳 → 现在」且 `cap_min=2`；即使某次心跳迟到很久，也只补 ≤2 分钟，不按墙钟补 |
+
+`pagehide`（关页 / 切走 / 进后台被杀）与 `visibilitychange` 走同一套收尾。
+
+- **边界滑点**：切走那一瞬间的 `end` 属于真实阅读，分钟粒度下会给"切走所在的那一分钟"
+  记 1 分钟 —— 最多 1 分钟，不是后台在刷。同一分钟内来回切不重复（位图是幂等并集）。
+- **未被覆盖的情形**：窗口只是被别的应用**遮挡**（没最小化、标签页仍是激活标签）时
+  浏览器仍报 `visible`，会正常计时。若要连"遮挡也算不读"，得再加一层"无交互 N 分钟就停"
+  的空闲判定（当前没做：`beat` 的 2 分钟上限只防"一次心跳跨太久"，不防"一直开着不动"）。
+- 验收：`node tools/probe_reader_time_hidden.mjs`（`RV_TIME_BOOK=<key>` 指定书）——
+  前台 70s 涨、切后台 90s 不涨、切回来继续涨；前后自动做时长快照 / 还原（`tools/rtime_snapshot.py`）。
 - 落库按 **天** 聚合，分钟位图与 APK 的 `ReadTimeInfo` 同格式，
   以后要推到云端阅读服务时直接用（`rtime.bitmap` 就是 `d` 字段）
 
