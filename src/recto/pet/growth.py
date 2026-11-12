@@ -1,0 +1,165 @@
+"""书宠的成长接口 —— 把"陪读"变成修为。
+
+**这一层现在只做一件事**: 把陪读这件事换算成成长, 并把换算规则**摆在一个地方**。
+
+为什么单独一个模块: 换算比例是最容易吵起来的地方 (读 10 分钟涨几点修为?
+划一条线算不算? 同一段书读第二遍还涨不涨?)。现在只做骨架, 规则集中在这里,
+等真的接上阅读器、有真实数据了再调 —— **改一个文件就行, 不用翻七八个地方**。
+
+**当前口径 (先立一个可改的初版)**
+
+  · 陪读分钟 → 修为: ``每分钟 EXP_PER_MINUTE 点修为``
+  · 升级 → 潜能点: 每级 ``POT_PER_LEVEL`` 点 (自由分配到六项根骨)
+  · 升级 → 声望: 每级 ``FAME_PER_LEVEL`` 点
+  · 经脉: 按累计陪读分钟推进 (层数门槛见 ``charsheet.VEINS``)
+  · 技能: 陪读时长自动长「读书悟道」, 别的技能靠**研讨** (还没做)
+
+**留白的部分** (等接阅读器再定)
+
+  · 划线 / 批注 / 笔记 是否额外给修为
+  · 重读同一本书要不要打折
+  · 每天的陪读上限 (现在按 ``耐力`` 的思路想留, 但没实现)
+  · 觉醒点 (wish) 从哪来 —— MUD 里那是"愿望"系统, 跟性情不是一回事
+
+**一条硬规矩**: 成长只往一个方向走 —— 修为/等级/潜能/分钟只增不减,
+不回退。回退会让"读得多就强"变成"读得多就飘", 陪读的积累感就没了。
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from recto.pet import charsheet as cs
+
+# ── 换算比例 (集中在这里, 要调只改这一处) ─────────────────────
+
+#: 每陪读 1 分钟换多少修为
+EXP_PER_MINUTE = 2
+#: 每升 1 级给几个潜能点 (可分配到六项根骨)
+POT_PER_LEVEL = 3
+#: 每升 1 级给几点声望
+FAME_PER_LEVEL = 5
+#: 陪读时长自动长哪门功夫 (对应 MUD 北侠的「读书」—— 唯一不消耗潜能的涨法)
+AUTO_SKILL = "dushuwudao"
+#: AUTO_SKILL 每多少分钟长 1 级
+AUTO_SKILL_MINUTES_PER_LEVEL = 60
+
+#: 陪读一次最多记多少分钟 (防手滑把一整天的挂机都算进去)
+MAX_MINUTES_PER_CALL = 480
+
+#: 规则说明 —— 随 ``/pet/api/char/schema`` 一起发给前端, 免得界面与代码各说一套
+GROWTH_RULES: dict[str, Any] = {
+    "exp_per_minute": EXP_PER_MINUTE,
+    "pot_per_level": POT_PER_LEVEL,
+    "fame_per_level": FAME_PER_LEVEL,
+    "auto_skill": AUTO_SKILL,
+    "auto_skill_minutes_per_level": AUTO_SKILL_MINUTES_PER_LEVEL,
+    "max_minutes_per_call": MAX_MINUTES_PER_CALL,
+    "one_way": True,
+    "pending": [
+        "划线 / 批注 是否额外给修为",
+        "重读同一本书要不要打折",
+        "每日陪读上限",
+        "觉醒点的来源",
+    ],
+}
+
+
+# ── 换算 ─────────────────────────────────────────────────────
+
+def exp_for(minutes: int) -> int:
+    """陪读多少分钟换多少修为。"""
+    return max(0, int(minutes)) * EXP_PER_MINUTE
+
+
+def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True) -> dict[str, Any]:
+    """记一次陪读, 返回这次的变化明细。
+
+    ``ch`` 是**就地改**的存档字典 (调用方负责 save)。返回:
+        ``{"minutes": n, "exp": n, "levels": n, "pot": n, "fame": n,
+           "skills": {id: 增益等级}, "vein": n}``
+
+    规矩: 只增不减。传 0 或负数直接原样返回, 不报错 (调用方是定时器, 不该因
+    一次空转就炸)。
+    """
+    n = max(0, min(int(minutes or 0), MAX_MINUTES_PER_CALL))
+    if n <= 0:
+        return {"minutes": 0, "exp": 0, "levels": 0, "pot": 0, "fame": 0,
+                "skills": {}, "vein": int(ch.get("vein") or 0)}
+
+    before_level = int(ch.get("level") or 1)
+    before_exp = int(ch.get("exp") or 0)
+    before_vein = int(ch.get("vein") or 0)
+    before_fame = int(ch.get("fame") or 0)
+
+    # 累计陪读分钟 (经脉按它推进)
+    total_min = int(ch.get("minutes") or 0) + n
+    ch["minutes"] = total_min
+
+    # 修为
+    gain = exp_for(n)
+    ch["exp"] = before_exp + gain
+
+    # 升级 (可能连升)
+    levels = 0
+    while True:
+        need = cs.exp_needed(int(ch.get("level") or 1))
+        if int(ch["exp"]) < need:
+            break
+        ch["exp"] = int(ch["exp"]) - need
+        ch["level"] = int(ch.get("level") or 1) + 1
+        levels += 1
+    if levels:
+        ch["pot"] = int(ch.get("pot") or 0) + POT_PER_LEVEL * levels
+        ch["fame"] = int(ch.get("fame") or 0) + FAME_PER_LEVEL * levels
+
+    # 陪读自动长「读书悟道」—— 按累计分钟算, 不是按这次 (每 N 分钟整一格)
+    skill_gain_map: dict[str, int] = {}
+    if skill_gain and AUTO_SKILL in cs.SKILL_BY_ID:
+        skills = ch.get("skills") or {}
+        want = total_min // AUTO_SKILL_MINUTES_PER_LEVEL
+        cur = int(skills.get(AUTO_SKILL, 0))
+        if want > cur:
+            skills[AUTO_SKILL] = want
+            ch["skills"] = skills
+            skill_gain_map[AUTO_SKILL] = want - cur
+
+    # 经脉: 累计分钟够就把层数推上去
+    vein = before_vein
+    for v in cs.VEINS:
+        if total_min >= int(v["minutes"]):
+            vein = max(vein, int(v["idx"]))
+        else:
+            break
+    if vein != before_vein:
+        ch["vein"] = vein
+
+    return {
+        "minutes": n,
+        "exp": gain,
+        "levels": levels,
+        "pot": POT_PER_LEVEL * levels,
+        "fame": int(ch.get("fame") or 0) - before_fame,
+        "skills": skill_gain_map,
+        "vein": vein,
+        "level": int(ch.get("level") or 1),
+        "total_minutes": total_min,
+    }
+
+
+def skill_boost(ch: dict[str, Any], skill_id: str, levels: int = 1) -> dict[str, Any]:
+    """手动长一门功夫 (研讨用)。等级不许超过当前上限。"""
+    sk = cs.SKILL_BY_ID.get(skill_id or "")
+    if not sk:
+        return {"ok": False, "error": f"未知技能: {skill_id}"}
+    if levels <= 0:
+        return {"ok": False, "error": "等级必须为正"}
+    skills = ch.get("skills") or {}
+    cur = int(skills.get(skill_id, 0))
+    cap = min(int(sk.get("cap", 30)),
+              cs.skill_cap(int(ch.get("exp") or 0),
+                           cs.effective_attrs(ch).get(sk.get("attr", "wu"), 10)))
+    if cur + levels > cap:
+        return {"ok": False, "error": f"{sk['name']} 已达上限 {cap}"}
+    skills[skill_id] = cur + levels
+    ch["skills"] = skills
+    return {"ok": True, "skill": skill_id, "level": cur + levels, "cap": cap}

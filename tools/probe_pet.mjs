@@ -62,8 +62,9 @@ const presetCount = await page.$$eval('#llm-preset option', (o) => o.length);
 ok(presetCount > 1, `预设下拉有 ${presetCount - 1} 条`);
 
 // ── 状态药丸 ──────────────────────────────────────
-const stateText = await page.$eval('#pet-state', (e) => e.textContent.trim());
-ok(stateText.length > 0, `状态药丸有文案: ${stateText}`);
+// (人物卡接管了品级徽标 —— 原来的 #pet-state 已改成 #char-rank)
+const stateText = await page.$eval('#char-rank', (e) => e.textContent.trim());
+ok(stateText.length > 0, `品级药丸有文案: ${stateText}`);
 
 // ── 模型库表头 ────────────────────────────────────
 const headers = await page.$$eval('.rc-pet table.cats.models th', (th) => th.map((t) => t.textContent.trim()));

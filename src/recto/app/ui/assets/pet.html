@@ -3,26 +3,21 @@
      接口前缀 (/pet) 由 pet.js 里的 PET_BASE 负责。 -->
 <div class="rc-pet">
 
-<!-- ── 0. 状态 ───────────────────────────────── -->
-<section class="card" id="card-status">
+<!-- ── 0. 人物面板 ───────────────────────────────── -->
+<section class="card" id="card-hero">
   <div class="card-head">
-    <h2>书宠</h2>
-    <span class="hint">陪读精灵 · 陪着你把这本书读完</span>
-    <span class="pill" id="pet-state">读取中…</span>
+    <h2>书宠 · 人物</h2>
+    <span class="hint">武侠人物属性体系 · 参数骨架取自 MUD《侠客行》</span>
+    <span class="pill" id="char-rank">读取中…</span>
   </div>
   <div class="card-body">
-    <p class="tip" id="pet-intro">
-      还没做出来的部分 (别急, 这一步先把地基打好):
-      记住你在读哪本书、探头说话、养熟。
-      现在这一页只做<b>模型接入配置</b> —— 书宠要开口, 总得先有个能说话的大脑。
-    </p>
     <div class="pet-preview">
       <div class="pet-avatar" id="pet-avatar" aria-hidden="true">
         <span class="pet-face">◕‿◕</span>
       </div>
       <div class="pet-meta">
         <div class="pet-name" id="pet-name">小墨</div>
-        <div class="pet-state-line" id="pet-state-line">还没醒过来</div>
+        <div class="pet-state-line" id="char-subline">初入江湖 · 无门无派</div>
         <div class="pet-bars">
           <label class="inline">亲密度
             <input id="pet-intimacy" type="range" min="0" max="100" value="0" disabled>
@@ -33,13 +28,123 @@
         </div>
       </div>
     </div>
+
+    <div class="cs-stats" id="char-stats"></div>
+
+    <div class="cs-meta" id="char-meta"></div>
+
+    <p class="tip" id="char-intro">
+      这一套是<b>骨架</b> —— 属性 / 技能 / 绝招 / 经脉 / 性情都按《侠客行》的规矩立好,
+      但「读一段书涨多少修为」这一层留白: 等接上阅读器, 有真实数据了再定, 免得现在拍脑袋。
+    </p>
   </div>
 </section>
 
-<!-- ── 1. 人格 ───────────────────────────────── -->
+<!-- ── 1. 六项根骨 ───────────────────────────────── -->
+<section class="card" id="card-attrs">
+  <div class="card-head">
+    <h2>1 · 六项根骨</h2>
+    <span class="hint">初始 10 · 每项封顶 30 · 总和 180</span>
+    <span class="pill" id="attr-pot">潜能 0</span>
+  </div>
+  <div class="card-body">
+    <div class="models-wrap">
+    <table class="cats attrs">
+      <thead>
+        <tr><th>属性</th><th>别名</th><th>当前</th><th>基础</th><th>先天</th><th>上限</th><th>说明</th><th></th></tr>
+      </thead>
+      <tbody id="attr-rows"></tbody>
+    </table>
+    </div>
+    <p class="tip">
+      侠客行规矩: 潜能点自由分配, 每项封顶 30, 六项总和封顶 180。
+      悟性直接决定技能等级上限 —— <code>(修为×10)^(1/3)+1</code>, 悟性不足 30 按比例打折。
+      门派加成是**额外**的, 不占你的潜能额度 —— 叛门即刻收回。
+    </p>
+  </div>
+</section>
+
+<!-- ── 2. 门派 ───────────────────────────────────── -->
+<section class="card" id="card-schools">
+  <div class="card-head">
+    <h2>2 · 门派</h2>
+    <span class="hint">入门得内功与绝招 · 叛门清声望与门忠</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-schools" id="school-cards"></div>
+    <p class="tip" id="school-tip"></p>
+  </div>
+</section>
+
+<!-- ── 3. 技能与绝招 ─────────────────────────────── -->
+<section class="card" id="card-skills">
+  <div class="card-head">
+    <h2>3 · 技能与绝招</h2>
+    <span class="hint">绝招三要素: 成功率 / 定身 / 反噬</span>
+  </div>
+  <div class="card-body">
+    <div class="models-wrap">
+    <table class="cats skills">
+      <thead>
+        <tr><th>名称</th><th>类</th><th>属性</th><th>等级</th><th>上限</th>
+            <th>成功率</th><th>定身</th><th>反噬</th><th>耗内力</th><th>说明</th></tr>
+      </thead>
+      <tbody id="skill-rows"></tbody>
+    </table>
+    </div>
+    <p class="tip" id="skill-tip"></p>
+  </div>
+</section>
+
+<!-- ── 4. 性情 ───────────────────────────────────── -->
+<section class="card" id="card-traits">
+  <div class="card-head">
+    <h2>4 · 性情</h2>
+    <span class="hint">最多 6 条 · 总分 ≤ 100 · 上品 40 / 良品 30 / 常品 20 / 下品 10</span>
+    <span class="pill" id="trait-pill">0 / 6</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-traits" id="trait-cards"></div>
+    <p class="tip">
+      侠客行叫「个人特征」: 黄色罕见, 红色天生, 蓝色常见, 绿色锦上添花。
+      获得靠觉醒点 —— 觉醒点从哪来, 等接上陪读再定。
+    </p>
+  </div>
+</section>
+
+<!-- ── 5. 经脉 ───────────────────────────────────── -->
+<section class="card" id="card-veins">
+  <div class="card-head">
+    <h2>5 · 经脉</h2>
+    <span class="hint">十层 · 通脉给五行亲和与属性加成</span>
+    <span class="pill" id="vein-pill">0 / 10</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-veins" id="vein-list"></div>
+    <p class="tip" id="vein-tip"></p>
+  </div>
+</section>
+
+<!-- ── 6. 成长规则 ───────────────────────────────── -->
+<section class="card" id="card-growth">
+  <div class="card-head">
+    <h2>6 · 成长规则</h2>
+    <span class="hint">陪读换修为 —— 这一层现在只立规矩</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-meta" id="growth-rules"></div>
+    <p class="tip">
+      陪读 → 修为 → 升级 → 潜能点 → 六项根骨, 这条链已经通到接口层
+      (<code>POST /pet/api/char/grow</code>), 但**还没接阅读器** ——
+      谁在什么时候喂分钟, 等阅读器那侧定下来再接。
+    </p>
+  </div>
+</section>
+
+<!-- ── 7. 人格 ───────────────────────────────────── -->
 <section class="card" id="card-persona">
   <div class="card-head">
-    <h2>1 · 人格</h2>
+    <h2>7 · 人格</h2>
     <span class="hint">书宠是谁 · 怎么说话</span>
   </div>
   <div class="card-body">
@@ -64,11 +169,12 @@
   </div>
 </section>
 
-<!-- ── 2. 模型接入 ───────────────────────────── -->
+<!-- ── 8. 模型接入 ─────────────────────────────── -->
 <section class="card" id="card-llm">
   <div class="card-head">
-    <h2>2 · 模型接入</h2>
+    <h2>8 · 模型接入</h2>
     <span class="hint">书宠的大脑 —— 接哪个模型</span>
+    <span class="pill" id="pet-state">读取中…</span>
     <button class="mini" id="btn-llm-toggle">收起</button>
   </div>
   <div class="card-body" id="llm-body">
@@ -125,10 +231,10 @@
   </div>
 </section>
 
-<!-- ── 3. 模型库 ─────────────────────────────── -->
+<!-- ── 8. 模型库 ─────────────────────────────── -->
 <section class="card" id="card-models">
   <div class="card-head">
-    <h2>3 · 模型库</h2>
+    <h2>9 · 模型库</h2>
     <span class="hint">多套端点 / 多把 key · 陪聊要快, 429 时随手换</span>
     <button class="mini" id="btn-models-toggle">收起</button>
   </div>
@@ -151,7 +257,7 @@
       <span id="models-status" class="status"></span>
     </div>
     <p class="tip">
-      「使用」= 把这行的端点 / 模型 / key 套进「2 · 模型接入」, 立即生效。
+      「使用」= 把这行的端点 / 模型 / key 套进「8 · 模型接入」, 立即生效。
       改了上面并保存 = 回到手动模式。
     </p>
   </div>

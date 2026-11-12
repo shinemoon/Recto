@@ -22,6 +22,19 @@ function resetPetConfig() {
   }
 }
 
+// 人格改名字会同步到人物卡 (人物档案) —— 那份存档也要快照还原,
+// 否则用户下次打开书宠页发现自己叫"探针宠"、还入了铁砚堂。
+function snapChar(cmd) {
+  try {
+    return execFileSync('python3', [path.join(REPO, 'tools', 'pet_char_snapshot.py'), cmd],
+      { encoding: 'utf8', cwd: REPO }).trim();
+  } catch (e) {
+    console.log('WARN 人物存档', cmd, '失败:', e.message);
+    return '';
+  }
+}
+snapChar('save');
+
 const browser = await chromium.launch({ args: ['--no-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
 await ctx.addCookies([{ name: 'zy_webauth', value: cookie(), domain: '127.0.0.1', path: '/' }]);
@@ -61,8 +74,9 @@ await page.waitForFunction(() => {
 }, { timeout: 8000 }).catch(() => {});
 const state = await page.$eval('#pet-state', (e) => e.textContent.trim());
 ok(state === '已就绪', `状态变「已就绪」: ${state}`);
-const stateLine = await page.$eval('#pet-state-line', (e) => e.textContent.trim());
-ok(stateLine.length > 0, `状态行有文案: ${stateLine}`);
+// 人物副标题 (品级 · 等级 · 门派 · 陪读分钟) —— 原来叫 #pet-state-line, 现在是 #char-subline
+const stateLine = await page.$eval('#char-subline', (e) => e.textContent.trim());
+ok(stateLine.length > 0, `人物副标题有文案: ${stateLine}`);
 
 // ── 人格 ──────────────────────────────────────────
 await page.fill('#pet-name-input', '探针宠');
@@ -118,5 +132,6 @@ ok(errs.length === 0, `无 JS 报错 (${errs.length}): ${errs.slice(0, 2).join('
 
 await browser.close();
 resetPetConfig();
+console.log(snapChar('restore'));
 console.log(`\n${PASS} passed, ${FAIL} failed`);
 process.exit(FAIL ? 1 : 0);

@@ -12,6 +12,8 @@ const state = {
   persona: {},
   companion: {},
   ready: false,
+  char: null,
+  schema: null,
 };
 
 function esc(s) {
@@ -53,9 +55,283 @@ async function api(url, opts) {
   return data;
 }
 
+/* ───────────────────────── 人物面板 (武侠) ───────────────────────── */
+
+const TYPE_CN = { basic: '基本功', kungfu: '武学', neigong: '内功', perform: '绝招' };
+
+function attrName(key) {
+  const a = (state.schema && state.schema.attrs || []).find((x) => x.key === key);
+  return a ? a.name : key;
+}
+
+/** 状态条: 当前/上限 */
+function statBar(label, cur, max, cls) {
+  const pct = max > 0 ? Math.max(0, Math.min(100, Math.round(cur * 100 / max))) : 0;
+  return '<div class="cs-stat' + (cls ? ' ' + cls : '') + '">' +
+    '<div class="cs-stat-top"><span class="cs-stat-l">' + esc(label) + '</span>' +
+    '<span class="cs-stat-v">' + cur + '<i>/' + max + '</i></span></div>' +
+    '<div class="cs-bar"><i style="width:' + pct + '%"></i></div>' +
+    '</div>';
+}
+
+function renderChar(ch) {
+  if (!ch) return;
+  state.char = ch;
+
+  const rank = $('#char-rank');
+  if (rank) {
+    rank.className = 'pill ok';
+    rank.textContent = ch.rank || '初入江湖';
+  }
+  const nm = $('#pet-name');
+  if (nm && ch.name) nm.textContent = ch.name;
+
+  const sub = $('#char-subline');
+  if (sub) {
+    const bits = [];
+    bits.push(ch.rank || '初入江湖');
+    bits.push('Lv.' + ch.level);
+    bits.push(ch.school ? ch.school.name : '无门无派');
+    bits.push('陪读 ' + (ch.minutes || 0) + ' 分钟');
+    sub.textContent = bits.join(' · ');
+  }
+
+  // 状态条
+  const st = $('#char-stats');
+  if (st) {
+    const order = ['hp', 'spirit', 'neili', 'jingli'];
+    st.innerHTML = order.map((k) => {
+      const s = (ch.stats || {})[k] || {};
+      return statBar(s.label || k, s.cur || 0, s.max || 0);
+    }).join('');
+  }
+
+  // 名片
+  const meta = $('#char-meta');
+  if (meta) {
+    const rows = [];
+    rows.push(['修为', ch.exp + ' / ' + ch.exp_needed]);
+    rows.push(['声望', ch.fame + ' / ' + ch.fame_needed]);
+    rows.push(['门忠', ch.loyalty || 0]);
+    rows.push(['心性', ch.morality || 0]);
+    rows.push(['觉醒点', ch.wish || 0]);
+    rows.push(['内功', 'Lv.' + (ch.neigong_level || 0)]);
+    const wx = ch.wuxing || {};
+    rows.push(['五行', Object.keys(wx).map((k) => k + wx[k]).join(' ') || '—']);
+    meta.innerHTML = rows.map((r) =>
+      '<div class="cs-meta-row"><span class="cs-meta-l">' + esc(r[0]) +
+      '</span><span class="cs-meta-v">' + esc(r[1]) + '</span></div>').join('');
+  }
+
+  // 六项根骨
+  const pot = $('#attr-pot');
+  if (pot) {
+    pot.className = 'pill ' + (ch.pot > 0 ? 'warn' : 'mute');
+    pot.textContent = '潜能 ' + (ch.pot || 0);
+  }
+  const tb = $('#attr-rows');
+  if (tb) {
+    tb.innerHTML = '';
+    (ch.attrs || []).forEach((a) => {
+      const tr = document.createElement('tr');
+      // 值 = 基础 + 先天 + 门派加成 —— 有加成时把构成写出来, 免得"入门白送 2 点"看不懂
+      const parts = [];
+      if (a.bonus) parts.push('门派 +' + a.bonus);
+      if (a.born) parts.push('先天 +' + a.born);
+      tr.innerHTML =
+        '<td class="nowrap"><b>' + esc(a.name) + '</b></td>' +
+        '<td class="nowrap cs-dim">' + esc(a.alias || '') + '</td>' +
+        '<td class="num">' + a.value +
+        (parts.length ? ' <span class="cs-dim cs-sm">(' + esc(parts.join(' ')) + ')</span>' : '') +
+        '</td>' +
+        '<td class="num cs-dim">' + (a.base != null ? a.base : a.value) + '</td>' +
+        '<td class="num cs-dim">' + (a.born || 0) + '</td>' +
+        '<td class="num cs-dim">' + a.cap + '</td>' +
+        '<td class="cs-desc">' + esc(a.desc || '') + '</td>' +
+        '<td class="nowrap"><button class="mini" data-attr="' + esc(a.key) + '"' +
+        (a.can_add ? '' : ' disabled') + '>+</button></td>';
+      tb.appendChild(tr);
+    });
+    tb.onclick = async (e) => {
+      const btn = e.target.closest('button[data-attr]');
+      if (!btn) return;
+      try {
+        const r = await api('/api/char/alloc', {
+          method: 'POST',
+          body: JSON.stringify({ key: btn.dataset.attr, n: 1 }),
+        });
+        renderChar(r.char);
+      } catch (err) { setStatus($('#char-status'), err.message, 'err'); }
+    };
+  }
+
+  // 门派
+  const sc = $('#school-cards');
+  if (sc) {
+    const list = (state.schema && state.schema.schools) || [];
+    sc.innerHTML = list.map((s) => {
+      const cur = ch.school && ch.school.id === s.id;
+      return '<div class="cs-school' + (cur ? ' is-on' : '') + '">' +
+        '<div class="cs-school-h"><b>' + esc(s.name) + '</b>' +
+        '<span class="pill mute">' + esc(s.sect) + '</span>' +
+        (cur ? '<span class="pill ok">已入门</span>' : '') + '</div>' +
+        '<div class="cs-school-d">' + esc(s.desc) + '</div>' +
+        '<div class="cs-school-k">长于: ' + (s.attrs || []).map(attrName).join(' · ') + '</div>' +
+        '<div class="row"><button class="mini' + (cur ? '' : ' primary') + '" data-school="' +
+        esc(s.id) + '">' + (cur ? '已是本门' : '入门') + '</button></div>' +
+        '</div>';
+    }).join('');
+    sc.onclick = async (e) => {
+      const btn = e.target.closest('button[data-school]');
+      if (!btn) return;
+      const id = btn.dataset.school;
+      const cur = ch.school && ch.school.id === id;
+      if (cur) {
+        if (!confirm('叛门? 声望与门忠会清零。')) return;
+      } else if (ch.school) {
+        if (!confirm('改投 ' + id + '? 视为叛门: 声望与门忠清零。')) return;
+      }
+      try {
+        const r = await api('/api/char/school', {
+          method: 'POST', body: JSON.stringify({ school: id }),
+        });
+        renderChar(r.char);
+      } catch (err) { setStatus($('#char-status'), err.message, 'err'); }
+    };
+  }
+  const stp = $('#school-tip');
+  if (stp) {
+    stp.textContent = ch.school
+      ? ('本门: ' + ch.school.name + ' —— ' + ch.school.desc)
+      : '尚未入门。入门得本门内功与绝招, 并加一项根骨。';
+  }
+
+  // 技能与绝招
+  const sk = $('#skill-rows');
+  if (sk) {
+    sk.innerHTML = '';
+    (ch.skills || []).forEach((s) => {
+      const tr = document.createElement('tr');
+      const perf = s.type === 'perform';
+      tr.innerHTML =
+        '<td class="nowrap"><b>' + esc(s.name) + '</b></td>' +
+        '<td class="nowrap cs-dim">' + esc(TYPE_CN[s.type] || s.type) + '</td>' +
+        '<td class="nowrap cs-dim">' + esc(attrName(s.attr)) + '</td>' +
+        '<td class="num">' + s.level + '</td>' +
+        '<td class="num cs-dim">' + (s.cap != null ? s.cap : '—') + '</td>' +
+        '<td class="num">' + (perf ? s.rate + '%' : '—') + '</td>' +
+        '<td class="num">' + (perf ? s.busy : '—') + '</td>' +
+        '<td class="num">' + (perf ? s.fail : '—') + '</td>' +
+        '<td class="num">' + (perf ? s.cost : '—') + '</td>' +
+        '<td class="cs-desc">' + esc(s.desc || '') + '</td>';
+      sk.appendChild(tr);
+    });
+  }
+  const skt = $('#skill-tip');
+  if (skt) {
+    const n = (ch.skills || []).length;
+    skt.textContent = n
+      ? ('共 ' + n + ' 项。绝招成功率 = 基础值 + 对应根骨 + 绝招等级×2 (最高 95%), 失败会反噬。')
+      : '还没有技能 —— 入门得内功与绝招, 其余靠陪读修习。';
+  }
+
+  // 性情
+  const tp = $('#trait-pill');
+  const ti = ch.traits_info || {};
+  if (tp) {
+    tp.className = 'pill ' + (ti.left_count > 0 && ti.left_points > 0 ? 'warn' : 'mute');
+    tp.textContent = (ti.owned || []).length + ' / ' + ti.max_count +
+      ' · ' + ti.spent + ' / ' + ti.max_points + ' 分';
+  }
+  const tc = $('#trait-cards');
+  if (tc) {
+    tc.innerHTML = (ch.traits || []).map((t) =>
+      '<div class="cs-trait c-' + esc(t.color) + (t.owned ? ' is-on' : '') + '">' +
+      '<div class="cs-trait-h"><b>' + esc(t.name) + '</b>' +
+      '<span class="pill mute">' + esc(t.color_name) + ' ' + t.points + '</span></div>' +
+      '<div class="cs-trait-d">' + esc(t.desc || '') + '</div>' +
+      (t.owned ? '' :
+        '<div class="row"><button class="mini" data-trait="' + esc(t.id) + '"' +
+        ((ti.left_count > 0 && ti.left_points >= t.points) ? '' : ' disabled') +
+        '>觉醒</button></div>') +
+      '</div>').join('');
+    tc.onclick = async (e) => {
+      const btn = e.target.closest('button[data-trait]');
+      if (!btn) return;
+      try {
+        const r = await api('/api/char/trait', {
+          method: 'POST', body: JSON.stringify({ trait: btn.dataset.trait }),
+        });
+        renderChar(r.char);
+      } catch (err) { setStatus($('#char-status'), err.message, 'err'); }
+    };
+  }
+
+  // 经脉
+  const vp = $('#vein-pill');
+  if (vp) {
+    vp.className = 'pill ' + (ch.vein > 0 ? 'ok' : 'mute');
+    vp.textContent = (ch.vein || 0) + ' / 10';
+  }
+  const vl = $('#vein-list');
+  if (vl) {
+    vl.innerHTML = (ch.veins || []).map((v) =>
+      '<div class="cs-vein' + (v.done ? ' is-on' : '') + '">' +
+      '<div class="cs-vein-h"><span class="cs-vein-i">' + v.idx + '</span>' +
+      '<b>' + esc(v.name) + '</b>' +
+      '<span class="pill mute">Lv.' + v.level + '</span>' +
+      (v.done ? '<span class="pill ok">已通</span>' : '') + '</div>' +
+      '<div class="cs-bar"><i style="width:' + v.progress + '%"></i></div>' +
+      '<div class="cs-vein-d">' + esc(v.effect) + ' · 需 ' + v.minutes + ' 分钟陪读</div>' +
+      '</div>').join('');
+  }
+  const vt = $('#vein-tip');
+  if (vt) {
+    const g = (state.schema && state.schema.growth) || {};
+    const perMin = g.exp_per_minute != null ? g.exp_per_minute : '?';
+    const perLv = g.pot_per_level != null ? g.pot_per_level : '?';
+    vt.textContent = '已通 ' + (ch.vein || 0) + ' 层。通脉进度按累计陪读分钟算 —— ' +
+      '每分钟换 ' + perMin + ' 点修为, 每升一级给 ' + perLv + ' 点潜能。';
+  }
+
+  // 成长规则 (接口路径与待定项)
+  const gr = $('#growth-rules');
+  if (gr) {
+    const g = (state.schema && state.schema.growth) || {};
+    const pend = (g.pending || []);
+    gr.innerHTML =
+      '<div class="cs-meta-row"><span class="cs-meta-l">修为 / 分钟</span>' +
+      '<span class="cs-meta-v">' + (g.exp_per_minute != null ? g.exp_per_minute : '—') + '</span></div>' +
+      '<div class="cs-meta-row"><span class="cs-meta-l">潜能 / 升级</span>' +
+      '<span class="cs-meta-v">' + (g.pot_per_level != null ? g.pot_per_level : '—') + '</span></div>' +
+      '<div class="cs-meta-row"><span class="cs-meta-l">声望 / 升级</span>' +
+      '<span class="cs-meta-v">' + (g.fame_per_level != null ? g.fame_per_level : '—') + '</span></div>' +
+      '<div class="cs-meta-row"><span class="cs-meta-l">自动长进</span>' +
+      '<span class="cs-meta-v">' + (g.auto_skill_minutes_per_level != null ?
+        ('每 ' + g.auto_skill_minutes_per_level + ' 分钟') : '—') + '</span></div>' +
+      (pend.length ? '<div class="cs-meta-row" style="grid-column:1/-1">' +
+        '<span class="cs-meta-l">待定</span>' +
+        '<span class="cs-meta-v cs-dim">' + pend.map(esc).join(' · ') + '</span></div>' : '');
+  }
+}
+
+async function loadChar() {
+  try {
+    const [ch, schema] = await Promise.all([
+      api('/api/char'),
+      api('/api/char/schema'),
+    ]);
+    state.schema = schema;
+    renderChar(ch);
+  } catch (e) {
+    setStatus($('#char-status'), e.message, 'err');
+  }
+}
+
 /* ───────────────────────── 状态 ───────────────────────── */
 
 function renderStatus(st) {
+  // 模型就绪徽标 —— 挂在「模型接入」卡的页头 (人物卡的 #char-rank 是品级, 两种徽标别混)
   const pill = $('#pet-state');
   if (pill) {
     if (st.ready) {
@@ -65,12 +341,6 @@ function renderStatus(st) {
       pill.className = 'pill warn';
       pill.textContent = '还没配模型';
     }
-  }
-  const line = $('#pet-state-line');
-  if (line) {
-    line.textContent = st.ready
-      ? '已经醒过来了 —— 差一段对话逻辑就能开口'
-      : '还没醒过来: 先在下面「模型接入」里给 ta 装个大脑';
   }
   const name = $('#pet-name');
   if (name && st.persona && st.persona.name) name.textContent = st.persona.name;
@@ -206,16 +476,19 @@ $('#btn-llm-toggle').onclick = () => {
 $('#btn-persona-save').onclick = async () => {
   const st = $('#persona-status');
   try {
-    await api('/api/config', {
+    const name = $('#pet-name-input').value.trim();
+    const r = await api('/api/config', {
       method: 'POST',
       body: JSON.stringify({
         persona: {
-          name: $('#pet-name-input').value.trim(),
+          name: name,
           style: $('#pet-style').value.trim(),
           chattiness: Number($('#pet-chattiness').value) || 3,
         }
       })
     });
+    // 名字只有一处 —— 人物卡那边也得跟着变 (服务端已同步, 这里把面板刷回来)
+    if (r.char) renderChar(r.char);
     setStatus(st, '已保存', 'ok');
     await loadConfig();
   } catch (e) { setStatus(st, e.message, 'err'); }
@@ -391,4 +664,5 @@ $('#btn-models-toggle').onclick = () => {
 (async function init() {
   await loadPresets();
   await loadConfig();
+  await loadChar();
 })();

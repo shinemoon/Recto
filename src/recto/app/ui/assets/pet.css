@@ -133,3 +133,141 @@
   .rc-pet .grid { grid-template-columns: 1fr; }
   .rc-pet .pet-preview { flex-direction: column; align-items: flex-start; }
 }
+
+/* ── 人物面板 (武侠属性体系) ───────────────────────────────────────────── */
+
+/* 状态条 (气血/心神/内力/精力) */
+.rc-pet .cs-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 16px;
+  margin-top: 14px;
+}
+.rc-pet .cs-stat { min-width: 0; }
+.rc-pet .cs-stat-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+}
+.rc-pet .cs-stat-l { font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-dim); }
+.rc-pet .cs-stat-v {
+  font-size: var(--rc-fs-sm, 13.5px); font-variant-numeric: tabular-nums;
+  color: var(--rc-fg);
+}
+.rc-pet .cs-stat-v i { font-style: normal; color: var(--rc-mute); font-size: .82em; }
+.rc-pet .cs-bar {
+  height: 4px; margin-top: 5px;
+  background: var(--rc-surface-2);
+  border-radius: var(--rc-radius-field, 0);
+  overflow: hidden;
+}
+.rc-pet .cs-bar > i {
+  display: block; height: 100%;
+  background: var(--rc-primary);
+  border-radius: var(--rc-radius-field, 0);
+}
+
+/* 名片 (修为/声望/门忠/…) */
+.rc-pet .cs-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 8px 14px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.rc-pet .cs-meta-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rc-pet .cs-meta-l { font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-mute); }
+.rc-pet .cs-meta-v {
+  font-size: var(--rc-fs-sm, 13.5px); font-variant-numeric: tabular-nums;
+}
+
+/* 表格里的辅助列 */
+.rc-pet .cs-dim { color: var(--rc-mute); }
+.rc-pet .cs-sm { font-size: var(--rc-fs-xs, 11.5px); white-space: nowrap; }
+.rc-pet .cs-desc { color: var(--rc-dim); font-size: var(--rc-fs-xs, 11.5px); }
+.rc-pet table.cats td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.rc-pet table.cats td.nowrap { white-space: nowrap; }
+.rc-pet table.cats button.mini { margin-top: 0; }
+
+/* 门派卡 */
+.rc-pet .cs-schools {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
+  gap: 12px;
+}
+.rc-pet .cs-school {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--rc-radius-card, 0);
+  background: var(--rc-surface);
+}
+.rc-pet .cs-school.is-on {
+  border-color: var(--rc-primary);
+  background: color-mix(in srgb, var(--rc-primary) 6%, var(--rc-surface));
+}
+.rc-pet .cs-school-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rc-pet .cs-school-h b { font-size: var(--rc-fs-sm, 13.5px); }
+.rc-pet .cs-school-d {
+  font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-dim);
+  line-height: 1.75; margin-top: 6px;
+}
+.rc-pet .cs-school-k {
+  font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-mute); margin-top: 4px;
+}
+
+/* 性情卡 (四色) */
+.rc-pet .cs-traits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: 12px;
+}
+.rc-pet .cs-trait {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--rc-outline-variant);
+  border-radius: var(--rc-radius-card, 0);
+  background: var(--rc-surface);
+}
+.rc-pet .cs-trait-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rc-pet .cs-trait-h b { font-size: var(--rc-fs-sm, 13.5px); }
+.rc-pet .cs-trait-d {
+  font-size: var(--rc-fs-xs, 11.5px); color: var(--rc-dim);
+  line-height: 1.75; margin-top: 6px;
+}
+.rc-pet .cs-trait.is-on { opacity: 1; }
+.rc-pet .cs-trait:not(.is-on) { opacity: .72; }
+.rc-pet .cs-trait.c-gold { border-left-color: #c8a13a; }
+.rc-pet .cs-trait.c-red { border-left-color: #b04a3c; }
+.rc-pet .cs-trait.c-blue { border-left-color: #4a6ea0; }
+.rc-pet .cs-trait.c-green { border-left-color: #4c8b5c; }
+
+/* 经脉 */
+.rc-pet .cs-veins {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px 16px;
+}
+.rc-pet .cs-vein { min-width: 0; }
+.rc-pet .cs-vein-h {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  font-size: var(--rc-fs-xs, 11.5px);
+}
+.rc-pet .cs-vein-i {
+  display: inline-grid; place-items: center;
+  width: 18px; height: 18px; flex: 0 0 18px;
+  font-size: 10px; font-variant-numeric: tabular-nums;
+  color: var(--rc-mute);
+  border: 1px solid var(--line);
+}
+.rc-pet .cs-vein.is-on .cs-vein-i { color: var(--rc-primary); border-color: var(--rc-primary); }
+.rc-pet .cs-vein-d {
+  font-size: 10.5px; color: var(--rc-mute); margin-top: 4px; line-height: 1.6;
+}
+
+/* 窄屏 */
+@media (max-width: 640px) {
+  .rc-pet .cs-stats { grid-template-columns: 1fr 1fr; }
+  .rc-pet .cs-meta { grid-template-columns: 1fr 1fr; }
+  .rc-pet .cs-schools,
+  .rc-pet .cs-traits,
+  .rc-pet .cs-veins { grid-template-columns: 1fr; }
+}

@@ -16,7 +16,9 @@ import urllib.parse
 from pathlib import Path
 
 from recto.app.ui import shell
+from recto.pet import charsheet as cs
 from recto.pet import config as petcfg
+from recto.pet import growth as growth_mod
 
 PREFIX = "/pet"
 
@@ -65,11 +67,83 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
 
     if path == "/config":
         if method == "POST":
-            return petcfg.set_config(_body(h))
+            body = _body(h)
+            code, payload = petcfg.set_config(body)
+            # 名字只有一处 —— 人格那边改名字, 人物卡那边也得跟着改 (反之亦然)。
+            persona = body.get("persona") or {}
+            if isinstance(persona, dict) and persona.get("name"):
+                ch = cs.load_char()
+                if ch.get("name") != persona["name"]:
+                    cs.set_name(ch, str(persona["name"]))
+                    payload["char"] = cs.view(ch)
+            return code, payload
         return petcfg.get_config()
 
     if path == "/llm/test":
         return petcfg.llm_test(_body(h))
+
+    # ── 人物属性体系 (武侠) ─────────────────────────
+    if path == "/char":
+        return 200, cs.view(cs.load_char())
+
+    if path == "/char/schema":
+        s = cs.schema()
+        # 成长规则跟体系定义一起发 —— 前端不用另抄一份
+        s["growth"] = growth_mod.GROWTH_RULES
+        return 200, s
+
+    if path == "/char/alloc":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        body = _body(h)
+        ch = cs.load_char()
+        return cs.alloc_point(ch, str(body.get("key") or ""), int(body.get("n") or 1))
+
+    if path == "/char/school":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        ch = cs.load_char()
+        return cs.choose_school(ch, str(_body(h).get("school") or ""))
+
+    if path == "/char/trait":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        ch = cs.load_char()
+        return cs.grant_trait(ch, str(_body(h).get("trait") or ""))
+
+    if path == "/char/reset":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        return cs.reset_char()
+
+    if path == "/char/name":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        ch = cs.load_char()
+        return cs.set_name(ch, str(_body(h).get("name") or ""))
+
+    # 成长接口 (陪读 → 修为/等级/潜能/经脉)。现在还没接阅读器, 手动喂分钟即可验。
+    if path == "/char/grow":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        body = _body(h)
+        ch = cs.load_char()
+        gain = growth_mod.award_minutes(ch, int(body.get("minutes") or 0))
+        cs.save_char(ch)
+        return 200, {"ok": True, "gain": gain, "char": cs.view(ch)}
+
+    # 研讨: 手动长一门功夫
+    if path == "/char/skill":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        body = _body(h)
+        ch = cs.load_char()
+        r = growth_mod.skill_boost(ch, str(body.get("skill") or ""),
+                                   int(body.get("levels") or 1))
+        if not r.get("ok"):
+            return 400, r
+        cs.save_char(ch)
+        return 200, {"ok": True, "char": cs.view(ch)}
 
     # 模型库
     if path == "/models":

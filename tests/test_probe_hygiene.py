@@ -102,6 +102,37 @@ def case_reader_progress_probes_restore():
     ok(not late, f"写回发生在快照之后 (违规: {late})")
 
 
+def case_pet_char_probe_restores():
+    """书宠人物探针会真的入门派 + 觉醒性情 (都落盘) —— 必须快照 + 还原。
+
+    事故 (2026-11-12): `probe_pet_char.mjs` 第一次跑完, 用户存档里就多了
+    「墨池剑庐 + 观海诀 + 一气呵成 + 两条上品性情」—— 用户自己从没点过。
+    """
+    probes = []
+    for p in sorted(TOOLS.glob("*.mjs")):
+        txt = p.read_text("utf-8", errors="replace")
+        # 探针是"点按钮"驱动的 (前端 JS 里发请求), 所以探针文件里看不到 /api/char/xxx,
+        # 只能认它操作了人物面板上的按钮挂点。
+        if re.search(r"data-(school|trait|attr)", txt):
+            probes.append((p, txt))
+        # 人格改名字会同步到人物卡 —— 探针改名字也得还原存档
+        elif "pet-name-input" in txt and re.search(r"btn-persona-save", txt):
+            probes.append((p, txt))
+    ok(bool(probes), f"找到改书宠人物的探针 ({len(probes)} 个)")
+    bad = [p.name for p, t in probes
+           if "pet_char_snapshot.py" not in t
+           or "'save'" not in t and '"save"' not in t
+           or "'restore'" not in t and '"restore"' not in t]
+    ok(not bad, f"全部 快照+还原书宠存档 (漏: {bad})")
+
+    helper = TOOLS / "pet_char_snapshot.py"
+    ok(helper.is_file(), "tools/pet_char_snapshot.py 在")
+    if helper.is_file():
+        htxt = helper.read_text("utf-8")
+        for cmd in ("save", "restore", "reset", "clear"):
+            ok(f'"{cmd}"' in htxt, f"快照工具支持 {cmd}")
+
+
 def main():
     global PASS, FAIL
     for name, fn in sorted(globals().items()):
