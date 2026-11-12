@@ -897,19 +897,35 @@ async function loadChronicle() {
   }
 }
 
+function windowNote(r) {
+  const w = r.window || {};
+  const parts = [];
+  if (w.from && w.to) {
+    parts.push('这一回合的窗口 ' + String(w.from).slice(11, 16) + '–' + String(w.to).slice(11, 16));
+  }
+  if (r.prev_at) parts.push('上一回 ' + String(r.prev_at).slice(11, 16) + ' 刚结算过');
+  const al = Number(r.already_today || 0);
+  if (al > 0) parts.push('今天已计入 ' + al + ' 分钟');
+  return parts.join(' · ');
+}
+
 function renderRunResult(r) {
   const box = $('#chronicle-out');
   if (!box) return;
   box.hidden = false;
   if (r.status === 'idle') {
+    const n = windowNote(r);
     box.innerHTML = '<div class="adv-run">这段时间没有新的读书记录 (' +
-      (r.minutes || 0) + ' 分钟) —— 等读了书再来。';
+      (r.minutes || 0) + ' 分钟) —— 等读了书再来。' +
+      (n ? '<div class="adv-run-line">' + esc(n) + '</div>' : '') + '</div>';
     return;
   }
   if (r.status === 'busy') { box.textContent = '上一次推演还没结束。'; return; }
   if (r.status === 'waiting') {
+    const n = windowNote(r);
     box.innerHTML = '<div class="adv-run">还不到下一日 —— 再读 ' +
-      (r.minutes_to_next_day || 0) + ' 分钟 (一小时 = 故事里一天)。</div>';
+      (r.minutes_to_next_day || 0) + ' 分钟 (一小时 = 故事里一天)。' +
+      (n ? '<div class="adv-run-line">' + esc(n) + '</div>' : '') + '</div>';
     return;
   }
   if (r.status === 'retired') {
@@ -940,7 +956,11 @@ function renderRunResult(r) {
       ' · 广度: ' + esc(a.breadth || '-') + '</div>');
   }
   if (g.reason) lines.push('<div class="adv-run-reason">判词: ' + esc(g.reason) + '</div>');
-  if (r.fallback) lines.push('<div class="adv-run-line warn">模型不可用, 走的是保底规则</div>');
+  if (r.fallback) {
+    const why = r.fallback_why ? ' —— ' + r.fallback_why : '';
+    lines.push('<div class="adv-run-line warn">模型这一步没成, 走的是保底规则' +
+      esc(why) + '</div>');
+  }
   const reading = r.reading || [];
   if (Array.isArray(reading) && reading.length && typeof reading[0] === 'object') {
     lines.push('<ul class="adv-reading">' + reading.map(function (x) {
@@ -950,6 +970,10 @@ function renderRunResult(r) {
     }).join('') + '</ul>');
   } else if (typeof r.reading === 'number') {
     lines.push('<div class="adv-run-line">涉及 ' + r.reading + ' 本书</div>');
+  }
+  if ((!reading || !reading.length) && !r.minutes) {
+    const n = windowNote(r);
+    if (n) lines.push('<div class="adv-run-line">' + esc(n) + '</div>');
   }
   if (r.adventure) {
     lines.push('<div class="adv-run-line">游历: ' + esc(r.adventure.title) + '</div>');

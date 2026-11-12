@@ -142,7 +142,9 @@ def _char_brief(ch: dict[str, Any]) -> dict[str, Any]:
         "attrs": cs.effective_attrs(ch),
         "skills": dict(ch.get("skills") or {}),
         "traits": list(ch.get("traits") or []),
-        "minutes": int(ch.get("minutes") or 0),
+        # 累计陪读分钟 (一辈子)。**不是本回合的阅读量** —— 模型曾经把它当基数
+        # 算出 "677 分钟 × 2 = 1354 修为", 判词跟真数据全对不上。名字里写明白。
+        "lifetime_minutes": int(ch.get("minutes") or 0),
         # 时序: 故事内活到第几天 / 几岁 (退隐与节奏都看这个)
         "story_day": life.story_day(ch),
         "age": life.age_years(ch),
@@ -231,20 +233,28 @@ def gather(st: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
     del reading[8:]      # 一回合最多看 8 本, 别把提示词塞满
     window = {"from": from_iso, "to": clock.fmt_sec(now, "%Y-%m-%dT%H:%M:%S"),
               "hours": round((now - from_ts) / 3600, 1)}
+    # 这一窗口之外、但今天已经计入过的分钟。手动推演看到"没有翻书"时,
+    # 用户真正想知道的是"那我今天读的时间去哪了" —— 就是这里。
+    today = clock.fmt_sec(now, "%Y-%m-%d")
+    already = sum(int(v or 0) for k, v in credit.items() if k.endswith("|" + today))
     return {"window": window, "reading": reading, "total_minutes": total_new,
             "from_ts": from_ts, "from_day": from_day,
+            "prev_at": st.get("last_at") or "", "already_today": already,
             "encounters": encounters.recent(days=max(2, int(window["hours"] // 24) + 2),
                                             limit=40)}
 
 
 # ------------------------------------------------------------------ 判定
 
-def _fallback(ev: dict[str, Any]) -> dict[str, Any]:
+def _fallback(ev: dict[str, Any], why: str = "") -> dict[str, Any]:
     """模型不可用时的保底判定 (只按分钟, 与旧口径同比例)。"""
     minutes = int(ev.get("total_minutes") or 0)
     chapters = sum(int(r.get("chapters") or 0) for r in ev.get("reading") or [])
     cap = growth.MAX_EXP_PER_CYCLE
     exp = min(cap, minutes * growth.EXP_PER_MINUTE)
+    reason = f"按分钟保底: {minutes} 分钟 × {growth.EXP_PER_MINUTE} 修为/分钟"
+    if why:
+        reason += f" —— 模型这一步没成: {why}"
     return {
         "assessment": {"depth": "稳读" if minutes >= 20 else "浅尝",
                        "breadth": "散读" if len(ev.get("reading") or []) > 1 else "专一",
@@ -252,10 +262,10 @@ def _fallback(ev: dict[str, Any]) -> dict[str, Any]:
         "growth": {"exp": exp, "pot": 1 if chapters >= 5 else 0,
                    "fame": min(20, minutes // 30), "morality": 0,
                    "skills": {}, "trait": "",
-                   "reason": f"模型不可用, 按分钟保底: {minutes} 分钟 × "
-                             f"{growth.EXP_PER_MINUTE} 修为/分钟"},
+                   "reason": reason},
         "next_hint": "",
         "_fallback": True,
+        "_fallback_why": why,
     }
 
 
@@ -325,8 +335,9 @@ def judge(ev: dict[str, Any], ch: dict[str, Any]) -> dict[str, Any]:
     out = lore.chat(guidance.render("chronicle"), user, max_tokens=700, temperature=0.2)
     data = jsonout.parse_obj(out) if out else None
     if not data:
-        log.info("推演 · 模型未给可用判定, 走保底规则")
-        return clamp(_fallback(ev), ev)
+        why = lore.LAST_ERROR or "模型没有给出可用的 JSON"
+        log.info("推演 · 模型判定不可用 (%s), 走保底规则", why)
+        return clamp(_fallback(ev, why), ev)
     data.setdefault("assessment", {})
     data.setdefault("growth", {})
     data["_fallback"] = False
@@ -516,6 +527,10 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     st = load_state()
     now = time.time()
     ev = gather(st, now=now)
+    # 每种返回都带上"窗口之外今天已计入多少" —— 手动推演看不到新阅读时,
+    # 这句话才是用户要的答案 (时间去哪了)。
+    ctx = {"already_today": int(ev.get("already_today") or 0),
+           "prev_at": ev.get("prev_at") or ""}
     minutes = int(ev["total_minutes"] or 0)
     has_terms = bool(ev["encounters"].get("terms"))
 
@@ -543,7 +558,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
         save_state(st)
         if anchor_moved:
             cs.save_char(ch)
-        return {"status": "retired", "life": life.view(ch),
+        return {**ctx, "status": "retired", "life": life.view(ch),
                 "minutes": minutes, "window": ev["window"]}
 
     if not force and minutes < int(c["min_minutes"]) and not has_terms:
@@ -553,7 +568,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
         save_state(st)
         if anchor_moved:
             cs.save_char(ch)
-        return {"status": "idle", "minutes": minutes,
+        return {**ctx, "status": "idle", "minutes": minutes,
                 "window": ev["window"], "days": ev["days"],
                 "reading": len(ev["reading"])}
 
@@ -568,7 +583,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
         save_state(st)
         if anchor_moved:
             cs.save_char(ch)
-        return {"status": "waiting", "minutes": minutes, "days": ev["days"],
+        return {**ctx, "status": "waiting", "minutes": minutes, "days": ev["days"],
                 "need_days": need_days,
                 "minutes_to_next_day": life.minutes_to_next_day(ch),
                 "window": ev["window"], "reading": len(ev["reading"])}
@@ -599,9 +614,10 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     gain = dict(j.get("growth") or {})
 
     if dry:
-        return {"status": "dry", "window": ev["window"], "minutes": minutes,
+        return {**ctx, "status": "dry", "window": ev["window"], "minutes": minutes,
                 "days": ev["days"], "reading": ev["reading"], "judgement": j,
                 "fallback": bool(j.get("_fallback")),
+                "fallback_why": str(j.get("_fallback_why") or ""),
                 "skill_version": guidance.version("chronicle"),
                 "life": life.view(ch),
                 "encounters": ev["encounters"]}
@@ -718,12 +734,13 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
         log.info("推演 · %s 已到 %d 岁, 退隐待传承 (第 %d 回: %s)",
                  ch.get("name"), life.age_years(ch), adv_no,
                  (story or {}).get("title") or "-")
-    return {"status": "ok", "cycle": cycle_no, "window": ev["window"],
+    return {**ctx, "status": "ok", "cycle": cycle_no, "window": ev["window"],
             "minutes": minutes, "days": int(ev.get("days") or 0),
             "reading": len(ev["reading"]),
             "judgement": j, "growth": applied, "trait": trait_gained,
             "change": change, "retiring": retiring,
             "fallback": bool(j.get("_fallback")),
+            "fallback_why": str(j.get("_fallback_why") or ""),
             "adventure": story, "skill_version": guidance.version("chronicle"),
             "life": life.view(ch), "char": cs.view(ch)}
 

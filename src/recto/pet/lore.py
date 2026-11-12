@@ -48,20 +48,43 @@ def _llm() -> dict[str, Any] | None:
     return dict(llm)
 
 
+# 上一次失败的真因 (给调用方拼人话用)。空串 = 上一次成功。
+# 以前这里只返回 None, 上层一律说"模型不可用" —— 用户配的是 MiniMax-M3 (推理型),
+# 真因其实是 "输出被截断 (思考把 max_tokens 吃完了)", 看不出该动哪个参数。
+LAST_ERROR = ""
+
+
 def chat(system: str, user: str, *, max_tokens: int = 900,
          temperature: float = 0.3) -> str | None:
+    global LAST_ERROR
     from recto.core import llm as llmmod
 
     cfg = _llm()
     if not cfg:
+        LAST_ERROR = "没有可用的模型配置 (端点或型号没填)"
         return None
     cfg = dict(cfg)
     cfg["timeout"] = min(float(cfg.get("timeout") or CHAT_TIMEOUTS), CHAT_TIMEOUTS)
+
+    mt = int(max_tokens)
     try:
-        return llmmod.chat(cfg, system, user, temperature=temperature,
-                           max_tokens=max_tokens, retries=1)
+        # 推理型模型 (MiniMax-M3 / o1 / r1 …) 的思考也吃 max_tokens。同一份契约
+        # 提示词, 普通模型 700 够用, 推理模型光思考就能烧掉一千多 → 正文空 →
+        # 表现成"模型不可用"。给 3 倍预算 (封顶 4096), 关不掉思考也能拿到正文。
+        if llmmod.looks_reasoning_model(str(cfg.get("model") or ""),
+                                       str(cfg.get("base_url") or "")):
+            mt = min(4096, max(mt, mt * 3))
+    except Exception:  # noqa: BLE001 — 识别不出来就按原预算
+        pass
+
+    try:
+        out = llmmod.chat(cfg, system, user, temperature=temperature,
+                          max_tokens=mt, retries=1)
+        LAST_ERROR = ""
+        return out
     except Exception as e:  # noqa: BLE001 — 建卡失败不该让后台心跳炸
-        log.warning("知识储备 · LLM 失败: %s", e)
+        LAST_ERROR = f"{type(e).__name__}: {e}"[:220]
+        log.warning("书宠 · LLM 失败 (max_tokens=%d): %s", mt, e)
         return None
 
 
