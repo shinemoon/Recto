@@ -393,6 +393,63 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
   .rv-sync { bottom: calc(max(3px, env(safe-area-inset-bottom)) + 1rem); opacity: .55; }
 }
 
+/* ---- 书宠 (阅读器右下角的小图标) ----
+ * 位置: 「掌阅同步」那行小字上方。平时只是一枚半透明小图, 不抢注意力;
+ * 有更新 (最新一回的 id 比本机记过的大) 才慢慢转一圈 —— 转得慢, 不闪。
+ * 悬停 / 键盘聚焦: 显示两行摘要 (标题 + 开头两句)。点击: 新开页去书宠看细节故事。
+ * 触摸设备没有悬停, 点一下直接过去, 不做「先弹一行再点」的两段式。 */
+.rv-pet {
+  position: fixed;
+  right: max(7px, env(safe-area-inset-right));
+  bottom: calc(max(3px, env(safe-area-inset-bottom)) + 1.45rem);
+  z-index: 23;
+  display: inline-flex; align-items: center;
+  color: var(--rv-dim); opacity: .34;
+  line-height: 0; text-decoration: none;
+  transition: opacity .2s ease, color .2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.rv-pet[hidden] { display: none !important; }
+.rv-pet:hover, .rv-pet:focus-visible { opacity: .85; color: var(--rv-fg); outline: none; }
+.rv-pet-ico { display: block; width: 15px; height: 15px; transform-origin: 50% 50%; }
+/* 有更新: 慢慢转 (9 秒一圈), 悬停时暂停 —— 让读者看摘要时不晃眼 */
+.rv-pet.is-new { opacity: .5; }
+.rv-pet.is-new .rv-pet-ico { animation: rv-pet-turn 9s linear infinite; }
+.rv-pet.is-new:hover .rv-pet-ico, .rv-pet.is-new:focus-visible .rv-pet-ico {
+  animation-play-state: paused;
+}
+@keyframes rv-pet-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .rv-pet.is-new .rv-pet-ico { animation: none; }
+}
+
+/* 悬停框: 两行, 每行一行 (超出打省略号), 用面板色而不是纯黑 —— 深浅主题都读得清 */
+.rv-pet-tip {
+  position: absolute; right: 0; bottom: calc(100% + 8px);
+  display: flex; flex-direction: column; gap: 2px;
+  width: max-content; max-width: min(18rem, 64vw);
+  padding: 7px 10px;
+  background: var(--rv-panel); color: var(--rv-fg);
+  border: 1px solid var(--rv-line); border-radius: var(--rv-radius-lg);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, .16);
+  font-size: .72rem; line-height: 1.5; text-align: left;
+  opacity: 0; transform: translateY(3px); pointer-events: none;
+  transition: opacity .16s ease, transform .16s ease;
+}
+.rv-pet-tip:empty { display: none; }
+.rv-pet-tip > span {
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rv-pet-tip > span:first-child { font-weight: 600; }
+.rv-pet-tip > span + span { color: var(--rv-dim); }
+.rv-pet:hover .rv-pet-tip, .rv-pet:focus-visible .rv-pet-tip {
+  opacity: 1; transform: none;
+}
+/* 窄屏: 「掌阅同步」那行已经上移 1rem, 小图再往上站一档, 不叠在一起 */
+@media (max-width: 460px) {
+  .rv-pet { bottom: calc(max(3px, env(safe-area-inset-bottom)) + 2.4rem); opacity: .3; }
+}
+
 .rv.is-paged .rv-main { padding: 0 .8rem; }
 /* 页高 = 整个视口高 (顶栏浮在上面, 不扣它的高度) → 上下边距相等 = 正文在视口里垂直居中。
  * 刘海/安全区不参与"边距"的语义, 但也不能让字压进去 —— 上下取同一个值

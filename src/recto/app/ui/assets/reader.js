@@ -984,6 +984,64 @@
     }, 20000);
   }
 
+  // ---------- 书宠 (右下角小图标) ----------
+  // 最新一回游历的两行摘要 (服务端 /read/api/pet-brief, 不调模型)。
+  //   有更新 (id 比本机记过的大) → 图标慢慢转; 悬停看两行; 点击新开页去书宠。
+  //   拿不到就整个隐藏 —— 这是陪读的旁注, 不该影响读书。
+  var petEl = $('#rv-pet');
+  var petTip = $('#rv-pet-tip');
+  var PET_SEEN = 'recto.pet.seen';
+  var petState = { id: 0, seen: 0, lines: [], at: 0, t: 0 };
+
+  function petSeen() {
+    try { return +(localStorage.getItem(PET_SEEN) || 0) || 0; } catch (e) { return 0; }
+  }
+
+  function petDraw() {
+    if (!petEl || !petTip) return;
+    if (!petState.lines.length) { petEl.hidden = true; return; }
+    while (petTip.firstChild) petTip.removeChild(petTip.firstChild);
+    petState.lines.forEach(function (t) {
+      var s = document.createElement('span');
+      s.textContent = t;                     // textContent: 故事里的尖括号也不当标签
+      petTip.appendChild(s);
+    });
+    petEl.setAttribute('aria-label', '书宠 · ' + petState.lines[0]);
+    petEl.hidden = false;
+    petEl.classList.toggle('is-new', petState.id > petState.seen);
+  }
+
+  function petLoad() {
+    if (!petEl || !petTip) return;
+    petState.t = Date.now();
+    fetch('/read/api/pet-brief', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (r) {
+        if (!r || !r.ok) { petEl.hidden = true; return; }
+        petState.id = +r.id || 0;
+        petState.seen = petSeen();
+        petState.at = r.at || '';
+        petState.lines = (r.lines || []).slice(0, 2).filter(function (s) { return !!s; });
+        petDraw();
+      })
+      .catch(function () { /* 拿不到就安静 */ });
+  }
+
+  if (petEl) {
+    // 点开就算看过 (真正的"已读"在书宠页里, 这里只是别一直转)
+    petEl.addEventListener('click', function () {
+      try { localStorage.setItem(PET_SEEN, String(petState.id || 0)); } catch (e) {}
+      petState.seen = petState.id;
+      petEl.classList.remove('is-new');
+    });
+    // 读者从书宠页回来 / 切回这一页时看一眼有没有新的一回 (2 分钟最多问一次)
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - (petState.t || 0) < 120000) return;
+      petLoad();
+    });
+  }
+
   function flushProgress() {
     var cfg = (S.sync && S.sync.settings) || {};
     if (!cfg.auto || cfg.flush_on_hide === false) return;
@@ -2678,6 +2736,13 @@
                spans: KM.spans, err: KM.err,
                file: (KM.data || {}).file || '',
                cats: ((KM.data || {}).cats || []).length };
+    },
+    // 书宠小图标 (只读): 有没有更新 / 两行摘要 / 是否显示
+    pet: function () {
+      return { id: petState.id, seen: petState.seen, at: petState.at,
+               lines: petState.lines.slice(),
+               shown: !!(petEl && !petEl.hidden),
+               isNew: !!(petEl && petEl.classList.contains('is-new')) };
     }
   };
 
@@ -2719,6 +2784,7 @@
       lastY = window.scrollY;
       setBar(false);
       syncBoot(meta.sync);
+      petLoad();
     });
   }
 

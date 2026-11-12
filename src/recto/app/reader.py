@@ -240,6 +240,20 @@ _READER_HTML = """
   <!-- 右下角云端同步状态 (可在设置页关掉): 只读文字, 不吃指针 -->
   <div class="rv-sync" id="rv-sync" hidden aria-live="off"></div>
 
+  <!-- 书宠: 最新一回的入口。平时只是个小图标 (半透明), 有更新时慢慢转;
+       悬停/键盘聚焦显示两行摘要, 点击新开页去书宠看细节故事。 -->
+  <a class="rv-pet" id="rv-pet" href="/pet/" target="_blank" rel="noopener"
+     aria-label="书宠 · 最新一回" hidden>
+    <svg class="rv-pet-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M5.2 4.8h6.3a4.3 4.3 0 0 1 4.3 4.3v10.1H9.5a4.3 4.3 0 0 1-4.3-4.3V4.8Z"
+            fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M8.8 9.6h3.6M8.8 12.8h3.6" stroke="currentColor" stroke-width="1.3"
+            stroke-linecap="round"/>
+      <circle cx="17.9" cy="6.3" r="1.8" fill="currentColor"/>
+    </svg>
+    <span class="rv-pet-tip" id="rv-pet-tip" role="tooltip"></span>
+  </a>
+
   <!-- 云端比本地靠前时问一句: 跳过去, 还是留在本地 (留本地就覆盖云端) -->
   <div class="rv-choice" id="rv-choice" hidden role="dialog" aria-live="polite">
     <div class="rv-choice-txt" id="rv-choice-txt"></div>
@@ -400,6 +414,14 @@ def handle(h) -> bool:
         return True
 
     try:
+        if method == "GET" and path == "/read/api/pet-brief":
+            # 书宠最新一回的两行摘要 (阅读器右下角小图标悬停用)。与书无关,
+            # 所以放在 book/<key> 之前。
+            from recto.pet import brief
+
+            h._json(200, brief.latest())
+            return True
+
         if method == "GET" and path == "/read/api/books":
             if (q.get("refresh") or ["0"])[0] in ("1", "true", "yes"):
                 rs.scan(force=True)

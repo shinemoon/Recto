@@ -423,6 +423,7 @@ PYTHONPATH=src python3 -m recto.cli align          # 判定: bad: 0 (位置与�
 | `GET /api/mark` / `POST /api/mark` | 阅读高亮配置（`action=save\|reset\|bind`） |
 | `GET /api/appearance` / `POST /api/appearance` | 皮肤与外观 |
 | `GET /read/api/books` `GET /read/api/book/<key>` `GET /read/api/book/<key>.toc` `POST /read/api/book/<key>/progress` | 内置阅读器 |
+| `GET /read/api/pet-brief` | 书宠最新一回的两行摘要（阅读器右下角小图标用；不调模型） |
 | `GET /admin/` … | 摘录账本（一页多面板：概览 / 书架 / 摘录 / 事件 / 工具） |
 | `GET /corpus/*` | 语料服务反代（外部不可达时返回同壳 503 说明页） |
 
@@ -756,9 +757,11 @@ index.json         导出清单                    latest.json  最近一次成�
 
 `pet` 分区是云阅 Recto 的一条支线：陪着你把书读完的精灵。
 
-**它不跟人说话。** 没有探头搭话、没有浮窗、没有提醒 —— 书宠的存在方式是
+**它不跟人说话。** 没有探头搭话、没有弹窗、没有提醒 —— 书宠的存在方式是
 "隔一段时间自己翻一遍账本，长一点本事，然后出门走一趟"。所有交互都在
-`/pet/` 页面和 CLI 上，阅读器里它一个字都不说。
+`/pet/` 页面和 CLI 上；阅读器里它不开口，只在右下角（「掌阅同步」小字上方）
+留一枚 15px 的安静小图标：**有新的一回就慢慢转**，悬停浮出两行摘要
+（标题 + 开头两句），点一下新开标签页去 `/pet/` 看细节故事。
 
 三块：
 
@@ -770,6 +773,7 @@ index.json         导出清单                    latest.json  最近一次成�
 src/recto/pet/charsheet.py   人物属性体系 (六项根骨/门派/技能/绝招/性情/经脉) + 存档
 src/recto/pet/growth.py      成长接口 (分钟口径 + 判定口径, 上限都集中在这里)
 src/recto/pet/companion.py   陪读源 (阅读器时长 → 分钟/技能/经脉) + 心跳
+src/recto/pet/brief.py       最新一回的两行摘要 (阅读器右下角小图标用, 不调模型)
 src/recto/pet/store.py       书宠自己的库 (pet.sqlite: 书籍底细/章节储备/语料遭遇/回合/游历)
 src/recto/pet/lore.py        书籍底细: 联网检索 + 模型立卡 + 章节典故储备
 src/recto/pet/websearch.py   轻检索 (cn.bing 结果页, 无 key; 失败即"没联网"照跑)
