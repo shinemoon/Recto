@@ -102,6 +102,35 @@ def case_reader_progress_probes_restore():
     ok(not late, f"写回发生在快照之后 (违规: {late})")
 
 
+def case_reader_time_probes_restore():
+    """要在阅读器里待很久的探针会真的给书写入阅读时长 —— 必须快照 + 还原。
+
+    事故 (2026-11-12 自查): 验收"后台不累计时长"的探针在阅读器里挂了 3-4 分钟,
+    服务端按 30 秒心跳给那本书真加了 8 分钟; 阅读时长会流进书架统计 / 陪读成长 /
+    导出到纸间, 所以跑完必须还原 (tools/rtime_snapshot.py)。
+    """
+    probes = []
+    for p in sorted(TOOLS.glob("*.mjs")):
+        txt = p.read_text("utf-8", errors="replace")
+        if "RV_TIME_BOOK" in txt:            # 时长类探针的标记
+            probes.append((p, txt))
+    ok(bool(probes), f"找到读时长的探针 ({len(probes)} 个)")
+    bad = [p.name for p, t in probes
+           if "rtime_snapshot.py" not in t
+           or "'save'" not in t and '"save"' not in t
+           or "'restore'" not in t and '"restore"' not in t]
+    ok(not bad, f"全部 快照+还原阅读时长 (漏: {bad})")
+
+    helper = TOOLS / "rtime_snapshot.py"
+    ok(helper.is_file(), "tools/rtime_snapshot.py 在")
+    if helper.is_file():
+        htxt = helper.read_text("utf-8")
+        for cmd in ("save", "restore", "clear"):
+            ok(f'"{cmd}"' in htxt, f"快照工具支持 {cmd}")
+        ok("DELETE FROM rsession" in htxt, "还原会清掉新增的会话行")
+        ok("DELETE FROM rtime" in htxt, "原本没有时长时还原为删除该行")
+
+
 def main():
     global PASS, FAIL
     for name, fn in sorted(globals().items()):
