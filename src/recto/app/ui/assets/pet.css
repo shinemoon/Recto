@@ -188,6 +188,24 @@
 .rc-pet table.cats td.nowrap { white-space: nowrap; }
 .rc-pet table.cats button.mini { margin-top: 0; }
 
+/* 陪读: 读得最多的书 (书名 + 分钟, 一行一本) */
+.rc-pet .cs-booklist {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-top: 4px; min-width: 0;
+}
+.rc-pet .cs-book {
+  display: flex; align-items: baseline; gap: 8px;
+  min-width: 0;
+}
+.rc-pet .cs-book-t {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rc-pet .cs-book-m {
+  flex: 0 0 auto; color: var(--rc-mute);
+  font-size: var(--rc-fs-xs, 11.5px); font-variant-numeric: tabular-nums;
+}
+
 /* 门派卡 */
 .rc-pet .cs-schools {
   display: grid;

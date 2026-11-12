@@ -50,15 +50,37 @@ def save() -> int:
 
 
 def restore() -> int:
+    """还原探针动过的那几项 —— **不是整份覆盖**。
+
+    为什么不能整份覆盖: 陪读心跳 (pet/companion.py) 每分钟都在写人物存档
+    (修为 / 等级 / 累计分钟 / 锚点)。整份 copyfile 会把心跳刚写的东西盖掉 ——
+    真踩过: 探针跑完, 等级/修为/累计分钟 全退回快照那一刻的值。
+    探针动的只有"玩家操作"那几项, 恢复它们就够。
+
+    动的字段: 门派 / 性情 / 根骨 / 潜能点 (探针会入门派、觉醒性情、分配潜能点)
+    不动的字段: 修为 / 等级 / 声望 / 累计分钟 / 锚点 / 经脉 / 技能 —— 那些是"自然增长"
+    """
     if not SNAP.exists():
         print("没有快照可还原:", SNAP)
         return 1
-    shutil.copyfile(SNAP, CHAR)
     try:
-        os.chmod(CHAR, 0o600)
+        snap = json.loads(SNAP.read_text("utf-8"))
+        cur = json.loads(CHAR.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        # 读不出来就**不动** —— 整份覆盖会把心跳写的修为盖掉, 那比不还原更糟。
+        print(f"读存档失败 ({e}) —— 没还原 (整份覆盖会盖掉陪读心跳写的修为)")
+        return 1
+    for k in ("school", "traits", "attrs", "pot", "morality", "loyalty"):
+        if k in snap:
+            cur[k] = snap[k]
+    tmp = CHAR.with_name(f".{CHAR.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(cur, ensure_ascii=False, indent=2), "utf-8")
+    try:
+        os.chmod(tmp, 0o600)
     except OSError:
         pass
-    print("已还原:", CHAR)
+    os.replace(tmp, CHAR)
+    print("已还原 (门派/性情/根骨/潜能):", CHAR)
     return 0
 
 

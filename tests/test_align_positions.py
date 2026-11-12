@@ -11,6 +11,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 
+# 隔离: reader_state / paths 的落点走 config.data_dir, 不隔离会读到生产的库。
+import os as _os, tempfile as _tf
+_TMPD = _tf.mkdtemp(prefix="recto-isolated-")
+_os.environ["RECTO_DATA_DIR"] = _TMPD
+_os.environ["RECTO_LIBRARY_DIR"] = _TMPD + "/library"
+_os.makedirs(_TMPD + "/library", exist_ok=True)
+
+
 from recto.core import bookfile, geometry          # noqa: E402
 from recto.services import sync                    # noqa: E402
 

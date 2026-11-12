@@ -315,6 +315,47 @@ function renderChar(ch) {
   }
 }
 
+/* ───────────────────────── 陪读 (阅读器时长 → 修为) ───────────────────────── */
+
+function renderCompanion(cs_) {
+  const pill = $('#companion-pill');
+  const box = $('#companion-state');
+  if (!cs_ || !box) return;
+  const total = cs_.total_minutes || 0;
+  const tick = cs_.tick || {};
+  if (pill) {
+    pill.textContent = total + ' 分钟';
+    pill.className = 'pill' + (total > 0 ? ' ok' : '');
+  }
+  const top = (cs_.top || []);
+  const rows = top.length
+    ? '<div class="cs-meta-row" style="grid-column:1/-1">' +
+      '<span class="cs-meta-l">读得最多</span>' +
+      '<span class="cs-meta-v cs-booklist">' +
+      top.map(function (kv) {
+        return '<span class="cs-book"><span class="cs-book-t">' + esc(kv[0]) +
+          '</span><span class="cs-book-m">' + kv[1] + ' 分</span></span>';
+      }).join('') +
+      '</span></div>'
+    : '';
+  box.innerHTML =
+    '<div class="cs-meta-row"><span class="cs-meta-l">累计陪读</span>' +
+    '<span class="cs-meta-v">' + total + ' 分钟 · ' + (cs_.books || 0) + ' 本书</span></div>' +
+    '<div class="cs-meta-row"><span class="cs-meta-l">心跳</span>' +
+    '<span class="cs-meta-v">' + (tick.enabled ? '运行中' : '未运行') +
+    ' · 每 ' + (tick.interval_sec || 60) + ' 秒</span></div>' +
+    rows;
+}
+
+async function loadCompanion() {
+  try {
+    const c = await api('/api/companion');
+    renderCompanion(c);
+  } catch (e) {
+    setStatus($('#companion-status'), e.message, 'err');
+  }
+}
+
 async function loadChar() {
   try {
     const [ch, schema] = await Promise.all([
@@ -661,8 +702,26 @@ $('#btn-models-toggle').onclick = () => {
 
 /* ───────────────────────── 启动 ───────────────────────── */
 
+$('#btn-companion-feed').onclick = async () => {
+  const st = $('#companion-status');
+  try {
+    setStatus(st, '折算中…');
+    const r = await api('/api/companion', { method: 'POST', body: '{}' });
+    const g = r.gain || {};
+    if (g.grew) {
+      setStatus(st, '折算 ' + g.minutes + ' 分钟 · 修为 +' + (g.exp || 0) +
+        (g.levels ? ' · 升 ' + g.levels + ' 级' : ''), 'ok');
+    } else {
+      setStatus(st, '没有新增陪读时长 (已折算过)', '');
+    }
+    if (r.char) renderChar(r.char);
+    await loadCompanion();
+  } catch (e) { setStatus(st, e.message, 'err'); }
+};
+
 (async function init() {
   await loadPresets();
   await loadConfig();
   await loadChar();
+  await loadCompanion();
 })();

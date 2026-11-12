@@ -167,6 +167,9 @@ def conn() -> sqlite3.Connection:
                    "book_author": "TEXT DEFAULT ''"}),
         ("rbookmark", {"chapter_label": "TEXT DEFAULT ''", "pct": "REAL DEFAULT -1",
                        "book_title": "TEXT DEFAULT ''", "book_author": "TEXT DEFAULT ''"}),
+        # 时长行的自足快照 (2026-11-12): 读者删掉本地书以后 rbook 那行就没了,
+        # 时长表里就只剩一个 hash —— 书名得在删书前抄下来, 陪读卡才认得出是哪本。
+        ("rtime", {"book_title": "TEXT DEFAULT ''", "book_author": "TEXT DEFAULT ''"}),
     ):
         have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
         for col, ddl in cols.items():
@@ -320,14 +323,14 @@ def _under(path: str, roots: list[str]) -> bool:
 
 
 def snapshot_book_meta(key: str, title: str = "", author: str = "") -> int:
-    """把书名/作者抄进划线/书签行 (只填空位, 不覆盖已有值)。
+    """把书名/作者抄进划线/书签/时长行 (只填空位, 不覆盖已有值)。
 
     为什么需要: 摘录库要能独立存活。读者删掉本地书以后 `rbook` 那行就没了,
     再也不能 join 出书名 —— 只能靠入库时抄下来的快照。
     """
     c = conn()
     n = 0
-    for table in ("rnote", "rbookmark"):
+    for table in ("rnote", "rbookmark", "rtime"):
         cur = c.execute(
             f"""UPDATE {table} SET book_title=CASE WHEN COALESCE(book_title,'')=''
                                             THEN ? ELSE book_title END,

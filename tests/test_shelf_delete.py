@@ -21,6 +21,7 @@ import tempfile
 import threading
 import urllib.parse
 import zipfile
+from datetime import date
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -137,6 +138,7 @@ key = books["要删的书"]["key"]
 rs.save_progress(key, 0, 10, 0.42, "1_0_0")
 rs.add_note(key, 0, 4, 10, "山雨欲来", "批注", "", "{}")
 rs.add_bookmark(key, 0, 6, "记一下", "第一章")
+rs._mark_minutes(key, date(2026, 11, 12), list(range(0, 30)))
 
 out = rs.delete_book(key)
 ok("返回 ok", out.get("ok") is True)
@@ -152,6 +154,15 @@ ok("rbook 行已删", rs.get_book(key) is None)
 ok("进度还在 (放回原书可续读)", bool(rs.get_progress(key).get("percent")))
 ok("划线还在", len(rs.list_notes(key)) == 1)
 ok("书签还在", len(rs.list_bookmarks(key)) == 1)
+
+# 时长行也要留下书名快照 —— 删了书, 陪读卡才认得出是哪本
+# (没有快照的话时长表里只剩一个 hash, 谁都看不懂)
+row = rs.conn().execute(
+    "SELECT book_title FROM rtime WHERE book=? LIMIT 1", (key,)).fetchone()
+ok("时长行留了书名快照", bool(row and row["book_title"]),
+   f"got {dict(row) if row else None}")
+ok("快照是书名不是 hash", bool(row and row["book_title"] == "要删的书"),
+   f"got {row['book_title'] if row else None}")
 
 print("== 2. 重复删 / 保留文件 / 越界 ==")
 try:

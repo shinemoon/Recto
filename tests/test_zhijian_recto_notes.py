@@ -30,6 +30,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 TMP = Path(tempfile.mkdtemp())
 os.environ["RECTO_WEBAUTH_DIR"] = str(TMP)
 os.environ["RECTO_AUTH_DISABLE"] = "1"
+# 隔离: reader_state 的库路径走 config.data_dir, 不隔离就会把测试造的
+# "k1" 写进生产的 reader.sqlite (真踩过: 生产库里凭空多出 k1/bk1 的时长行)。
+os.environ["RECTO_DATA_DIR"] = str(TMP / "data")
+os.environ["RECTO_LIBRARY_DIR"] = str(TMP / "library")
+(TMP / "library").mkdir(parents=True, exist_ok=True)
 
 from recto.app import excerpts  # noqa: E402
 from recto.services import reader_state  # noqa: E402

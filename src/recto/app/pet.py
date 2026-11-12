@@ -17,6 +17,7 @@ from pathlib import Path
 
 from recto.app.ui import shell
 from recto.pet import charsheet as cs
+from recto.pet import companion as companion_mod
 from recto.pet import config as petcfg
 from recto.pet import growth as growth_mod
 
@@ -144,6 +145,13 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
             return 400, r
         cs.save_char(ch)
         return 200, {"ok": True, "char": cs.view(ch)}
+
+    # 陪读源: 阅读器时长 → 书宠修为。现在由心跳自动折算, 这里是手动触发 + 现状。
+    if path == "/companion":
+        if method == "POST":
+            gain = companion_mod.feed_now()
+            return 200, {"ok": True, "gain": gain, "char": cs.view(cs.load_char())}
+        return 200, {**companion_mod.companion_state(), "tick": companion_mod.tick_state()}
 
     # 模型库
     if path == "/models":

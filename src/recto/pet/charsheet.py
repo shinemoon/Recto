@@ -325,7 +325,8 @@ def new_char(name: str = "小墨") -> dict[str, Any]:
         "morality": 0,                 # 心性 (-100 ~ +100)
         "loyalty": 0,                  # 门忠
         "wish": 0,                     # 觉醒点
-        "minutes": 0,                  # 累计陪读分钟
+        "minutes": 0,                  # 累计陪读分钟 (已折算进修为的那部分)
+        "credited_minutes": 0,         # 已从阅读时长折算过的分钟 (幂等锚点)
         "skills": {},                  # 技能 id → 等级
         "traits": [],                  # 已获性情 id
         "vein": 0,                     # 已通经脉层数
@@ -356,6 +357,21 @@ def load_char() -> dict[str, Any]:
         ch["traits"] = []
     if not isinstance(ch.get("born"), dict):
         ch["born"] = {}
+    # 自愈: credited_minutes 与 minutes 是同一个数的两个名字, 必须始终相等。
+    # (第一版折算 724 分钟时, award_minutes 的单次封顶截掉了 244 分钟,
+    #  但锚点已经推到 724 → 那 244 分钟永远补不回来。)
+    # 这里以**小的那份**为准拉齐 (两份不等 = 有过截断或数据源被清理过)。
+    #
+    # 但字段缺失 ≠ 锚点是 0: 老存档 (接阅读器之前) 只有 minutes 没有锚点,
+    # 若按"缺了就当 0"拉齐, 累计陪读会被清零 → 下次折算把历史重喂一遍,
+    # 修为翻倍。所以缺失时**以 minutes 为锚点** (那份历史已经折算过了)。
+    # 注意判的是 **raw** 里有没有: ``ch`` 是 new_char() 铺过默认值的, 永远有这一栏。
+    credited = (int(ch["credited_minutes"]) if "credited_minutes" in raw
+                else int(ch.get("minutes") or 0))
+    actual = int(ch.get("minutes") or 0)
+    same = min(credited, actual)
+    ch["credited_minutes"] = same
+    ch["minutes"] = same
     return ch
 
 

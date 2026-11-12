@@ -131,6 +131,14 @@ def case_pet_char_probe_restores():
         htxt = helper.read_text("utf-8")
         for cmd in ("save", "restore", "reset", "clear"):
             ok(f'"{cmd}"' in htxt, f"快照工具支持 {cmd}")
+        # 还原必须**字段级** —— 整份 copyfile 会把陪读心跳刚写的
+        # (修为/等级/累计分钟/锚点) 一起盖掉 (真踩过: 探针跑完等级退回快照那一刻)
+        ok("shutil.copyfile(SNAP, CHAR)" not in htxt,
+           "还原不是整份覆盖 (会盖掉心跳写的修为)")
+        ok("credited_minutes" not in htxt,
+           "还原不碰锚点 credited_minutes")
+        ok('"school"' in htxt and '"traits"' in htxt,
+           "还原只动玩家操作那几项 (门派/性情/根骨/潜能)")
 
 
 def main():

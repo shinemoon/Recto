@@ -55,7 +55,7 @@ await page.waitForSelector('#attr-rows tr', { timeout: 15000 });
 // ── 段落都在 ──────────────────────────────────────────
 const cards = await page.$$eval('.rc-pet .card h2', (hs) => hs.map((h) => h.textContent.trim()));
 ok(cards.length >= 9, `有 ${cards.length} 张卡 (${cards.join(' / ')})`);
-for (const want of ['六项根骨', '门派', '技能与绝招', '性情', '经脉', '成长规则']) {
+for (const want of ['六项根骨', '门派', '技能与绝招', '性情', '经脉', '陪读']) {
   ok(cards.some((c) => c.includes(want)), `有「${want}」卡`);
 }
 
@@ -124,12 +124,12 @@ const veins = await page.$$eval('#vein-list .cs-vein', (els) => els.map((e) => (
 ok(veins.length === 10, `十层经脉: ${veins.map((v) => v.name).slice(0, 3).join('/')}…`);
 ok(veins.every((v) => !v.on), '一开始没通脉');
 
-// ── 成长规则 ────────────────────────────────────────────
+// ── 陪读 (原「成长规则」卡, 2026-11-12 接上阅读器后改名) ──────
 const growthRows = await page.$$eval('#growth-rules .cs-meta-row', (els) => els.map((e) => e.textContent.trim()));
-ok(growthRows.length >= 4, `成长规则 ${growthRows.length} 行`);
-ok(growthRows.join(' ').includes('修为 / 分钟'), '成长规则含修为/分钟');
-ok(growthRows.join(' ').includes('潜能 / 升级'), '成长规则含潜能/升级');
-ok(growthRows.join(' ').includes('待定'), '成长规则列出待定项');
+ok(growthRows.length >= 4, `陪读卡 ${growthRows.length} 行`);
+ok(growthRows.join(' ').includes('修为 / 分钟'), '陪读卡含修为/分钟');
+ok(growthRows.join(' ').includes('潜能 / 升级'), '陪读卡含潜能/升级');
+ok(growthRows.join(' ').includes('待定'), '陪读卡列出待定项');
 const veinTip = (await page.textContent('#vein-tip')) || '';
 ok(/每分钟换 \d+ 点修为/.test(veinTip), `经脉提示带换算比例: ${veinTip.trim()}`);
 

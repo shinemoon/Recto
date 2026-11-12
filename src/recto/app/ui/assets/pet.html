@@ -34,8 +34,9 @@
     <div class="cs-meta" id="char-meta"></div>
 
     <p class="tip" id="char-intro">
-      这一套是<b>骨架</b> —— 属性 / 技能 / 绝招 / 经脉 / 性情都按《侠客行》的规矩立好,
-      但「读一段书涨多少修为」这一层留白: 等接上阅读器, 有真实数据了再定, 免得现在拍脑袋。
+      这一套是<b>骨架</b> —— 属性 / 技能 / 绝招 / 经脉 / 性情都按《侠客行》的规矩立好。
+      修为现在有真实来源了: <b>陪读</b> —— 你在阅读器里读书的时间会自动折算成修为,
+      每分钟 2 点, 只增不减。
     </p>
   </div>
 </section>
@@ -125,18 +126,24 @@
   </div>
 </section>
 
-<!-- ── 6. 成长规则 ───────────────────────────────── -->
+<!-- ── 6. 陪读 ───────────────────────────────────── -->
 <section class="card" id="card-growth">
   <div class="card-head">
-    <h2>6 · 成长规则</h2>
-    <span class="hint">陪读换修为 —— 这一层现在只立规矩</span>
+    <h2>6 · 陪读</h2>
+    <span class="hint">阅读器时长 → 修为</span>
+    <span class="pill" id="companion-pill">读取中…</span>
   </div>
   <div class="card-body">
     <div class="cs-meta" id="growth-rules"></div>
+    <div class="cs-meta" id="companion-state"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="mini" id="btn-companion-feed">立即折算</button>
+      <span class="status" id="companion-status"></span>
+    </div>
     <p class="tip">
-      陪读 → 修为 → 升级 → 潜能点 → 六项根骨, 这条链已经通到接口层
-      (<code>POST /pet/api/char/grow</code>), 但**还没接阅读器** ——
-      谁在什么时候喂分钟, 等阅读器那侧定下来再接。
+      陪读分钟来自<b>阅读器自己的时长记录</b> (人真的在读的那些分钟, 挂着不读不算) ——
+      所以你读得越久, 它长得越快。换算比例只有一个出处:
+      <code>pet/growth.py</code>, 想改就改那一个文件。
     </p>
   </div>
 </section>

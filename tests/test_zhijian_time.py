@@ -29,6 +29,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 TMP = Path(tempfile.mkdtemp())
 os.environ["RECTO_WEBAUTH_DIR"] = str(TMP)
 os.environ["RECTO_AUTH_DISABLE"] = "1"
+# 隔离: 时长数据落在 reader.sqlite, 不隔离就会写进生产的库。
+os.environ["RECTO_DATA_DIR"] = str(TMP / "data")
+os.environ["RECTO_LIBRARY_DIR"] = str(TMP / "library")
+(TMP / "library").mkdir(parents=True, exist_ok=True)
 
 from recto.app import excerpts  # noqa: E402
 from recto.services import reader_state  # noqa: E402

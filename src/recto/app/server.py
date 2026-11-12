@@ -229,11 +229,25 @@ def _start_ticker():
         return False
 
 
+def _start_pet_ticker():
+    """陪读心跳 (书宠成长)。起不来不致命 —— 其余功能照旧。"""
+    try:
+        from recto.pet import companion as _companion
+
+        if _companion.start_ticker():
+            print(f"[recto] 陪读心跳每 {int(_companion.TICK_SEC)} 秒折算一次书宠成长", flush=True)
+        return True
+    except Exception as e:  # noqa: BLE001 — 起不来不该挡住服务
+        print(f"[recto] 陪读心跳没能启动 ({e}) —— 其余功能正常", flush=True)
+        return False
+
+
 def main() -> None:
     srv = make_server(host=HOST, port=PORT)
     print(f"recto on http://{HOST}:{PORT}  (library + cloud + reader + excerpts)", flush=True)
     _warn_default_login()
     _start_ticker()
+    _start_pet_ticker()
     dev_srv = _start_device_listener()
     try:
         srv.serve_forever()

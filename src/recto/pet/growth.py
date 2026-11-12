@@ -94,6 +94,9 @@ def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True) 
     # 累计陪读分钟 (经脉按它推进)
     total_min = int(ch.get("minutes") or 0) + n
     ch["minutes"] = total_min
+    # credited_minutes 与 minutes 是同一个数的两个名字 —— 手动喂分钟也要同步推
+    # (否则手动喂的分钟不被"数据源折算"认账, 幂等锚点会落后)
+    ch["credited_minutes"] = total_min
 
     # 修为
     gain = exp_for(n)
@@ -144,6 +147,64 @@ def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True) 
         "level": int(ch.get("level") or 1),
         "total_minutes": total_min,
     }
+
+
+def credit_reading_minutes(ch: dict[str, Any], total_minutes: int) -> dict[str, Any]:
+    """把"阅读器那边累计的陪读分钟"折算成修为, **只喂增量**。
+
+    为什么要有这个函数而不是直接调 :func:`award_minutes`:
+    ``award_minutes`` 语义是"这次又陪读了 N 分钟"(增量口径), 而阅读器那边
+    手里的是一个**累计值**。直接拿累计值去 award, 每次都会把历史重算一遍
+    —— 修为会变成平方级地涨。
+
+    所以这里用 ``credited_minutes`` 当**幂等锚点**: 存档里记着"已经折算过
+    多少分钟", 只把 (累计 − 已折算) 这段新增量喂进去。
+
+    这样:
+      · 重复调用不会重复给修为 (幂等)
+      · 只增不减 —— 累计值倒退时 (换库 / 删书重扫) 一分钱都不补
+      · 锚点是存档里的一个数, 不依赖任何外部状态
+
+    **``credited_minutes`` 与 ``minutes`` 是同一个数** (两个名字, 一个含义):
+    "已经折算过的陪读分钟"。``award_minutes`` 单独用 (手动喂分钟) 时也会
+    把两个一起推 —— 之前它们各写各的, 数据源被清理时就分叉了, 页面显示
+    的"陪读 N 分钟"跟陪读卡里的"累计 N 分钟"对不上 (真踩过)。
+
+    """
+    total = max(0, int(total_minutes or 0))
+    credited = max(0, int(ch.get("credited_minutes") or 0))
+    delta = total - credited
+    if delta <= 0:
+        return {"minutes": 0, "delta": 0, "credited": credited, "grew": False,
+                "level": int(ch.get("level") or 1),
+                "total_minutes": int(ch.get("minutes") or 0)}
+
+    # 分批喂: award_minutes 有单次封顶 (MAX_MINUTES_PER_CALL), 一次喂完
+    # 大 delta 会被截断 —— 锚点却推到了累计值, 中间那段就凭空丢了
+    # (真踩过: 首次折算 724 分钟, 只给了 480, 少 244)。
+    # 所以这里循环喂, 每批不超过封顶, 批完为止。
+    fed = 0
+    levels = 0
+    exp_gain = 0
+    last: dict[str, Any] = {}
+    while fed < delta:
+        step = min(delta - fed, MAX_MINUTES_PER_CALL)
+        last = award_minutes(ch, step)
+        fed += step
+        exp_gain += int(last.get("exp") or 0)
+        levels += int(last.get("levels") or 0)
+    # 锚点推到**实际喂进去的量** (credited + fed), 不是 total。
+    # 差别在于: 万一某批 award 失败/被截断, 锚点不会跳到没喂到的位置 ——
+    # 下一轮还能补上。(真踩过: 首次折算 724 分钟被单次封顶截成 480,
+    # 但锚点推到了 724 → 中间 244 分钟永远补不回来。)
+    ch["credited_minutes"] = credited + fed
+    # credited 与 minutes 是同一个数的两个名字 —— 保持一致
+    ch["minutes"] = ch["credited_minutes"]
+    return {"minutes": fed, "delta": delta, "credited": ch["credited_minutes"],
+            "grew": True,
+            "exp": exp_gain, "levels": levels,
+            "level": int(ch.get("level") or 1),
+            "total_minutes": int(ch.get("minutes") or 0)}
 
 
 def skill_boost(ch: dict[str, Any], skill_id: str, levels: int = 1) -> dict[str, Any]:
