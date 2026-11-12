@@ -23,7 +23,7 @@ from typing import Any
 
 DIR = Path(__file__).resolve().parent / "skills"
 
-NAMES = ("lore", "chronicle", "adventure")
+NAMES = ("lore", "chronicle", "adventure", "legacy")
 
 
 def path_of(name: str) -> Path:

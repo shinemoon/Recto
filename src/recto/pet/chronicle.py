@@ -34,7 +34,7 @@ from typing import Any
 from recto.core import clock
 from recto.pet import charsheet as cs
 from recto.pet import config as petcfg
-from recto.pet import encounters, guidance, growth, jsonout, lore, store
+from recto.pet import encounters, guidance, growth, jsonout, life, lore, store
 
 log = logging.getLogger("recto.pet.chronicle")
 
@@ -47,7 +47,9 @@ DEFAULT_CFG: dict[str, Any] = {
     "max_lore_chapters": 4,     # 一回合最多补几条章节储备
     "search": True,             # 建卡时是否联网检索
     "keep_adventures": 200,     # 游历保留条数
-    "max_exp_per_minute": 6,    # 修为上限 = 分钟 × 这个系数 (与 skill 口径一致)
+    "max_exp_per_minute": 6,    # 修为上限 = 分钟 × 这个系数 (兜底)
+    "max_exp_per_day": 320,     # 修为上限 = 故事内天数 × 这个数 (一回合的主口径)
+    "days_per_adventure": 1,    # 攒够几个故事内天才走一趟 (一小时阅读 = 一天)
 }
 
 STATE_NAME = "chronicle.json"
@@ -141,6 +143,11 @@ def _char_brief(ch: dict[str, Any]) -> dict[str, Any]:
         "skills": dict(ch.get("skills") or {}),
         "traits": list(ch.get("traits") or []),
         "minutes": int(ch.get("minutes") or 0),
+        # 时序: 故事内活到第几天 / 几岁 (退隐与节奏都看这个)
+        "story_day": life.story_day(ch),
+        "age": life.age_years(ch),
+        "age_label": life.age_label(ch),
+        "generation": int(ch.get("generation") or 1),
     }
 
 
@@ -260,8 +267,15 @@ def clamp(j: dict[str, Any], ev: dict[str, Any]) -> dict[str, Any]:
     """
     g = j.get("growth") if isinstance(j.get("growth"), dict) else {}
     minutes = int(ev.get("total_minutes") or 0)
+    days = int(ev.get("days") or 0)
     c = cfg()
-    cap = min(growth.MAX_EXP_PER_CYCLE, minutes * int(c.get("max_exp_per_minute") or 6))
+    per_day = int(c.get("max_exp_per_day") or 320)
+    if days > 0:
+        cap = min(growth.MAX_EXP_PER_CYCLE, days * per_day)
+    else:
+        cap = min(growth.MAX_EXP_PER_CYCLE, minutes * int(c.get("max_exp_per_minute") or 6))
+    if minutes <= 0:
+        cap = 0
     out: dict[str, Any] = {
         "exp": jsonout.as_int(g.get("exp"), 0, 0, cap),
         "pot": jsonout.as_int(g.get("pot"), 0, 0, growth.MAX_POT_PER_CYCLE),
@@ -294,6 +308,12 @@ def judge(ev: dict[str, Any], ch: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "window": ev["window"],
         "char": _char_brief(ch),
+        "time": {"story_day": life.story_day(ch),
+                 "day_no": life.story_day(ch) + 1,
+                 "days_advanced": int(ev.get("days") or 0),
+                 "age": life.age_years(ch),
+                 "minutes_per_story_day": life.cfg()["minutes_per_day"],
+                 "retire_age": life.cfg()["retire_age"]},
         "reading": [{k: v for k, v in r.items() if k != "lore"} for r in ev["reading"]],
         "encounters": {"days": ev["encounters"].get("days"),
                        "terms": ev["encounters"].get("terms", [])[:25],
@@ -315,8 +335,66 @@ def judge(ev: dict[str, Any], ch: dict[str, Any]) -> dict[str, Any]:
 
 # ------------------------------------------------------------------ 冒险
 
+def _fallback_legacy(ch: dict[str, Any]) -> dict[str, Any]:
+    """模型不可用时也要留下"退隐"这一笔 (否则时间会继续往前走, 人却停在门里)。"""
+    heir = life.propose_default(ch)
+    return {
+        "title": "终回 · 关门弟子",
+        "place": "旧屋",
+        "body": (
+            f"{ch.get('name')} 到了该收手的年纪。\n\n"
+            "他把常用的那把剑挂回墙上, 把几本翻烂的书按次序摆好, 又从匣子里取出一方旧砚。"
+            "院子里站着一个刚满十二岁的孩子, 是这些年在门口扫地的那个。\n\n"
+            "他把砚台递过去, 只说了一句: 从明天起, 你自己读。\n\n"
+            "孩子接过砚台, 双手有点抖。他没有再多说什么 —— 该教的都教了, "
+            "剩下的路, 谁替谁走都不算数。"
+        ),
+        "terms_used": [],
+        "themes_used": ["传承"],
+        "tail": "门关上, 院子里的扫地声换了一个人。",
+        "verdict": "退隐, 待传承。",
+        "growth_shown": [],
+        "days": 1,
+        "heir": heir,
+    }
+
+
+def _change_brief(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """这一回合**真实发生的**变化 (属性 / 技能 / 经脉 / 性情) —— 给写故事那道工序看。
+
+    故事里"长本事"要有据可依: 不能模型自己编"悟性大进", 必须对着这份清单写。
+    """
+    out: dict[str, Any] = {"attrs": [], "skills": [], "vein": None, "trait": ""}
+    try:
+        b_attrs = cs.effective_attrs(before)
+        a_attrs = cs.effective_attrs(after)
+        for a in cs.ATTRS:
+            k = a["key"]
+            f, t = int(b_attrs.get(k, 0)), int(a_attrs.get(k, 0))
+            if t != f:
+                out["attrs"].append({"key": k, "name": a["name"], "from": f, "to": t})
+        b_sk = dict(before.get("skills") or {})
+        a_sk = dict(after.get("skills") or {})
+        for sid, lv in a_sk.items():
+            f, t = int(b_sk.get(sid, 0)), int(lv or 0)
+            if t > f:
+                sk = cs.SKILL_BY_ID.get(str(sid)) or {}
+                out["skills"].append({"id": sid, "name": sk.get("name") or sid,
+                                      "from": f, "to": t, "type": sk.get("type") or ""})
+        if int(after.get("vein") or 0) > int(before.get("vein") or 0):
+            out["vein"] = int(after.get("vein") or 0)
+        new_traits = [t for t in (after.get("traits") or []) if t not in (before.get("traits") or [])]
+        if new_traits:
+            t0 = cs.TRAIT_BY_ID.get(str(new_traits[0])) or {}
+            out["trait"] = t0.get("name") or str(new_traits[0])
+    except Exception as e:  # noqa: BLE001
+        log.warning("推演 · 变化清单算不出来: %s", e)
+    return out
+
+
 def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
-                       gain: dict[str, Any], prev: dict[str, Any] | None) -> dict[str, Any]:
+                       gain: dict[str, Any], prev: dict[str, Any] | None,
+                       change: dict[str, Any] | None = None) -> dict[str, Any]:
     books = []
     for r in ev["reading"][:4]:
         card = r.get("lore") or {}
@@ -331,8 +409,16 @@ def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
     return {
         "char": _char_brief(ch),
         "growth": {"exp": gain.get("exp"), "fame": gain.get("fame"),
-                   "levels": gain.get("levels"),
+                   "levels": gain.get("levels"), "pot": gain.get("pot"),
+                   "vein": (change or {}).get("vein"),
+                   "trait": (change or {}).get("trait") or "",
+                   "attrs": (change or {}).get("attrs") or [],
+                   "skills": (change or {}).get("skills") or [],
                    "reason": (ev.get("judgement_reason") or "")},
+        "time": {"days": int(ev.get("days") or 0),
+                 "story_day": life.story_day(ch),
+                 "day_no": life.story_day(ch) + 1,
+                 "minutes_per_story_day": life.cfg()["minutes_per_day"]},
         "books": books,
         "terms": terms,
         "previous": prev or {},
@@ -341,19 +427,25 @@ def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
 
 
 def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
-            prev: dict[str, Any] | None) -> dict[str, Any] | None:
+            prev: dict[str, Any] | None, change: dict[str, Any] | None = None,
+            guide: str = "adventure") -> dict[str, Any] | None:
     """写一回游历 (模型不可用 / 解析失败 → None, 这一回合就不出故事)。
 
     为什么重试两次而不是一次: 判成长那一次调用刚吃掉一轮额度, 紧接着的第二次
     很容易撞 429 / 超时 —— 实测就丢过一整回的故事。这里多给一次机会 (间隔 2s),
     仍然失败才算这一回合没出门。
+
+    ``guide="legacy"`` 时走「退隐 + 传承」那道工序 (多返回一个 ``heir`` 提议)。
     """
-    payload = _adventure_payload(ev, ch, gain, prev)
-    user = ("按 adventure.md 的契约写这一回游历。只输出 JSON。\n\n"
+    payload = _adventure_payload(ev, ch, gain, prev, change)
+    if guide == "legacy":
+        payload["char"] = life.legacy_brief(ch)
+        payload["growth"]["age"] = life.age_years(ch)
+    user = ("按 %s.md 的契约写这一回。只输出 JSON。\n\n" % guide
             + json.dumps(payload, ensure_ascii=False, indent=1))
     data = None
     for attempt in (1, 2):
-        out = lore.chat(guidance.render("adventure"), user, max_tokens=1600,
+        out = lore.chat(guidance.render(guide), user, max_tokens=1600,
                         temperature=0.9)
         data = jsonout.parse_obj(out) if out else None
         if data:
@@ -365,7 +457,7 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
     body = jsonout.as_text(data.get("body"), 2600)
     if len(body) < 120:
         return None
-    return {
+    story = {
         "title": jsonout.as_str(data.get("title"), 40) or "一回游历",
         "place": jsonout.as_str(data.get("place"), 20),
         "body": body,
@@ -373,7 +465,20 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         "themes_used": jsonout.as_list(data.get("themes_used"), 4, 16),
         "tail": jsonout.as_str(data.get("tail"), 60),
         "verdict": jsonout.as_str(data.get("verdict"), 40),
+        "growth_shown": jsonout.as_list(data.get("growth_shown"), 5, 24),
+        "days": jsonout.as_int(data.get("days"), 1, 1, 5),
     }
+    if guide == "legacy":
+        h = data.get("heir") if isinstance(data.get("heir"), dict) else {}
+        kind = str(h.get("type") or "").strip()
+        if kind not in life.HEIR_TYPES:
+            kind = "disciple"
+        story["heir"] = {
+            "type": kind,
+            "name": jsonout.as_str(h.get("name"), 16) or life.propose_default(ch)["name"],
+            "reason": jsonout.as_str(h.get("reason"), 80) or life.propose_default(ch)["reason"],
+        }
+    return story
 
 
 # ------------------------------------------------------------------ 主流程
@@ -413,14 +518,61 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     ev = gather(st, now=now)
     minutes = int(ev["total_minutes"] or 0)
     has_terms = bool(ev["encounters"].get("terms"))
+
+    # 时序: 这一回合攒够了几个"故事内的一天" (一小时阅读 = 一天)
+    ch = cs.load_char()
+    # 故事时钟由"累计陪读分钟"除出来 —— 而分钟归陪读心跳记账。推演自己也可能
+    # 先跑 (心跳还没折算过), 所以这里补一次幂等折算 (只记分钟, 不给修为),
+    # 否则读了一小时却因为"心跳没到点"而永远不出门。
+    anchor_before = int(ch.get("credited_minutes") or 0)
+    try:
+        from recto.pet import companion as _companion
+
+        growth.credit_reading_minutes(ch, _companion.total_reading_minutes(),
+                                      grant_exp=False)
+    except Exception as e:  # noqa: BLE001 — 时长读不出来不该挡住推演
+        log.warning("推演 · 折算陪读分钟失败: %s", e)
+    anchor_moved = int(ch.get("credited_minutes") or 0) != anchor_before
+    ev["days"] = max(0, life.story_day(ch) - int(st.get("story_day") or 0))
+    ev["story_day"] = life.story_day(ch)
+    ev["age"] = life.age_years(ch)
+
+    # 已退隐, 等读者点头传承 —— 不再长大, 也不再出门
+    if life.stage(ch) == "retiring":
+        st["last_check_at"] = clock.fmt_sec(now, "%Y-%m-%dT%H:%M:%S")
+        save_state(st)
+        if anchor_moved:
+            cs.save_char(ch)
+        return {"status": "retired", "life": life.view(ch),
+                "minutes": minutes, "window": ev["window"]}
+
     if not force and minutes < int(c["min_minutes"]) and not has_terms:
         st["last_check_at"] = clock.fmt_sec(now, "%Y-%m-%dT%H:%M:%S")
         st["next_at"] = clock.fmt_sec(now + int(c["interval_min"]) * 60,
                                       "%Y-%m-%dT%H:%M:%S")
         save_state(st)
+        if anchor_moved:
+            cs.save_char(ch)
         return {"status": "idle", "minutes": minutes,
-                "window": ev["window"],
+                "window": ev["window"], "days": ev["days"],
                 "reading": len(ev["reading"])}
+
+    # 故事节奏闸门: 一天一天走。不足一天就连故事都不写 —— 否则"读十分钟走一回"
+    # 会让故事世界比现实跑得还快, 80 岁退隐这件事永远等不到。
+    need_days = max(1, int(c.get("days_per_adventure") or 1))
+    if not force and ev["days"] < need_days:
+        st["last_check_at"] = clock.fmt_sec(now, "%Y-%m-%dT%H:%M:%S")
+        st["next_at"] = clock.fmt_sec(now + int(c["interval_min"]) * 60,
+                                      "%Y-%m-%dT%H:%M:%S")
+        st["waiting_note"] = (f"还差 {life.minutes_to_next_day(ch)} 分钟到下一日")
+        save_state(st)
+        if anchor_moved:
+            cs.save_char(ch)
+        return {"status": "waiting", "minutes": minutes, "days": ev["days"],
+                "need_days": need_days,
+                "minutes_to_next_day": life.minutes_to_next_day(ch),
+                "window": ev["window"], "reading": len(ev["reading"])}
+    st.pop("waiting_note", None)
 
     # ── 知识储备 (先给模型看书, 再判成长)
     for r in ev["reading"][: int(c["max_lore_books"])]:
@@ -441,16 +593,17 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                 if r.get("lore"):
                     r["lore"] = lore.card(r["book"], chapters=3)
 
-    ch = cs.load_char()
+    before = json.loads(json.dumps(ch, ensure_ascii=False))   # 落地前快照 (算变化清单)
     j = judge(ev, ch)
     ev["judgement_reason"] = (j.get("growth") or {}).get("reason") or ""
     gain = dict(j.get("growth") or {})
 
     if dry:
         return {"status": "dry", "window": ev["window"], "minutes": minutes,
-                "reading": ev["reading"], "judgement": j,
+                "days": ev["days"], "reading": ev["reading"], "judgement": j,
                 "fallback": bool(j.get("_fallback")),
                 "skill_version": guidance.version("chronicle"),
+                "life": life.view(ch),
                 "encounters": ev["encounters"]}
 
     # ── 落地成长
@@ -458,23 +611,28 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                                        "pot": gain.get("pot"), "fame": gain.get("fame"),
                                        "morality": gain.get("morality"),
                                        "skills": gain.get("skills")},
-                                  max_exp=int(gain.get("cap") or growth.MAX_EXP_PER_CYCLE))
+                                  max_exp=int(gain.get("cap") or growth.MAX_EXP_PER_CYCLE),
+                                  story_day=life.story_day(ch))
     trait_gained = ""
     tid = str(gain.get("trait") or "")
     if tid:
         code, _ = cs.grant_trait(ch, tid)     # 内部会校验条数/点数并落盘
         if code == 200:
             trait_gained = tid
-    cs.save_char(ch)
+    change = _change_brief(before, ch)
 
-    # ── 走一趟
+    # ── 走一趟 (到岁数了这一趟就是"退隐 + 传承")
+    retiring = life.ready_to_retire(ch)
     prev_row = _last_adventure()
     prev = None
     if prev_row:
         prev = {"no": int(prev_row.get("no") or 0), "title": prev_row.get("title") or "",
                 "place": prev_row.get("place") or "",
                 "tail": _tail_of(prev_row)}
-    story = compose(ev, ch, applied, prev)
+    story = compose(ev, ch, applied, prev, change,
+                    guide="legacy" if retiring else "adventure")
+    if retiring and not story:
+        story = _fallback_legacy(ch)
 
     at = clock.fmt_sec(now, "%Y-%m-%dT%H:%M:%S")
     cycle_no = int(st.get("cycle") or 0) + 1
@@ -500,9 +658,21 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
              json.dumps(story["themes_used"], ensure_ascii=False),
              json.dumps(story["terms_used"], ensure_ascii=False),
              json.dumps({"exp": applied.get("exp"), "levels": applied.get("levels"),
-                         "fame": applied.get("fame"), "trait": trait_gained},
+                         "fame": applied.get("fame"), "pot": applied.get("pot"),
+                         "trait": trait_gained,
+                         "skills": change.get("skills") or [],
+                         "attrs": change.get("attrs") or [],
+                         "vein": change.get("vein"),
+                         "growth_shown": story.get("growth_shown") or [],
+                         "days": int(ev.get("days") or 0),
+                         "story_day": life.story_day(ch),
+                         "age": life.age_years(ch),
+                         "tag": "retire" if retiring else ""},
                         ensure_ascii=False),
              at))
+        if retiring:
+            heir = story.get("heir") or life.propose_default(ch)
+            life.mark_retired(ch, heir=heir, story_no=adv_no, title=story["title"])
     keep = int(c.get("keep_adventures") or 200)
     db.execute("DELETE FROM adventure WHERE id NOT IN"
                " (SELECT id FROM adventure ORDER BY id DESC LIMIT ?)", (keep,))
@@ -529,22 +699,33 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     st.update({"last_at": at, "cycle": cycle_no, "adventure_no": adv_no,
                "last_status": "ok", "next_at": clock.fmt_sec(now + int(c["interval_min"]) * 60,
                                                              "%Y-%m-%dT%H:%M:%S"),
+               "story_day": life.story_day(ch),
+               "age": life.age_years(ch),
                "last_growth": {"at": at, "exp": applied.get("exp"),
                                "fame": applied.get("fame"),
-                               "levels": applied.get("levels")},
+                               "levels": applied.get("levels"),
+                               "days": int(ev.get("days") or 0)},
                "last_summary": (j.get("assessment") or {}).get("one_line") or ""})
     save_state(st)
+    cs.save_char(ch)          # 成长 / 技能 / 退隐标记 一起落盘 (一次写完)
 
-    log.info("推演 · 第 %d 回合 · %d 分钟 · 修为 +%d%s · 游历 %s",
-             cycle_no, minutes, int(applied.get("exp") or 0),
+    log.info("推演 · 第 %d 回合 · %d 分钟 · %d 故事日 · 修为 +%d%s · 游历 %s",
+             cycle_no, minutes, int(ev.get("days") or 0),
+             int(applied.get("exp") or 0),
              " · 故事" if story else " · 无故事",
              (story or {}).get("title") or "-")
+    if retiring:
+        log.info("推演 · %s 已到 %d 岁, 退隐待传承 (第 %d 回: %s)",
+                 ch.get("name"), life.age_years(ch), adv_no,
+                 (story or {}).get("title") or "-")
     return {"status": "ok", "cycle": cycle_no, "window": ev["window"],
-            "minutes": minutes, "reading": len(ev["reading"]),
+            "minutes": minutes, "days": int(ev.get("days") or 0),
+            "reading": len(ev["reading"]),
             "judgement": j, "growth": applied, "trait": trait_gained,
+            "change": change, "retiring": retiring,
             "fallback": bool(j.get("_fallback")),
             "adventure": story, "skill_version": guidance.version("chronicle"),
-            "char": cs.view(ch)}
+            "life": life.view(ch), "char": cs.view(ch)}
 
 
 def backfill_adventure(cycle_id: int | None = None) -> dict[str, Any] | None:
@@ -680,24 +861,44 @@ def cycles(limit: int = 10) -> list[dict[str, Any]]:
     return out
 
 
+def reset_after_inherit() -> None:
+    """传承之后把故事时钟归零。
+
+    不归零会死锁: 故事日 = 累计陪读分钟 // 60, 而新人的分钟从 0 起 ——
+    ``days = 现在 - 上次`` 永远是负数, 推演永远判"不足一天", 新一代再也走不出去。
+    (真踩过: 第一版忘了这一步, 换人后 60 分钟读完还是不出门。)
+    """
+    st = load_state()
+    st["story_day"] = 0
+    st["age"] = int(life.cfg()["start_age"])
+    st["last_growth"] = {}
+    st["last_summary"] = ""
+    st.pop("waiting_note", None)
+    save_state(st)
+    log.info("推演 · 传承完成, 故事时钟归零 (新一代从 %d 岁起)", st["age"])
+
+
 def state_view() -> dict[str, Any]:
     """页面 / 接口用的现状 (一次给全, 前端不用问三遍)。"""
     c = cfg()
     st = load_state()
-    adv = adventures(limit=6)
+    adv = adventures(limit=8)
+    ch = cs.load_char()
     return {
         "enabled": bool(c.get("enabled")),
         "config": c,
         "tick": tick_state(),
         "state": {k: st.get(k) for k in
                   ("last_at", "next_at", "cycle", "adventure_no", "last_status",
-                   "last_summary", "last_check_at")},
+                   "last_summary", "last_check_at", "story_day", "age",
+                   "waiting_note", "last_growth")},
+        "life": life.view(ch),
         "adventures": adv,
         "recent": cycles(limit=6),
         "lore": lore.stats(),
         "encounters": encounters.summary(days=7),
         "guides": guidance.all_specs(),
-        "char": _char_brief(cs.load_char()),
+        "char": _char_brief(ch),
     }
 
 

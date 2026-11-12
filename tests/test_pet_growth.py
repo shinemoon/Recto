@@ -70,13 +70,19 @@ ok(ch["level"] >= 2, f"等级 {ch['level']}")
 ok(ch["pot"] == g.POT_PER_LEVEL * r["levels"], f"潜能 {ch['pot']}")
 ok(ch["fame"] == g.FAME_PER_LEVEL * r["levels"], f"声望 {ch['fame']}")
 ok(ch["minutes"] == 100, "累计分钟 100")
-ok(ch["skills"].get(g.AUTO_SKILL) == 1, f"读书悟道 1 级 got {ch['skills']}")
+# 技能成长要慢 (2026-11-12): 300 分钟 = 故事内五天 = 一级
+ok(not ch["skills"].get(g.AUTO_SKILL), f"100 分钟还不该长技能 got {ch['skills']}")
 
 # 第二次: 技能按累计分钟, 不是按这次
 r2 = g.award_minutes(ch, 100)
-ok(ch["skills"].get(g.AUTO_SKILL) == 3,
-   f"累计 200 分钟 → 读书悟道 3 级 got {ch['skills'].get(g.AUTO_SKILL)}")
-ok(r2["skills"].get(g.AUTO_SKILL) == 2, f"本次增益 2 级 got {r2['skills']}")
+ok(not ch["skills"].get(g.AUTO_SKILL),
+   f"累计 200 分钟仍不够 (300 分钟一级) got {ch['skills'].get(g.AUTO_SKILL)}")
+ok(not r2["skills"], f"本次不该给技能 got {r2['skills']}")
+
+r2b = g.award_minutes(ch, 200)
+ok(ch["skills"].get(g.AUTO_SKILL) == 1,
+   f"累计 400 分钟 → 读书悟道 1 级 got {ch['skills'].get(g.AUTO_SKILL)}")
+ok(r2b["skills"].get(g.AUTO_SKILL) == 1, f"本次增益 1 级 got {r2b['skills']}")
 
 # ── 只增不减 ─────────────────────────────────────────────
 before = (ch["level"], ch["exp"], ch["pot"], ch["minutes"], ch["skills"])
@@ -100,6 +106,38 @@ g.award_minutes(ch3, 200)   # 累计 330 → 第二层 (300)
 ok(ch3["vein"] == 2, f"330 分钟 → 通 2 层 got {ch3['vein']}")
 g.award_minutes(ch3, 300)   # 累计 630 → 第三层 (540)
 ok(ch3["vein"] == 3, f"630 分钟 → 通 3 层 got {ch3['vein']}")
+
+# ── 技能限速: 每 SKILL_DAYS_PER_LEVEL 个故事日 += 1 ─────────
+ok(g.SKILL_DAYS_PER_LEVEL == 8, "技能 8 个故事日一级")
+cg = cs.new_char()
+cg["minutes"] = 60 * 3            # 故事内第 3 天
+aw_g1 = g.award_judged(cg, {"exp": 100, "skills": {"dushuwudao": 1}}, max_exp=200)
+ok(not aw_g1["skills"], f"第 3 天不该长技能 got {aw_g1['skills']}")
+ok(aw_g1["skill_gate"]["blocked"] is True, "闸门关着")
+cg["minutes"] = 60 * 9            # 第 9 天
+aw_g2 = g.award_judged(cg, {"exp": 100, "skills": {"dushuwudao": 1}}, max_exp=200)
+ok(aw_g2["skills"] == {"dushuwudao": 1}, f"第 9 天长一级 got {aw_g2['skills']}")
+ok(int(cg["last_skill_day"]) == 9, "记住这次长技能的故事日")
+aw_g3 = g.award_judged(cg, {"exp": 100, "skills": {"dushuwudao": 1}}, max_exp=200)
+ok(not aw_g3["skills"], "同一天内不会连涨")
+
+# ── 先天属性: 升级偶得 (成长才看得见) ──────────────────────
+ok(g.BORN_ON_LEVEL.get("wu") == 3, "悟性每 3 级 +1 (慢)")
+cb = cs.new_char()
+cb["minutes"] = 60000
+g.award_minutes(cb, g.MAX_MINUTES_PER_CALL)      # 480 分钟 → 960 修为 → 3 级
+ok(int(cb["level"]) >= 3, f"升到 3 级以上 got Lv.{cb['level']}")
+ok(int((cb["born"] or {}).get("wu") or 0) == 1, f"3 级得悟性先天 +1 got {cb.get('born')}")
+eff = cs.effective_attrs(cb)
+ok(eff["wu"] == 11, f"先天进实际值 (10+1) got {eff['wu']}")
+before_eff = cs.effective_attrs(cb)
+cb["exp"] = 900000
+cb2 = cs.new_char()
+# 判定口径同样给先天
+cj = g.award_judged(cb, {"exp": 900000}, max_exp=900000)
+ok(int(cb["level"]) > 3, f"判定也能升级 got Lv.{cb['level']}")
+ok(bool(cj.get("born")) or int((cb["born"] or {}).get("wu") or 0) >= 1,
+   f"判定升级也给先天 got {cj.get('born')} / {cb.get('born')}")
 
 # ── 研讨: 长技能不许超上限 ────────────────────────────────
 ch4 = cs.new_char()

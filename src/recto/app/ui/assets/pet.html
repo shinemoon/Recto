@@ -1,9 +1,55 @@
-<!-- 书宠分区正文 —— 陪读精灵 (陪伴宠物)。
-     外壳 (顶栏 / 导航 / 页脚 / 皮肤) 由 recto.app.ui.shell 提供;
-     接口前缀 (/pet) 由 pet.js 里的 PET_BASE 负责。 -->
 <div class="rc-pet">
 
-<!-- ── 0. 人物面板 ───────────────────────────────── -->
+<!-- 故事在最前 (2026-11-12: 故事经历要更醒目) -->
+<section class="card adv-hero" id="card-chronicle">
+  <div class="card-head">
+    <h2>故事 · 它自己走的路</h2>
+    <span class="hint">一小时阅读 = 故事里的一天</span>
+    <span class="pill" id="story-clock">读取中…</span>
+    <span class="pill" id="chronicle-pill">读取中…</span>
+  </div>
+  <div class="card-body">
+    <div class="story-meta" id="story-meta">还没有出门。</div>
+    <div id="adventure-latest" class="adv-latest"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="btn-chronicle-run">现在推演一回</button>
+      <button class="mini" id="btn-chronicle-dry">先看会怎么判</button>
+      <button class="mini" id="btn-chronicle-refresh">刷新</button>
+      <span class="status" id="chronicle-status"></span>
+    </div>
+    <div id="chronicle-out" class="adv-out" hidden></div>
+    <details class="tc-sub" id="adv-history">
+      <summary>往期故事</summary>
+      <div id="adventure-list"></div>
+    </details>
+    <details class="tc-sub" id="chronicle-cfg">
+      <summary>推演设置</summary>
+      <div class="grid" style="margin-top:10px">
+        <label class="inline-check"><input type="checkbox" id="ch-enabled"> 启用后台推演</label>
+        <label>间隔 (分钟)
+          <input id="ch-interval" type="number" min="5" max="1440" step="5">
+        </label>
+        <label>最少分钟 (低于此值视为没读)
+          <input id="ch-minmin" type="number" min="0" max="120" step="1">
+        </label>
+        <label class="inline-check"><input type="checkbox" id="ch-search"> 立卡时联网检索</label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btn-chronicle-save">保存设置</button>
+        <span class="status" id="chronicle-cfg-status"></span>
+      </div>
+    </details>
+    <div class="cs-meta" id="chronicle-state"></div>
+    <div class="cs-meta" id="encounter-chips" style="margin-top:4px"></div>
+    <p class="tip">
+      书宠<b>不跟你说话</b>: 它自己翻账本 —— 读了多久、推进了几章、划过几条线、
+      正文里反复出现过哪些语料词, 然后长一点本事, 走一天的路。
+      一天就是一天: <b>一小时阅读走一天</b>, 八十岁收手。
+    </p>
+  </div>
+</section>
+
+<!-- 人物 -->
 <section class="card" id="card-hero">
   <div class="card-head">
     <h2>书宠 · 人物</h2>
@@ -18,6 +64,7 @@
       <div class="pet-meta">
         <div class="pet-name" id="pet-name">小墨</div>
         <div class="pet-state-line" id="char-subline">初入江湖 · 无门无派</div>
+        <div class="pet-state-line" id="char-life">12 岁 · 第 1 日 · 第 1 代</div>
         <div class="pet-bars">
           <label class="inline">亲密度
             <input id="pet-intimacy" type="range" min="0" max="100" value="0" disabled>
@@ -41,10 +88,50 @@
   </div>
 </section>
 
-<!-- ── 1. 六项根骨 ───────────────────────────────── -->
+<section class="card" id="card-legacy" hidden>
+  <div class="card-head">
+    <h2>传承 · 要不要接这盏灯</h2>
+    <span class="hint">八十岁退隐 · 由读者确认后, 从十二岁起重新算</span>
+    <span class="pill warn" id="legacy-pill">待确认</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-meta" id="legacy-state"></div>
+    <div class="legacy-heir" id="legacy-heir"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="btn-inherit">传承 · 从十二岁起</button>
+      <span class="status" id="legacy-status"></span>
+    </div>
+    <p class="tip">
+      退隐之后<b>不会自动换人</b> —— 这一下清零会把修为、技能、声望、门派关系全部重来,
+      所以要你自己点头。确认后: 上一代的一生会存档, 书宠从 12 岁重新开始,
+      只带走一份家学 (最高那门功夫的三成)、一点声望与余荫。
+    </p>
+  </div>
+</section>
+<section class="card" id="card-growth">
+  <div class="card-head">
+    <h2>1 · 陪读</h2>
+    <span class="hint">阅读器时长 → 成长证据</span>
+    <span class="pill" id="companion-pill">读取中…</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-meta" id="growth-rules"></div>
+    <div class="cs-meta" id="companion-state"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="mini" id="btn-companion-feed">立即折算</button>
+      <span class="status" id="companion-status"></span>
+    </div>
+    <p class="tip">
+      陪读分钟来自<b>阅读器自己的时长记录</b> (人真的在读的那些分钟, 挂着不读不算)。
+      它只累计时长 / 长「读书悟道」/ 推经脉 —— <b>修为不在这里给</b>,
+      由下面的「后台推演」按这段时间的读书记录判定 (两处都给会双计)。
+    </p>
+  </div>
+</section>
+
 <section class="card" id="card-attrs">
   <div class="card-head">
-    <h2>1 · 六项根骨</h2>
+    <h2>2 · 六项根骨</h2>
     <span class="hint">初始 10 · 每项封顶 30 · 总和 180</span>
     <span class="pill" id="attr-pot">潜能 0</span>
   </div>
@@ -65,26 +152,29 @@
   </div>
 </section>
 
-<!-- ── 2. 门派 ───────────────────────────────────── -->
 <section class="card" id="card-schools">
   <div class="card-head">
-    <h2>2 · 门派</h2>
+    <h2>3 · 门派</h2>
     <span class="hint">入门得内功与绝招 · 叛门清声望与门忠</span>
   </div>
   <div class="card-body">
-    <div class="cs-schools" id="school-cards"></div>
+    <details class="cs-fold" id="fold-card-schools">
+      <summary>门派明细 <span class="cs-dim">点开看本门的内功与绝招 · 入门 / 叛门</span></summary>
+      <div class="cs-schools" id="school-cards"></div>
     <p class="tip" id="school-tip"></p>
+    </details>
   </div>
 </section>
 
-<!-- ── 3. 技能与绝招 ─────────────────────────────── -->
 <section class="card" id="card-skills">
   <div class="card-head">
-    <h2>3 · 技能与绝招</h2>
+    <h2>4 · 技能与绝招</h2>
     <span class="hint">绝招三要素: 成功率 / 定身 / 反噬</span>
   </div>
   <div class="card-body">
-    <div class="models-wrap">
+    <details class="cs-fold">
+      <summary>技能明细 <span class="cs-dim">(点开看每一项的等级与绝招参数)</span></summary>
+      <div class="models-wrap">
     <table class="cats skills">
       <thead>
         <tr><th>名称</th><th>类</th><th>属性</th><th>等级</th><th>上限</th>
@@ -93,114 +183,47 @@
       <tbody id="skill-rows"></tbody>
     </table>
     </div>
+    </details>
     <p class="tip" id="skill-tip"></p>
   </div>
 </section>
 
-<!-- ── 4. 性情 ───────────────────────────────────── -->
 <section class="card" id="card-traits">
   <div class="card-head">
-    <h2>4 · 性情</h2>
+    <h2>5 · 性情</h2>
     <span class="hint">最多 6 条 · 总分 ≤ 100 · 上品 40 / 良品 30 / 常品 20 / 下品 10</span>
     <span class="pill" id="trait-pill">0 / 6</span>
   </div>
   <div class="card-body">
-    <div class="cs-traits" id="trait-cards"></div>
+    <details class="cs-fold" id="fold-card-traits">
+      <summary>性情明细 <span class="cs-dim">点开看已觉醒与可觉醒的 16 条</span></summary>
+      <div class="cs-traits" id="trait-cards"></div>
     <p class="tip">
       侠客行叫「个人特征」: 黄色罕见, 红色天生, 蓝色常见, 绿色锦上添花。
       获得靠觉醒点 —— 觉醒点从哪来, 等接上陪读再定。
     </p>
+    </details>
   </div>
 </section>
 
-<!-- ── 5. 经脉 ───────────────────────────────────── -->
 <section class="card" id="card-veins">
   <div class="card-head">
-    <h2>5 · 经脉</h2>
+    <h2>6 · 经脉</h2>
     <span class="hint">十层 · 通脉给五行亲和与属性加成</span>
     <span class="pill" id="vein-pill">0 / 10</span>
   </div>
   <div class="card-body">
-    <div class="cs-veins" id="vein-list"></div>
+    <details class="cs-fold" id="fold-card-veins">
+      <summary>经脉明细 <span class="cs-dim">点开看十层的效果与进度</span></summary>
+      <div class="cs-veins" id="vein-list"></div>
     <p class="tip" id="vein-tip"></p>
-  </div>
-</section>
-
-<!-- ── 6. 陪读 ───────────────────────────────────── -->
-<section class="card" id="card-growth">
-  <div class="card-head">
-    <h2>6 · 陪读</h2>
-    <span class="hint">阅读器时长 → 成长证据</span>
-    <span class="pill" id="companion-pill">读取中…</span>
-  </div>
-  <div class="card-body">
-    <div class="cs-meta" id="growth-rules"></div>
-    <div class="cs-meta" id="companion-state"></div>
-    <div class="row" style="margin-top:12px">
-      <button class="mini" id="btn-companion-feed">立即折算</button>
-      <span class="status" id="companion-status"></span>
-    </div>
-    <p class="tip">
-      陪读分钟来自<b>阅读器自己的时长记录</b> (人真的在读的那些分钟, 挂着不读不算)。
-      它只累计时长 / 长「读书悟道」/ 推经脉 —— <b>修为不在这里给</b>,
-      由下面的「后台推演」按这段时间的读书记录判定 (两处都给会双计)。
-    </p>
-  </div>
-</section>
-
-<!-- ── 7. 游历 (后台推演) ───────────────────────── -->
-<section class="card" id="card-chronicle">
-  <div class="card-head">
-    <h2>7 · 游历</h2>
-    <span class="hint">后台定期: 读账本 → 判成长 → 走一趟</span>
-    <span class="pill" id="chronicle-pill">读取中…</span>
-  </div>
-  <div class="card-body">
-    <div class="cs-meta" id="chronicle-state"></div>
-    <details class="tc-sub" id="chronicle-cfg">
-      <summary>推演设置</summary>
-      <div class="grid" style="margin-top:10px">
-        <label class="inline-check"><input type="checkbox" id="ch-enabled"> 启用后台推演</label>
-        <label>间隔 (分钟)
-          <input id="ch-interval" type="number" min="5" max="1440" step="5">
-        </label>
-        <label>最少分钟 (低于此值视为没读)
-          <input id="ch-minmin" type="number" min="0" max="120" step="1">
-        </label>
-        <label class="inline-check"><input type="checkbox" id="ch-search"> 立卡时联网检索</label>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <button class="primary" id="btn-chronicle-save">保存设置</button>
-        <span class="status" id="chronicle-cfg-status"></span>
-      </div>
     </details>
-    <div class="row" style="margin-top:12px">
-      <button class="primary" id="btn-chronicle-run">现在推演一回</button>
-      <button class="mini" id="btn-chronicle-dry">先看会怎么判</button>
-      <button class="mini" id="btn-chronicle-refresh">刷新</button>
-      <span class="status" id="chronicle-status"></span>
-    </div>
-    <div id="chronicle-out" class="adv-out" hidden></div>
-    <div id="adventure-latest" class="adv-latest"></div>
-    <details class="tc-sub" id="adv-history">
-      <summary>往期游历</summary>
-      <div id="adventure-list"></div>
-    </details>
-    <div class="cs-meta" id="encounter-chips" style="margin-top:12px"></div>
-    <p class="tip">
-      书宠<b>不跟你说话</b>: 它只在你不在的时候自己翻账本 —— 你这几天读了多久、
-      推进了几章、划过几条线, 这段时间正文里反复出现过哪些语料词,
-      然后按 <code>pet/skills/chronicle.md</code> 的口径长本事, 按
-      <code>pet/skills/adventure.md</code> 的口吻走一趟, 故事落在这里。
-      每本书先立一张知识卡 (标题 + 作者先联网搜一次), 读到的章再补一条典故储备。
-    </p>
   </div>
 </section>
 
-<!-- ── 8. 人格 ───────────────────────────────────── -->
 <section class="card" id="card-persona">
   <div class="card-head">
-    <h2>8 · 人格</h2>
+    <h2>7 · 人格</h2>
     <span class="hint">书宠是谁 · 故事的口气</span>
   </div>
   <div class="card-body">
@@ -222,10 +245,9 @@
   </div>
 </section>
 
-<!-- ── 9. 模型接入 ─────────────────────────────── -->
 <section class="card" id="card-llm">
   <div class="card-head">
-    <h2>9 · 模型接入</h2>
+    <h2>8 · 模型接入</h2>
     <span class="hint">书宠的大脑 —— 接哪个模型</span>
     <span class="pill" id="pet-state">读取中…</span>
     <button class="mini" id="btn-llm-toggle">收起</button>
@@ -284,10 +306,9 @@
   </div>
 </section>
 
-<!-- ── 8. 模型库 ─────────────────────────────── -->
 <section class="card" id="card-models">
   <div class="card-head">
-    <h2>10 · 模型库</h2>
+    <h2>9 · 模型库</h2>
     <span class="hint">多套端点 / 多把 key · 陪聊要快, 429 时随手换</span>
     <button class="mini" id="btn-models-toggle">收起</button>
   </div>

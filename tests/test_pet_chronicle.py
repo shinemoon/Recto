@@ -168,6 +168,7 @@ ok(cl2["growth"]["morality"] == -5, f"心性下限 -5 got {cl2['growth']['morali
 
 # ── 5. award_judged: 落地 ────────────────────────────
 cu = cs.new_char()
+cu["minutes"] = 60 * 9          # 已在故事内走了 9 天 → 技能闸门开着
 be = int(cu["exp"])
 aw = g.award_judged(cu, {"exp": 250, "pot": 1, "fame": 6, "morality": -2,
                          "skills": {"dushuwudao": 1, "bogus": 1}}, max_exp=300)
@@ -184,8 +185,9 @@ ok(aw2["exp"] == 100 and aw2["clamped"]["exp"] is True, "超上限被夹且标�
 # 造一段陪读时长 (今天的 40 分钟) 与进度推进
 today = clock.fmt_sec(time.time(), "%Y-%m-%d")
 rc = rs.conn()
+# 70 分钟 = 故事内一天多一点 (一小时阅读 = 一天) —— 攒够一天才出门
 rc.execute("INSERT OR REPLACE INTO rtime (book, day, bitmap, minutes, first_at, updated_at)"
-           " VALUES (?,?,?,?,?,?)", (BOOK, today, "0", 40, clock.iso_local(),
+           " VALUES (?,?,?,?,?,?)", (BOOK, today, "0", 70, clock.iso_local(),
                                      clock.iso_local()))
 rc.execute("INSERT OR REPLACE INTO rprogress (book, chapter, offset, percent, position,"
            " complete, updated_at, sid) VALUES (?,?,?,?,?,?,?,?)",
@@ -194,8 +196,11 @@ rc.commit()
 
 out = ch.run(trigger="manual")
 ok(out["status"] == "ok", f"回合成功 got {out.get('status')} {out.get('error', '')}")
-ok(out["minutes"] == 40, f"窗口内新增 40 分钟 got {out['minutes']}")
-ok(out["growth"]["exp"] == 40 * 6, f"修为被夹到 240 got {out['growth']['exp']}")
+ok(out["minutes"] == 70, f"窗口内新增 70 分钟 got {out['minutes']}")
+ok(out["days"] == 1, f"故事内走过 1 天 got {out.get('days')}")
+ok(out["growth"]["exp"] == 320, f"修为按故事日夹到 320 got {out['growth']['exp']}")
+ok(out["life"]["day"] >= 1 and out["life"]["age"] == 12,
+   f"故事时钟前进了 got {out.get('life')}")
 ok(out["adventure"] and "青石巷" in out["adventure"]["title"], f"游历故事已写 got {out.get('adventure')}")
 advs = ch.adventures(limit=5)
 ok(len(advs) == 1 and advs[0]["no"] == 1, f"游历落库 got {[a['no'] for a in advs]}")
@@ -207,19 +212,31 @@ ok(ch.load_state()["cycle"] == 1, "idle 不写 cycle 行")
 ok(len(ch.adventures(limit=9)) == 1, "idle 不产生新故事")
 
 
+# ── 6b. 故事节奏: 不足一天 → waiting (一小时阅读 = 一天) ─────────
+st_before = int(ch.load_state().get("story_day") or 0)
+rc = rs.conn()
+rc.execute("UPDATE rtime SET minutes=90 WHERE book=? AND day=?", (BOOK, today))
+rc.commit()
+w = ch.run(trigger="manual")
+ok(w["status"] == "waiting",
+   f"才读 20 分钟 (不足一天) → 不出门 got {w.get('status')}")
+ok(w.get("minutes_to_next_day", 0) > 0, "告诉人还差多少分钟到下一日")
+ok(int(ch.load_state().get("story_day") or 0) == st_before, "故事日没有虚涨")
+
+
 # ── 7. 模型不可用 → 保底 ──────────────────────────────
 def broken_chat(system, user, **kw):
     return None
 
 
 lore.chat = broken_chat
-# 造新的阅读时长 (再加 10 分钟) 让回合有活动
+# 造新的阅读时长 (再加 60 分钟 = 又一天) 让回合有活动
 rc = rs.conn()
-rc.execute("UPDATE rtime SET minutes=50 WHERE book=? AND day=?", (BOOK, today))
+rc.execute("UPDATE rtime SET minutes=130 WHERE book=? AND day=?", (BOOK, today))
 rc.commit()
 out2 = ch.run(trigger="manual")
 ok(out2["status"] == "ok" and out2["fallback"] is True, "模型不可用时走保底")
-ok(out2["growth"]["exp"] == 20, f"保底 = 10 分钟 × 2 got {out2['growth']['exp']}")
+ok(out2["growth"]["exp"] == 120, f"保底 = 60 分钟 × 2 got {out2['growth']['exp']}")
 ok(out2["adventure"] is None, "写不出故事时宁可不写")
 
 lore.chat = fake_chat
@@ -227,13 +244,13 @@ lore.chat = fake_chat
 
 # ── 8. dry: 只看不落地 ───────────────────────────────
 rc = rs.conn()
-rc.execute("UPDATE rtime SET minutes=70 WHERE book=? AND day=?", (BOOK, today))
+rc.execute("UPDATE rtime SET minutes=190 WHERE book=? AND day=?", (BOOK, today))
 rc.commit()
 before = cs.load_char()
 d = ch.run(trigger="manual", dry=True)
 after = cs.load_char()
 ok(d["status"] == "dry", f"dry 状态 got {d.get('status')}")
-ok(d["judgement"]["growth"]["exp"] == 20 * 6, f"dry 也判数 got {d['judgement']['growth']}")
+ok(d["judgement"]["growth"]["exp"] == 320, f"dry 也判数 (按故事日上限) got {d['judgement']['growth']}")
 ok(int(after["exp"]) == int(before["exp"]) and int(after["level"]) == int(before["level"]),
    "dry 没有改动存档")
 ok(ch.load_state()["cycle"] == 2, "dry 不推进回合数")
@@ -263,9 +280,11 @@ ok("chattiness" not in js, "书宠不再有「话痨程度」(它不说话)")
 # ── 10. guidance ────────────────────────────────────
 ok(guidance.version("chronicle") and len(guidance.version()) == 8, "skill 版本 8 位")
 specs = guidance.all_specs()
-ok([s["name"] for s in specs] == ["lore", "chronicle", "adventure"], f"三份 skill got {specs}")
+ok([s["name"] for s in specs] == ["lore", "chronicle", "adventure", "legacy"],
+   f"四份 skill got {[s['name'] for s in specs]}")
 ok("账房 + 教习" in guidance.load("chronicle"), "chronicle skill 可读")
 ok("说书人" in guidance.load("adventure"), "adventure skill 可读")
+ok("传承" in guidance.load("legacy"), "legacy skill 可读")
 
 
 # ── 11. HTTP ────────────────────────────────────────

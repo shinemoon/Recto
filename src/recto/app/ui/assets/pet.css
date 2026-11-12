@@ -376,3 +376,82 @@
   .rc-pet .adv-card { padding: 12px; }
   .rc-pet .adv-body p { text-indent: 0; }
 }
+
+/* ── 故事 (置顶 hero): 这是页面的主角, 字号与留白都比别的卡大一档 ── */
+.rc-pet .adv-hero { border-top: 2px solid var(--rc-primary, var(--rc-accent, var(--line))); }
+.rc-pet .adv-hero .card-body { padding-top: 6px; }
+.rc-pet .story-meta {
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+  font-size: 12px; color: var(--rc-mute);
+  padding: 2px 0 10px;
+  border-bottom: 1px solid var(--rc-outline-variant, var(--line));
+  margin-bottom: 12px;
+}
+.rc-pet .story-bit { white-space: nowrap; }
+.rc-pet .adv-hero .adv-latest { margin-top: 0; }
+.rc-pet .adv-hero .adv-card {
+  border: 0; padding: 0;
+}
+.rc-pet .adv-hero .adv-card h3 {
+  font-size: 1.5rem; line-height: 1.35;
+}
+.rc-pet .adv-hero .adv-no { border: 0; padding: 0; letter-spacing: .08em; }
+.rc-pet .adv-hero .adv-body { font-size: 1.02rem; }
+.rc-pet .adv-hero .adv-body p { line-height: 1.95; margin-bottom: .9em; }
+.rc-pet .adv-growth {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 2px 0 12px;
+}
+.rc-pet .adv-growth-l {
+  font-size: 11px; letter-spacing: .1em; color: var(--rc-mute);
+  margin-right: 2px;
+}
+.rc-pet .adv-chip.ok {
+  border-color: color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 40%, transparent);
+  color: var(--rc-fg);
+  background: color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 8%, transparent);
+}
+.rc-pet .adv-card.is-retire { border-left: 3px solid var(--rc-warn, var(--line)); padding-left: 12px; }
+
+/* ── 折叠块 (技能明细等): 默认收起, 摘要本身也要能看出信息 ── */
+.rc-pet .cs-fold {
+  border: 1px solid var(--rc-outline-variant, var(--line));
+  padding: 0 10px;
+}
+.rc-pet .cs-fold > summary {
+  cursor: pointer; padding: 9px 0;
+  font-size: 12.5px; font-weight: 600;
+  list-style: none;
+}
+.rc-pet .cs-fold > summary::-webkit-details-marker { display: none; }
+.rc-pet .cs-fold > summary::after {
+  content: '›'; float: right; color: var(--rc-mute);
+  transition: transform .15s ease;
+}
+.rc-pet .cs-fold[open] > summary::after { transform: rotate(90deg); }
+.rc-pet .cs-fold > .models-wrap { padding-bottom: 10px; }
+
+/* ── 传承卡 ── */
+.rc-pet .legacy-pick { display: grid; gap: 8px; margin: 10px 0; }
+@media (min-width: 720px) {
+  .rc-pet .legacy-pick { grid-template-columns: repeat(3, 1fr); }
+}
+.rc-pet .legacy-opt {
+  display: flex; flex-direction: column; gap: 4px;
+  text-align: left; padding: 10px 12px;
+  border: 1px solid var(--rc-outline-variant, var(--line));
+  background: transparent; color: inherit; cursor: pointer;
+  font: inherit;
+}
+.rc-pet .legacy-opt b { font-size: 13px; }
+.rc-pet .legacy-opt span { font-size: 11.5px; color: var(--rc-mute); line-height: 1.5; }
+.rc-pet .legacy-opt.is-on {
+  border-color: var(--rc-primary, var(--rc-accent));
+  background: color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 10%, transparent);
+}
+.rc-pet .legacy-name {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12.5px; color: var(--rc-mute); margin-bottom: 8px;
+}
+.rc-pet .legacy-name input { max-width: 200px; }
+.rc-pet .legacy-why { font-size: 12.5px; color: var(--rc-mute); margin: 0 0 6px; }

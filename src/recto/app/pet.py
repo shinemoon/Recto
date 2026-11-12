@@ -21,6 +21,7 @@ from recto.pet import chronicle as chronicle_mod
 from recto.pet import companion as companion_mod
 from recto.pet import config as petcfg
 from recto.pet import growth as growth_mod
+from recto.pet import life as life_mod
 from recto.pet import lore as lore_mod
 
 PREFIX = "/pet"
@@ -92,8 +93,38 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
     if path == "/char/schema":
         s = cs.schema()
         # 成长规则跟体系定义一起发 —— 前端不用另抄一份
-        s["growth"] = growth_mod.GROWTH_RULES
+        s["growth"] = growth_mod.rules()
         return 200, s
+
+    # ── 时序: 故事内第几天 / 几岁 / 是否该退隐 ───────
+    if path == "/char/life":
+        return 200, life_mod.view(cs.load_char())
+
+    # 传承: 上一代已退隐 (或到岁数) + 读者确认 → 新人从 12 岁起
+    if path == "/char/inherit":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        body = _body(h)
+        if body.get("confirm") is not True:
+            return 400, {"error": "传承要读者自己点头: 请带 confirm=true",
+                         "life": life_mod.view(cs.load_char())}
+        ch = cs.load_char()
+        if life_mod.stage(ch) != "retiring" and not life_mod.ready_to_retire(ch):
+            return 409, {"error": "还没到退隐的时候", "life": life_mod.view(ch)}
+        out = life_mod.inherit(ch, str(body.get("heir_type") or "disciple"),
+                               str(body.get("name") or ""))
+        cs.save_char(out["char"])
+        chronicle_mod.reset_after_inherit()      # 新一代的故事时钟从零开始
+        return 200, {"ok": True, "heir_type": out["heir_type"],
+                     "record": out["record"], "archive": out["archive"],
+                     "char": cs.view(out["char"]), "life": life_mod.view(out["char"])}
+
+    if path == "/lineage":
+        ch = cs.load_char()
+        return 200, {"generation": int(ch.get("generation") or 1),
+                     "current": ch.get("name") or "",
+                     "lineage": list(ch.get("lineage") or []),
+                     "life": life_mod.view(ch)}
 
     if path == "/char/alloc":
         if method != "POST":

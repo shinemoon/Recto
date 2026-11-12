@@ -95,6 +95,18 @@ function renderChar(ch) {
     bits.push('陪读 ' + (ch.minutes || 0) + ' 分钟');
     sub.textContent = bits.join(' · ');
   }
+  // 故事内的年岁 —— 这是"活到八十岁"的那条线
+  const lif = $('#char-life');
+  if (lif) {
+    const L = ch.life || {};
+    const bits = [];
+    bits.push(L.age_label || '12 岁');
+    bits.push('第 ' + (L.generation || ch.generation || 1) + ' 代');
+    bits.push('故事第 ' + (L.day_no || 1) + ' 日');
+    if (L.stage === 'retiring') bits.push('已退隐 · 待传承');
+    lif.textContent = bits.join(' · ');
+  }
+  renderLife(ch.life);
 
   // 状态条
   const st = $('#char-stats');
@@ -205,6 +217,11 @@ function renderChar(ch) {
       ? ('本门: ' + ch.school.name + ' —— ' + ch.school.desc)
       : '尚未入门。入门得本门内功与绝招, 并加一项根骨。';
   }
+  const scSum = document.querySelector('#fold-card-schools > summary');
+  if (scSum) {
+    scSum.innerHTML = '门派明细 <span class="cs-dim">' +
+      (ch.school ? esc(ch.school.name) : '无门无派') + ' · 点开看内功与绝招</span>';
+  }
 
   // 技能与绝招
   const sk = $('#skill-rows');
@@ -234,6 +251,14 @@ function renderChar(ch) {
       ? ('共 ' + n + ' 项。绝招成功率 = 基础值 + 对应根骨 + 绝招等级×2 (最高 95%), 失败会反噬。')
       : '还没有技能 —— 入门得内功与绝招, 其余靠陪读修习。';
   }
+  // 折叠起来的技能表, 摘要里给出"几项 / 最高几级", 不点开也能看出长进
+  const skSum = document.querySelector('#card-skills .cs-fold > summary');
+  if (skSum) {
+    const list = ch.skills || [];
+    const top = list.reduce(function (m, x) { return Math.max(m, x.level || 0); }, 0);
+    skSum.innerHTML = '技能明细 <span class="cs-dim">共 ' + list.length + ' 项 · 最高 ' +
+      top + ' 级 · 点开看等级与绝招参数</span>';
+  }
 
   // 性情
   const tp = $('#trait-pill');
@@ -242,6 +267,11 @@ function renderChar(ch) {
     tp.className = 'pill ' + (ti.left_count > 0 && ti.left_points > 0 ? 'warn' : 'mute');
     tp.textContent = (ti.owned || []).length + ' / ' + ti.max_count +
       ' · ' + ti.spent + ' / ' + ti.max_points + ' 分';
+  }
+  const trSum = document.querySelector('#fold-card-traits > summary');
+  if (trSum) {
+    trSum.innerHTML = '性情明细 <span class="cs-dim">已觉醒 ' +
+      ((ti.owned || []).length) + ' / ' + (ti.max_count || 6) + ' · 点开看 16 条</span>';
   }
   const tc = $('#trait-cards');
   if (tc) {
@@ -272,6 +302,11 @@ function renderChar(ch) {
   if (vp) {
     vp.className = 'pill ' + (ch.vein > 0 ? 'ok' : 'mute');
     vp.textContent = (ch.vein || 0) + ' / 10';
+  }
+  const vSum = document.querySelector('#fold-card-veins > summary');
+  if (vSum) {
+    vSum.innerHTML = '经脉明细 <span class="cs-dim">已通 ' + (ch.vein || 0) +
+      ' / 10 层 · 点开看效果与进度</span>';
   }
   const vl = $('#vein-list');
   if (vl) {
@@ -724,6 +759,36 @@ function renderChronicle(v) {
     else if (tick.running) { pill.className = 'pill'; pill.textContent = '推演中…'; }
     else { pill.className = 'pill ok'; pill.textContent = (st.cycle || 0) + ' 回合'; }
   }
+  // 故事时钟 —— 页面第一眼要看到"活到第几天、几岁"
+  const L = v.life || {};
+  const clockPill = $('#story-clock');
+  if (clockPill) {
+    if (L.stage === 'retiring') {
+      clockPill.className = 'pill warn';
+      clockPill.textContent = L.age_label + ' · 已退隐';
+    } else {
+      clockPill.className = 'pill' + (L.day > 0 ? ' ok' : '');
+      clockPill.textContent = (L.age_label || '12 岁') + ' · 第 ' + (L.generation || 1) + ' 代';
+    }
+  }
+  const metaBox = $('#story-meta');
+  if (metaBox) {
+    const bits = [];
+    bits.push('故事里第 ' + (L.day_no || 1) + ' 日');
+    bits.push((L.age || 12) + ' 岁');
+    if (L.days_to_retire > 0) {
+      bits.push('距退隐还有 ' + Math.ceil(L.days_to_retire / 365) + ' 年');
+    } else {
+      bits.push('已到退隐之年');
+    }
+    if (st.waiting_note) bits.push(st.waiting_note);
+    bits.push('已走 ' + (st.adventure_no || 0) + ' 回');
+    bits.push('一小时阅读 = 一天');
+    metaBox.innerHTML = bits.map(function (x) {
+      return '<span class="story-bit">' + esc(String(x)) + '</span>';
+    }).join('');
+  }
+  renderLife(L);
   const rows = [
     ['上一回合', st.last_at ? st.last_at.replace('T', ' ').slice(0, 16) : '还没跑过'],
     ['下一回合', st.next_at ? st.next_at.replace('T', ' ').slice(0, 16) : '未定'],
@@ -766,13 +831,32 @@ function renderChronicle(v) {
       boxLatest.innerHTML = '<p class="tip">还没有游历。它会在下一次推演时自己出门 ——' +
         ' 也可以点上面的「现在推演一回」。</p>';
     } else {
+      const g = latest.growth || {};
+      const show = [];
+      if (g.days) show.push('故事推进 ' + g.days + ' 日');
+      if (g.exp) show.push('修为 +' + g.exp);
+      (g.skills || []).forEach(function (k) {
+        show.push((k.name || k.id) + ' ' + k.from + '→' + k.to + ' 级');
+      });
+      (g.attrs || []).forEach(function (a) {
+        show.push((a.name || a.key) + ' ' + a.from + '→' + a.to);
+      });
+      if (g.vein) show.push('通经 ' + g.vein + ' 层');
+      if (g.trait) show.push('觉醒「' + g.trait + '」');
+      if (g.tag === 'retire') show.push('退隐 · 待传承');
       boxLatest.innerHTML =
-        '<article class="adv-card"><header>' +
+        '<article class="adv-card' + (g.tag === 'retire' ? ' is-retire' : '') + '"><header>' +
         '<span class="adv-no">第 ' + latest.no + ' 回</span>' +
         '<h3>' + esc(latest.title) + '</h3>' +
         (latest.place ? '<span class="adv-place">' + esc(latest.place) + '</span>' : '') +
         '<span class="adv-at">' + esc(String(latest.at || '').replace('T', ' ').slice(0, 16)) +
         '</span></header>' +
+        (show.length
+          ? '<div class="adv-growth"><span class="adv-growth-l">本回所显</span>' +
+            show.map(function (t) {
+              return '<span class="adv-chip ok">' + esc(t) + '</span>';
+            }).join('') + '</div>'
+          : '') +
         '<div class="adv-body">' + advParagraphs(latest.body) + '</div>' +
         (latest.terms && latest.terms.length
           ? '<div class="adv-chips">' + latest.terms.map(function (t) {
@@ -823,6 +907,16 @@ function renderRunResult(r) {
     return;
   }
   if (r.status === 'busy') { box.textContent = '上一次推演还没结束。'; return; }
+  if (r.status === 'waiting') {
+    box.innerHTML = '<div class="adv-run">还不到下一日 —— 再读 ' +
+      (r.minutes_to_next_day || 0) + ' 分钟 (一小时 = 故事里一天)。</div>';
+    return;
+  }
+  if (r.status === 'retired') {
+    box.innerHTML = '<div class="adv-run">已经退隐了 —— 等你在下面的「传承」里点头,' +
+      ' 才会从那一位 12 岁重新开始。</div>';
+    return;
+  }
   if (r.status === 'error' || r.error) {
     box.innerHTML = '<div class="adv-run err">推演失败: ' + esc(r.error || '未知错误') + '</div>';
     return;
@@ -908,6 +1002,99 @@ $('#btn-chronicle-save').onclick = async () => {
     await loadChronicle();
   } catch (e) { setStatus(st, e.message, 'err'); }
 };
+
+
+/* ───────────────────────── 传承 (八十岁 → 十二岁) ───────────────────────── */
+
+function renderLife(L) {
+  const card = $('#card-legacy');
+  if (!card) return;
+  const show = !!(L && (L.stage === 'retiring' || L.ready_to_retire));
+  card.hidden = !show;
+  if (!show) return;
+
+  state.life = L;
+  const heir = L.heir || {};
+  const types = L.heir_types || [];
+  if (!state.heirType || !types.some(function (t) { return t.id === state.heirType; })) {
+    state.heirType = heir.type || (types[0] && types[0].id) || 'disciple';
+  }
+  if (!state.heirName) state.heirName = heir.name || '';
+
+  const pill = $('#legacy-pill');
+  if (pill) {
+    pill.className = 'pill warn';
+    pill.textContent = L.stage === 'retiring' ? '退隐 · 等确认' : '到岁数了 · 可退隐';
+  }
+
+  const box = $('#legacy-state');
+  if (box) {
+    const rows = [
+      ['这一代', '第 ' + (L.generation || 1) + ' 代 · ' + (L.age || 12) + ' 岁'],
+      ['故事里', '第 ' + (L.day_no || 1) + ' 日 · 走了 ' + Math.round((L.day || 0) / 365 * 10) / 10 + ' 年'],
+      ['退隐', L.stage === 'retiring'
+        ? ('已写下第 ' + (L.last_retire_story || 0) + ' 回' +
+           (L.retire_story_title ? ' · ' + L.retire_story_title : '') +
+           (L.retired_at ? ' · ' + String(L.retired_at).replace('T', ' ').slice(0, 16) : ''))
+        : ('还差 ' + Math.max(0, (L.days_to_retire || 0)) + ' 个故事日 (约 ' + Math.ceil((L.days_to_retire || 0) / 365) + ' 年)')],
+    ];
+    if ((L.lineage || []).length) {
+      rows.push(['上一代', (L.lineage || []).map(function (x) {
+        return (x.name || '') + ' · ' + (x.years || 0) + ' 年 · Lv.' + (x.level || 1);
+      }).join(' / ')]);
+    }
+    box.innerHTML = rows.map(function (kv) {
+      return '<div class="cs-meta-row"><span class="cs-meta-l">' + esc(kv[0]) +
+        '</span><span class="cs-meta-v">' + esc(String(kv[1])) + '</span></div>';
+    }).join('');
+  }
+
+  const hb = $('#legacy-heir');
+  if (hb) {
+    hb.innerHTML =
+      '<div class="legacy-pick">' + types.map(function (t) {
+        return '<button class="legacy-opt' + (t.id === state.heirType ? ' is-on' : '') +
+          '" data-heir="' + esc(t.id) + '"><b>' + esc(t.name) + '</b>' +
+          '<span>' + esc(t.desc || '') + '</span></button>';
+      }).join('') + '</div>' +
+      '<label class="legacy-name">传承人名<input id="legacy-name" maxlength="24" value="' +
+      esc(state.heirName || '') + '" placeholder="两个字到三个字"></label>' +
+      (heir.reason ? '<p class="legacy-why">' + esc(heir.reason) + '</p>' : '') +
+      '<p class="tip">确认后这一代的一生会存档（' +
+      esc((L.lineage || []).length ? '已有 ' + L.lineage.length + ' 代记录' : '这是第一代') +
+      '），新人从 12 岁起，只带走一份家学（最高那门功夫的三成）、一点声望与余荫。</p>';
+  }
+}
+
+document.addEventListener('click', function (e) {
+  const opt = e.target.closest('[data-heir]');
+  if (opt) {
+    state.heirType = opt.dataset.heir;
+    renderLife(state.life || {});
+    return;
+  }
+  if (!e.target.closest('#btn-inherit')) return;
+  const st = $('#legacy-status');
+  const name = (document.getElementById('legacy-name') || {}).value || state.heirName || '';
+  const label = ({ child: '子女', disciple: '徒弟', student: '学生' })[state.heirType] || '徒弟';
+  if (!confirm('确认传承? 这一代清空 —— 新人从 12 岁起 (' + label + ' · ' + (name || '小墨') + ')。')) return;
+  setStatus(st, '传承中…');
+  api('/api/char/inherit', {
+    method: 'POST',
+    body: JSON.stringify({ heir_type: state.heirType, name: name, confirm: true }),
+  }).then(function (r) {
+    state.heirType = '';
+    state.heirName = '';
+    if (r.char) renderChar(r.char);
+    if (r.life) renderLife(r.life);
+    setStatus(st, '已传承 · 第 ' + ((r.char && r.char.generation) || '?') + ' 代从 12 岁起', 'ok');
+    loadChronicle();
+  }).catch(function (err) { setStatus(st, err.message, 'err'); });
+});
+
+document.addEventListener('input', function (e) {
+  if (e.target && e.target.id === 'legacy-name') state.heirName = e.target.value;
+});
 
 /* ───────────────────────── 启动 ───────────────────────── */
 

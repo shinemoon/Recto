@@ -310,10 +310,13 @@ CHAR_PATH = _pet_root() / "char.json"
 
 
 def new_char(name: str = "小墨") -> dict[str, Any]:
-    """一只刚出生的书宠。"""
+    """一只刚出生的书宠 (12 岁出江湖)。"""
     return {
         "version": 1,
         "name": name or "小墨",
+        "generation": 1,               # 第几代 (传承 +1)
+        "lineage": [],                 # 上一代们的记录 (退隐时追加)
+        "life": {"stage": "growing"},  # growing | retiring (已退隐, 等传承)
         "school": "",
         "level": 1,
         "exp": 0,
@@ -328,6 +331,7 @@ def new_char(name: str = "小墨") -> dict[str, Any]:
         "minutes": 0,                  # 累计陪读分钟 (已折算进修为的那部分)
         "credited_minutes": 0,         # 已从阅读时长折算过的分钟 (幂等锚点)
         "skills": {},                  # 技能 id → 等级
+        "last_skill_day": 0,           # 上次技能长进时的故事内天数 (限速用)
         "traits": [],                  # 已获性情 id
         "vein": 0,                     # 已通经脉层数
         "vein_minutes": 0,             # 本层已积累的陪读分钟
@@ -357,6 +361,16 @@ def load_char() -> dict[str, Any]:
         ch["traits"] = []
     if not isinstance(ch.get("born"), dict):
         ch["born"] = {}
+    # 时序 / 传承 (老存档没有这几栏)
+    if not isinstance(ch.get("life"), dict):
+        ch["life"] = {"stage": "growing"}
+    if not isinstance(ch.get("lineage"), list):
+        ch["lineage"] = []
+    try:
+        ch["generation"] = max(1, int(ch.get("generation") or 1))
+        ch["last_skill_day"] = max(0, int(ch.get("last_skill_day") or 0))
+    except (TypeError, ValueError):
+        ch["generation"], ch["last_skill_day"] = 1, 0
     # 自愈: credited_minutes 与 minutes 是同一个数的两个名字, 必须始终相等。
     # (第一版折算 724 分钟时, award_minutes 的单次封顶截掉了 244 分钟,
     #  但锚点已经推到 724 → 那 244 分钟永远补不回来。)
@@ -634,6 +648,12 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
     base = _base_attrs(ch)
     school = SCHOOL_BY_ID.get(ch.get("school") or "")
     rank = rank_of(int(ch.get("level") or 1))
+    try:
+        from recto.pet import life as _life
+
+        life_view = _life.view(ch)
+    except Exception:  # noqa: BLE001 — 时序算不出来不该拖垮人物面板
+        life_view = {}
 
     attr_rows = []
     for a in ATTRS:
@@ -747,6 +767,9 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
         "neigong_level": d["neigong_level"],
         "wuxing": d["wuxing"],
         "school_bonus": d["school_bonus"],
+        "generation": int(ch.get("generation") or 1),
+        "lineage": list(ch.get("lineage") or []),
+        "life": life_view,
         "created_at": ch.get("created_at") or "",
         "updated_at": ch.get("updated_at") or "",
     }

@@ -52,9 +52,10 @@ ok(cards.some((c) => c.includes('人格')), '有「人格」卡');
 const ids = await page.$$eval('.rc-pet input, .rc-pet select', (els) => els.map((e) => e.id));
 for (const want of ['llm-base', 'llm-model', 'llm-key', 'llm-provider', 'llm-timeout',
                     'llm-maxtok', 'llm-temp', 'llm-thinking', 'llm-preset',
-                    'llm-model-sel', 'pet-name-input', 'pet-style', 'pet-chattiness']) {
+                    'llm-model-sel', 'pet-name-input', 'pet-style']) {
   ok(ids.includes(want), `字段存在: ${want}`);
 }
+ok(!ids.includes('pet-chattiness'), '没有「话痨程度」(书宠不说话)');
 
 // ── 预设下拉被填上了 ──────────────────────────────
 await page.waitForFunction(() => document.querySelectorAll('#llm-preset option').length > 1, { timeout: 5000 }).catch(() => {});

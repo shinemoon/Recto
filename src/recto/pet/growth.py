@@ -40,8 +40,17 @@ POT_PER_LEVEL = 3
 FAME_PER_LEVEL = 5
 #: 陪读时长自动长哪门功夫 (对应 MUD 北侠的「读书」—— 唯一不消耗潜能的涨法)
 AUTO_SKILL = "dushuwudao"
-#: AUTO_SKILL 每多少分钟长 1 级
-AUTO_SKILL_MINUTES_PER_LEVEL = 60
+#: AUTO_SKILL 每多少分钟长 1 级。
+#: 一小时阅读 = 故事内一天 ⇒ 300 分钟 = 五天一级 —— 慢到"翻半个月书才长一层"。
+AUTO_SKILL_MINUTES_PER_LEVEL = 300
+#: 判定口径的技能限速: 每 N 个**故事内**天, 最多由判定长 1 级
+#: (自动「读书悟道」不占这条, 它自己按 300 分钟一级走)
+SKILL_DAYS_PER_LEVEL = 8
+
+#: 先天属性: 每升 N 级 +1。
+#: 为什么要有这一条: 光靠潜能点, 属性永远不动 —— 故事里也就写不出"人变了"。
+#: 悟性每 3 级 +1、根骨每 6 级 +1 (慢, 一封顶 30)。
+BORN_ON_LEVEL = {"wu": 3, "gen": 6}
 
 #: 陪读一次最多记多少分钟 (防手滑把一整天的挂机都算进去)
 MAX_MINUTES_PER_CALL = 480
@@ -53,8 +62,15 @@ GROWTH_RULES: dict[str, Any] = {
     "fame_per_level": FAME_PER_LEVEL,
     "auto_skill": AUTO_SKILL,
     "auto_skill_minutes_per_level": AUTO_SKILL_MINUTES_PER_LEVEL,
+    "skill_days_per_level": SKILL_DAYS_PER_LEVEL,
+    "born_on_level": dict(BORN_ON_LEVEL),
     "max_minutes_per_call": MAX_MINUTES_PER_CALL,
     "one_way": True,
+    "time": {
+        "minutes_per_story_day": None,   # 由 pet.life 填 (60 分钟 = 故事内一天)
+        "start_age": None,               # 12 岁出江湖
+        "retire_age": None,              # 80 岁退隐 → 等读者确认传承
+    },
     # 判定口径 (后台 skill 给数, 代码只夹逼): 每回合上限
     "judged_caps": {"exp": 3000, "pot": 3, "fame": 20, "skills": 2,
                     "morality": 5, "trait": 1},
@@ -67,7 +83,47 @@ GROWTH_RULES: dict[str, Any] = {
 }
 
 
+def rules() -> dict[str, Any]:
+    """``GROWTH_RULES`` 的运行时版本 (把时序里的真实数字填进去)。"""
+    import copy
+
+    out = copy.deepcopy(GROWTH_RULES)
+    try:
+        from recto.pet import life
+
+        c = life.cfg()
+        out["time"].update({"minutes_per_story_day": int(c["minutes_per_day"]),
+                            "start_age": int(c["start_age"]),
+                            "retire_age": int(c["retire_age"])})
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 # ── 换算 ─────────────────────────────────────────────────────
+
+def _apply_born(ch: dict[str, Any], old_level: int) -> dict[str, int]:
+    """升级偶得先天属性 (就地改)。返回这次长了哪几项、各几点。"""
+    new_level = int(ch.get("level") or 1)
+    born = dict(ch.get("born") or {})
+    gained: dict[str, int] = {}
+    school = cs.SCHOOL_BY_ID.get(str(ch.get("school") or "")) or {}
+    bonus = school.get("bonus") or {}
+    raw = ch.get("attrs") or {}
+    for key, every in BORN_ON_LEVEL.items():
+        n = sum(1 for lv in range(int(old_level) + 1, new_level + 1) if lv % every == 0)
+        if n <= 0:
+            continue
+        cap = int(next(a["cap"] for a in cs.ATTRS if a["key"] == key))
+        base = int(raw.get(key, next(a["init"] for a in cs.ATTRS if a["key"] == key)))
+        room = max(0, cap - base - int(bonus.get(key, 0)) - int(born.get(key, 0)))
+        add = min(n, room)
+        if add:
+            born[key] = int(born.get(key, 0)) + add
+            gained[key] = add
+    ch["born"] = born
+    return gained
+
 
 def exp_for(minutes: int) -> int:
     """陪读多少分钟换多少修为。"""
@@ -119,9 +175,11 @@ def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True,
         ch["exp"] = int(ch["exp"]) - need
         ch["level"] = int(ch.get("level") or 1) + 1
         levels += 1
+    born_gain: dict[str, int] = {}
     if levels:
         ch["pot"] = int(ch.get("pot") or 0) + POT_PER_LEVEL * levels
         ch["fame"] = int(ch.get("fame") or 0) + FAME_PER_LEVEL * levels
+        born_gain = _apply_born(ch, before_level)
 
     # 陪读自动长「读书悟道」—— 按累计分钟算, 不是按这次 (每 N 分钟整一格)
     skill_gain_map: dict[str, int] = {}
@@ -151,6 +209,7 @@ def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True,
         "pot": POT_PER_LEVEL * levels,
         "fame": int(ch.get("fame") or 0) - before_fame,
         "skills": skill_gain_map,
+        "born": born_gain,
         "vein": vein,
         "level": int(ch.get("level") or 1),
         "total_minutes": total_min,
@@ -243,11 +302,13 @@ MAX_EXP_PER_CYCLE = 3000
 MAX_POT_PER_CYCLE = 3
 MAX_FAME_PER_CYCLE = 20
 #: 一回合最多长几门功夫 (每次每门 +1 级)
-MAX_SKILLS_PER_CYCLE = 2
+#: 一回合 (≈ 一小时阅读 ≈ 故事内一天) 只许长一门 —— 慢成长的关键闸门之一
+MAX_SKILLS_PER_CYCLE = 1
 
 
 def award_judged(ch: dict[str, Any], j: dict[str, Any], *,
-                 max_exp: int | None = None) -> dict[str, Any]:
+                 max_exp: int | None = None,
+                 story_day: int | None = None) -> dict[str, Any]:
     """把模型判定的成长落进存档 (就地改 ``ch``)。
 
     与 :func:`award_minutes` 的区别: 那个是"按分钟换算"的机械口径, 这个是
@@ -269,6 +330,7 @@ def award_judged(ch: dict[str, Any], j: dict[str, Any], *,
     add_fame = max(0, min(int(j.get("fame") or 0), MAX_FAME_PER_CYCLE))
     add_mor = max(-5, min(5, int(j.get("morality") or 0)))
 
+    lvl_before = int(ch.get("level") or 1)
     before = {"level": int(ch.get("level") or 1), "exp": int(ch.get("exp") or 0),
               "pot": int(ch.get("pot") or 0), "fame": int(ch.get("fame") or 0),
               "morality": int(ch.get("morality") or 0)}
@@ -283,17 +345,31 @@ def award_judged(ch: dict[str, Any], j: dict[str, Any], *,
         ch["level"] = int(ch.get("level") or 1) + 1
         levels += 1
 
+    born_gain: dict[str, int] = {}
     if levels:
         add_pot += POT_PER_LEVEL * levels
         add_fame += FAME_PER_LEVEL * levels
+        born_gain = _apply_born(ch, lvl_before)
     ch["pot"] = before["pot"] + add_pot
     ch["fame"] = max(0, before["fame"] + add_fame)
     ch["morality"] = max(-100, min(100, before["morality"] + add_mor))
 
-    # 技能 (最多 MAX_SKILLS_PER_CYCLE 门, 每门 +1)
+    # 技能 (最多 MAX_SKILLS_PER_CYCLE 门, 每门 +1) —— 且受"每 N 个故事日一级"限速。
+    # 限速为什么必要: 一回合 ≈ 故事内一天, 没有这道闸门, 模型每回合都会挑一门给 +1,
+    # 一个月就把技能堆到上限 —— 招式等级一高, 故事里"长本事"这件事就不值钱了。
     gained: dict[str, int] = {}
+    gate: dict[str, Any] = {}
+    try:
+        from recto.pet import life as _life
+
+        day = int(story_day if story_day is not None else _life.story_day(ch))
+        last = int(ch.get("last_skill_day") or 0)
+        gate = {"day": day, "last": last, "days_per_level": SKILL_DAYS_PER_LEVEL,
+                "blocked": (day - last) < SKILL_DAYS_PER_LEVEL}
+    except Exception:  # noqa: BLE001
+        gate = {"blocked": False}
     skills_in = j.get("skills") or {}
-    if isinstance(skills_in, dict):
+    if isinstance(skills_in, dict) and not gate.get("blocked"):
         for sid, lv in list(skills_in.items())[:MAX_SKILLS_PER_CYCLE]:
             sk = cs.SKILL_BY_ID.get(str(sid))
             if not sk or int(lv or 0) <= 0:
@@ -305,12 +381,16 @@ def award_judged(ch: dict[str, Any], j: dict[str, Any], *,
             if cur + 1 > cap:
                 continue
             ch.setdefault("skills", {})[str(sid)] = cur + 1
+            ch["last_skill_day"] = int(gate.get("day") or 0)
             gained[str(sid)] = cur + 1
+            break
 
     return {
         "exp": add_exp, "levels": levels,
         "pot": add_pot, "fame": add_fame, "morality": add_mor,
         "skills": gained, "trait": str(j.get("trait") or ""),
+        "born": born_gain,
+        "skill_gate": gate,
         "clamped": {"exp": raw_exp != add_exp,
                     "exp_raw": raw_exp, "exp_cap": cap_exp},
         "level": int(ch.get("level") or 1), "exp_now": int(ch["exp"]),
