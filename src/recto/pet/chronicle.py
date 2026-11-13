@@ -495,6 +495,43 @@ def _duel_in_body(body: str, duel: dict[str, Any] | None,
     return bool(hits >= _STRIKE_MIN and uniq >= _STRIKE_UNIQ)
 
 
+def _contract_note(kind: str, duel: dict[str, Any] | None,
+                   checks: list[dict[str, Any]], missing: list[str]) -> str:
+    """给重写稿的"漏了什么"说明 —— 把已经落账的事实摆出来, 让它照写。
+
+    语气要像"提醒"而不是"指令堆": 模型对着一长串禁令容易只记住禁令,
+    反而忘了把事写进去。
+    """
+    parts: list[str] = []
+    if duel and "交手" in missing:
+        foe = duel.get("foe") or {}
+        hp = duel.get("hp") or {}
+        parts.append(
+            "上一稿没写这一场交手。这一回**当真有一个人动过手**: 对手是 "
+            f"{foe.get('name')} ({foe.get('weapon_cn')}), 在 {foe.get('arena')}, "
+            f"结果为「{duel.get('result_cn')}」, 打完它的气血是 "
+            f"{hp.get('to')}/{hp.get('max')}。把其中三四拍揉成连贯的几段动作, "
+            "招式用真名, 伤要留着; **不许按回合编号罗列**, 也不许写「略去」这类括注; "
+            "写到了就把 duel_shown 置 true。")
+    if checks and "路上的坎" in missing:
+        rows = []
+        for c in checks[:2]:
+            if not isinstance(c, dict):
+                continue
+            rows.append(
+                f"「{c.get('label')}」落在{c.get('target')}上, "
+                f"{'过了' if c.get('success') else '没过'} —— {c.get('outcome')}")
+        lead = "上一稿也没写" if "交手" in missing else "上一稿没写"
+        parts.append(
+            lead + "这一趟路上的坎。它们同样是掷出来的: "
+            + "; ".join(rows)
+            + "。照实写 (过了就写过, 没过就写没过, 红检定一次定生死), "
+              "并且 checks_shown 置 true。")
+    if not parts:
+        return ""
+    return ("\n".join(parts) + "\n整体重写这一回, 段落照旧。").replace("\\n", "\n")
+
+
 def _checks_brief(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """给故事看的判定清单 -- 只留"落在什么上 / 过了没有 / 什么下场"。
 
@@ -629,32 +666,36 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
     data = _compose_once(guide, user)
     body = jsonout.as_text((data or {}).get("body"), 2600)
 
-    # ── 交手闸门: 这一回真打了一场, 故事里却一个字没打 —— 重写一次。
+    # ── 契约闸门: 掷出来的东西 (交手 / 路上的坎) 必须写进正文 —— 漏了重写一次。
+    #    两样一起判: 它们都是"已经发生的事", 少写一样, 故事就跟账本对不上。
     duel_req = payload.get("duel") or None
+    checks_req = payload.get("checks") or []
     duel_ok = _duel_in_body(body, duel_req, data)
+    checks_ok = (not checks_req) or bool((data or {}).get("checks_shown"))
+    missing: list[str] = []
     if duel_req and not duel_ok:
-        foe = duel_req.get("foe") or {}
-        log.info("游历 · 上一稿漏了这一场交手 (%s · %s), 重写一次",
-                 foe.get("name"), duel_req.get("result_cn"))
-        payload["duel_note"] = (
-            "上一稿没写这一场交手。这一回**当真有一个人动过手**: 对手是 "
-            f"{foe.get('name')} ({foe.get('weapon_cn')}), 在 {foe.get('arena')}, "
-            f"结果为「{duel_req.get('result_cn')}」, 打完它的气血是 "
-            f"{(duel_req.get('hp') or {}).get('to')}/{(duel_req.get('hp') or {}).get('max')}。"
-            "这一场必须写进正文 (把其中三四拍揉成连贯的几段动作, 招式用真名, "
-            "伤要留着; **不许按回合编号罗列**, 也不许写「略去」这类括注), "
-            "并且 duel_shown 置 true。整体重写这一回。")
+        missing.append("交手")
+    if checks_req and not checks_ok:
+        missing.append("路上的坎")
+    if missing and body:
+        notes = [_contract_note("duel", duel_req, checks_req, missing)]
+        log.info("游历 · 上一稿漏了%s, 重写一次", "与".join(missing))
+        payload["contract_note"] = "\n".join(n for n in notes if n)
         user2 = ("按 %s.md 的契约重写这一回。只输出 JSON。\n\n" % guide
                  + json.dumps(payload, ensure_ascii=False, indent=1))
         data2 = _compose_once(guide, user2)
         body2 = jsonout.as_text((data2 or {}).get("body"), 2600)
-        if body2 and _duel_in_body(body2, duel_req, data2):
-            data, body = data2, body2
-            duel_ok = True
-        payload.pop("duel_note", None)
-        if not duel_ok:
-            log.warning("游历 · 重写后仍未写这一场交手 (%s) —— 这一回按缺交手记",
-                        foe.get("name"))
+        if body2:
+            duel_ok2 = _duel_in_body(body2, duel_req, data2)
+            checks_ok2 = (not checks_req) or bool((data2 or {}).get("checks_shown"))
+            if (not duel_req or duel_ok2) and (not checks_req or checks_ok2):
+                data, body, duel_ok, checks_ok = data2, body2, duel_ok2, checks_ok2
+        payload.pop("contract_note", None)
+        if (duel_req and not duel_ok) or (checks_req and not checks_ok):
+            log.warning("游历 · 重写后仍缺%s —— 这一回按缺项记",
+                        "与".join(x for x, bad in (("交手", duel_req and not duel_ok),
+                                                   ("路上的坎", checks_req and not checks_ok))
+                                  if bad))
 
     hits = proper.check(body) if body else []
     if hits:
@@ -697,13 +738,15 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         "verdict": jsonout.as_str(data.get("verdict"), 40),
         "growth_shown": jsonout.as_list(data.get("growth_shown"), 5, 24),
         "duel_shown": bool(duel_ok),
-        "checks_shown": bool(data.get("checks_shown")),
+        "checks_shown": bool(checks_ok) if checks_req else bool(data.get("checks_shown")),
         "days": jsonout.as_int(data.get("days"), 1, 1, 5),
     }
     if data.get("_sanitized"):
         story["sanitized"] = list(data["_sanitized"])
     if payload.get("duel") and not story["duel_shown"]:
         story["duel_omitted"] = True
+    if checks_req and not story["checks_shown"]:
+        story["checks_omitted"] = True
     if guide == "legacy":
         h = data.get("heir") if isinstance(data.get("heir"), dict) else {}
         kind = str(h.get("type") or "").strip()
@@ -996,6 +1039,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                          "checks_shown": bool(story.get("checks_shown")),
                          "duel_shown": bool(story.get("duel_shown")),
                          "duel_omitted": bool(story.get("duel_omitted")),
+                         "checks_omitted": bool(story.get("checks_omitted")),
                          "duel": duel_out,
                          "checks": checks_out,
                          "days": int(ev.get("days") or 0),
@@ -1182,6 +1226,7 @@ def backfill_adventure(cycle_id: int | None = None) -> dict[str, Any] | None:
          json.dumps({"exp": gain.get("exp"), "backfill": True,
                      "duel_shown": bool(story.get("duel_shown")),
                      "duel_omitted": bool(story.get("duel_omitted")),
+                     "checks_omitted": bool(story.get("checks_omitted")),
                      "duel": gain.get("duel"), "checks": gain.get("checks") or [],
                      "days": int((_jdict(row.get("evidence")) or {}).get("days") or 0)},
                     ensure_ascii=False), at))
@@ -1271,6 +1316,7 @@ def repair_adventure(no: int) -> dict[str, Any] | None:
         "checks_shown": bool(story.get("checks_shown")),
         "duel_shown": bool(story.get("duel_shown")),
         "duel_omitted": bool(story.get("duel_omitted")),
+        "checks_omitted": bool(story.get("checks_omitted")),
         "rewritten_at": clock.iso_local(),
     })
     db = store.conn()

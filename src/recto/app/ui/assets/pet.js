@@ -1057,6 +1057,14 @@ function renderChronicle(v) {
       if (g.vein) show.push('通经 ' + g.vein + ' 层');
       if (g.trait) show.push('觉醒「' + g.trait + '」');
       if (g.tag === 'retire') show.push('退隐 · 待传承');
+      // 掷出来的事 (交手 / 路上的坎) 没写进正文 —— 如实标出来, 不装作打过
+      const warns = [];
+      if (g.duel_omitted) {
+        warns.push('这一回真打了一场, 正文里却没写出来 (战报仍在下面)');
+      }
+      if (g.checks_omitted) {
+        warns.push('这一回路上的坎没写进正文 (判定仍在下面)');
+      }
       boxLatest.innerHTML =
         '<article class="adv-card' + (g.tag === 'retire' ? ' is-retire' : '') + '"><header>' +
         '<span class="adv-no">第 ' + latest.no + ' 回</span>' +
@@ -1070,8 +1078,10 @@ function renderChronicle(v) {
               return '<span class="adv-chip ok">' + esc(t) + '</span>';
             }).join('') + '</div>'
           : '') +
-        (g.duel_omitted
-          ? '<div class="adv-warn">这一回真打了一场, 正文里却没写出来 (战报仍在下面)</div>'
+        (warns.length
+          ? warns.map(function (t) {
+              return '<div class="adv-warn">' + esc(t) + '</div>';
+            }).join('')
           : '') +
         duelBlock(g.duel) +
         '<div class="adv-body">' + advParagraphs(latest.body) + '</div>' +

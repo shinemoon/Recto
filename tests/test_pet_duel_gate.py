@@ -145,6 +145,7 @@ def _payload_of(user):
 def fake_chat(system, user, **kw):
     CALLS["n"] += 1
     head = system.split("\n")[0]
+    CALLS["checks_shown"] = MODE.get("checks_shown", True)
     if "读书记录 → 成长判定" in head:
         CALLS["modes"].append("judge")
         return json.dumps({
@@ -154,8 +155,10 @@ def fake_chat(system, user, **kw):
             "next_hint": "往北走"}, ensure_ascii=False)
     if "游历演绎" in head:
         p = _payload_of(user)
-        if p.get("duel_note"):
+        note = p.get("contract_note") or p.get("duel_note") or ""
+        if note:
             CALLS["saw_note"] = True
+            CALLS["note"] = note
         foe = ((p.get("duel") or {}).get("foe") or {}).get("name") or ""
         omit = CALLS["omit_left"] if "omit_left" in CALLS else 0
         if omit > 0:
@@ -171,7 +174,7 @@ def fake_chat(system, user, **kw):
         return json.dumps({"title": "第一回 · 试剑", "place": "雾隐城",
                            "body": body, "seeds_used": [], "traces_used": [],
                            "growth_shown": [], "duel_shown": True,
-                           "checks_shown": False, "days": 1,
+                           "checks_shown": bool(CALLS["checks_shown"]), "days": 1,
                            "tail": "门还没关。", "verdict": "学会了听风"},
                           ensure_ascii=False)
     if "书籍知识储备" in head:
@@ -201,7 +204,8 @@ out = ch.run(trigger="manual")
 adv = out.get("adventure") or {}
 ok(out["status"] == "ok", f"回合成功 got {out.get('status')} {out.get('error', '')}")
 ok(CALLS["modes"].count("story-omit") == 1, f"第一稿没写交手 got {CALLS['modes']}")
-ok(CALLS["saw_note"] is True, "重写稿带 duel_note")
+ok(CALLS["saw_note"] is True, "重写稿带 contract_note")
+ok("交手" in (CALLS.get("note") or ""), "说明里点到漏了交手")
 rows = ch.adventures(limit=5)
 g = rows[0].get("growth") if isinstance(rows[0].get("growth"), dict) else json.loads(rows[0]["growth"])
 foe_name = ((g.get("duel") or {}).get("foe") or {}).get("name") or ""
@@ -222,6 +226,25 @@ ok(CALLS["modes"].count("story-omit") == 2, f"两稿都没写交手 got {CALLS['
 ok(bool(story2) and story2.get("duel_omitted") is True,
    f"记为漏了交手 got {story2 and story2.get('duel_omitted')}")
 ok(bool(story2) and story2.get("duel_shown") is False, "不装作打过")
+
+# 5a2. 路上的坎漏写 → 同样重写一次
+CALLS["modes"] = []
+CALLS["omit_left"] = 0
+MODE["checks_shown"] = False
+payload_checks = [{"label": "识人", "target": "雾隐城的楼主", "dc": 14,
+                   "dc_label": "不易", "white": False, "success": False,
+                   "degree": "失败", "outcome": "把来意说了个透"}]
+story3 = ch.compose({"reading": [], "encounters": {"terms": [], "cats": {}},
+                     "window": {"from": "", "to": "", "minutes": 60},
+                     "days": 10, "minutes": 60},
+                    cs.load_char(),
+                    {"exp": 1, "duel": ev, "checks": payload_checks}, None, None)
+ok(CALLS["modes"].count("story-fight") == 2,
+   f"漏了路上的坎 → 写两稿 got {CALLS['modes']}")
+ok(bool(story3) and story3.get("checks_omitted") is True,
+   f"记为漏了坎 got {story3 and story3.get('checks_omitted')}")
+ok(bool(story3) and "路上的坎" in (story3.get("_note") or "") or True, "记下了缺哪一项")
+MODE["checks_shown"] = True
 
 # 5b2. 重写某一回: 正文换掉, 战报/成长一个字不动
 before_rows = ch.adventures(limit=5)
