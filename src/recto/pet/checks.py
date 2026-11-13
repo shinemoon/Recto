@@ -99,19 +99,30 @@ def _mods_for(ch: dict[str, Any], tpl: dict[str, Any]) -> list[dict[str, Any]]:
     return D.mods_of(*pairs)
 
 
+def _world_names(kind: str) -> list[str]:
+    try:
+        from recto.pet import world as wmod
+
+        w = wmod.load()
+    except Exception:  # noqa: BLE001
+        return []
+    return [str(x.get("name")) for x in (w.get(kind) or []) if str(x.get("name") or "")]
+
+
 def _target(ch: dict[str, Any], tpl: dict[str, Any], terms: list[dict[str, Any]],
             rng: random.Random) -> str:
-    """这一道坎具体落在什么上 —— 优先用读者这段时间真遇到过的词。"""
+    """这一道坎具体落在什么上 —— 用地名/人名, 全部来自**它自己的世界**。
+
+    语料只决定"这段时间这一路走得多", 不再把别人书里的词塞进句子
+    (2026-11-13: 故事要自我架空, 只借"意"不借"名")。
+    """
     cat = "place" if tpl in ROAD_TEMPLATES else "person"
-    words = [str(t.get("term")) for t in (terms or [])
-             if str(t.get("cat")) == cat and t.get("term")]
-    if not words and cat == "person":
-        words = [str(t.get("term")) for t in (terms or [])
-                 if str(t.get("cat")) in ("org", "object") and t.get("term")]
-    label = str(tpl.get("label") or "")
     base = str(tpl.get("what") or "")
-    if words:
-        w = words[rng.randrange(len(words))][:8]
+    names = _world_names("regions" if cat == "place" else "notables")
+    if not names:
+        names = _world_names("factions") or _world_names("things")
+    if names:
+        w = names[rng.randrange(len(names))][:12]
         if cat == "place":
             return f"在{w}{base}"
         return f"{base}（{w}）"

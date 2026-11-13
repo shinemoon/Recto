@@ -1,96 +1,59 @@
 <div class="rc-pet">
 
-<!-- 故事在最前 (2026-11-12: 故事经历要更醒目) -->
+<!-- ── 状态栏 (游戏 HUD): 一眼看到"它是谁、还剩多少、走到哪" ── -->
+<div class="pg-bar" id="pg-bar">
+  <div class="pg-face" aria-hidden="true"><span>◕‿◕</span></div>
+  <div class="pg-id">
+    <div class="pg-name-row">
+      <span class="pg-name" id="bar-name">小墨</span>
+      <span class="pg-lv" id="bar-level">Lv.1</span>
+      <span class="pg-rank" id="bar-rank">初入江湖</span>
+    </div>
+    <div class="pg-sub" id="bar-life">12 岁 · 第 1 日 · 第 1 代</div>
+  </div>
+  <div class="pg-gauges" id="bar-gauges"></div>
+  <div class="pg-chips" id="bar-chips"></div>
+</div>
+
+<!-- ── 子页签 (页内切换, 不重载) ── -->
+<nav class="pg-tabs" id="pg-tabs" aria-label="书宠分区">
+  <button class="pg-tab is-on" data-pg="story">故事</button>
+  <button class="pg-tab" data-pg="hero">人物</button>
+  <button class="pg-tab" data-pg="world">世界</button>
+  <button class="pg-tab" data-pg="setup">设置</button>
+</nav>
+
+<!-- ══════════════ 故事 ══════════════ -->
+<div class="pg-pane is-on" data-pg="story">
+
 <section class="card adv-hero" id="card-chronicle">
   <div class="card-head">
-    <h2>故事 · 它自己走的路</h2>
+    <h2>它自己走的路</h2>
     <span class="hint">一小时阅读 = 故事里十天</span>
     <span class="pill" id="story-clock">读取中…</span>
     <span class="pill" id="chronicle-pill">读取中…</span>
   </div>
   <div class="card-body">
     <div class="story-meta" id="story-meta">还没有出门。</div>
-    <div id="adventure-latest" class="adv-latest"></div>
-    <div class="row" style="margin-top:12px">
-      <button class="primary" id="btn-chronicle-run">现在推演一回</button>
+    <div class="pg-actions">
+      <button class="primary pg-main-act" id="btn-chronicle-run">出门走一趟</button>
       <button class="mini" id="btn-chronicle-dry">先看会怎么判</button>
       <button class="mini" id="btn-chronicle-backfill" hidden>补写上一回</button>
       <button class="mini" id="btn-chronicle-refresh">刷新</button>
       <span class="status" id="chronicle-status"></span>
     </div>
     <div id="chronicle-out" class="adv-out" hidden></div>
+    <div id="adventure-latest" class="adv-latest"></div>
     <details class="tc-sub" id="adv-history">
       <summary>往期故事</summary>
       <div id="adventure-list"></div>
     </details>
-    <details class="tc-sub" id="chronicle-cfg">
-      <summary>推演设置</summary>
-      <div class="grid" style="margin-top:10px">
-        <label class="inline-check"><input type="checkbox" id="ch-enabled"> 启用后台推演</label>
-        <label>间隔 (分钟)
-          <input id="ch-interval" type="number" min="5" max="1440" step="5">
-        </label>
-        <label>最少分钟 (低于此值视为没读)
-          <input id="ch-minmin" type="number" min="0" max="120" step="1">
-        </label>
-        <label class="inline-check"><input type="checkbox" id="ch-search"> 立卡时联网检索</label>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <button class="primary" id="btn-chronicle-save">保存设置</button>
-        <span class="status" id="chronicle-cfg-status"></span>
-      </div>
-    </details>
     <div class="cs-meta" id="chronicle-state"></div>
     <div class="cs-meta" id="encounter-chips" style="margin-top:4px"></div>
     <p class="tip">
-      书宠<b>不跟你说话</b>: 它自己翻账本 —— 读了多久、推进了几章、划过几条线、
-      正文里反复出现过哪些语料词, 然后长一点本事, 走几天的路。
-      日子一天一天过: <b>一小时阅读走十天</b>, 八十岁收手。
-    </p>
-  </div>
-</section>
-
-<!-- 人物 -->
-<section class="card" id="card-hero">
-  <div class="card-head">
-    <h2>书宠 · 人物</h2>
-    <span class="hint">武侠人物属性体系 · 参数骨架取自 MUD《侠客行》</span>
-    <span class="pill" id="char-rank">读取中…</span>
-  </div>
-  <div class="card-body">
-    <div class="pet-preview">
-      <div class="pet-avatar" id="pet-avatar" aria-hidden="true">
-        <span class="pet-face">◕‿◕</span>
-      </div>
-      <div class="pet-meta">
-        <div class="pet-name" id="pet-name">小墨</div>
-        <div class="pet-state-line" id="char-subline">初入江湖 · 无门无派</div>
-        <div class="pet-state-line" id="char-life">12 岁 · 第 1 日 · 第 1 代</div>
-        <div class="pet-bars">
-          <label class="inline">亲密度
-            <input id="pet-intimacy" type="range" min="0" max="100" value="0" disabled>
-          </label>
-          <label class="inline">心情
-            <input id="pet-mood" type="range" min="0" max="100" value="60" disabled>
-          </label>
-        </div>
-      </div>
-    </div>
-
-    <div class="cs-stats" id="char-stats"></div>
-
-    <div class="cs-meta" id="char-meta"></div>
-
-    <details class="cs-fold" id="fold-card-d20">
-      <summary>交手数据 · d20 <span class="cs-dim" id="char-d20-sum">—</span></summary>
-      <div class="cs-d20" id="char-d20"></div>
-      <div class="cs-meta" id="char-d20-rules"></div>
-    </details>
-
-    <p class="tip" id="char-intro">
-      这是<b>江湖上的本事</b>, 不是读书的比喻: 六项根骨决定它出手多沉、多快、多耐,
-      技能决定它用哪一路打法, 绝招是它在遭遇里真能打出去的那几手 (有内力开销、成功率与反噬)。
-      陪读只是它攒修为的来路 —— 长了什么本事, 看它在自己的江湖里吃过什么亏。
+      书宠<b>不跟你说话</b>: 它自己翻账本 —— 读了多久、推进了几章、划过几条线,
+      然后长一点本事, 走几天的路。日子一天一天过: <b>一小时阅读走十天</b>, 八十岁收手。
+      它走的是<b>它自己的世界</b>, 不是任何一本书的同人。
     </p>
   </div>
 </section>
@@ -115,10 +78,60 @@
     </p>
   </div>
 </section>
+
+</div>
+
+<!-- ══════════════ 人物 ══════════════ -->
+<div class="pg-pane" data-pg="hero">
+
+<section class="card" id="card-hero">
+  <div class="card-head">
+    <h2>人物</h2>
+    <span class="hint">参数骨架取自 MUD《侠客行》 · 掷骰按 d20</span>
+    <span class="pill" id="char-rank">读取中…</span>
+  </div>
+  <div class="card-body">
+    <div class="pet-preview">
+      <div class="pet-avatar" id="pet-avatar" aria-hidden="true">
+        <span class="pet-face">◕‿◕</span>
+      </div>
+      <div class="pet-meta">
+        <div class="pet-name" id="pet-name">小墨</div>
+        <div class="pet-state-line" id="char-subline">初入江湖 · 无门无派</div>
+        <div class="pet-state-line" id="char-life">12 岁 · 第 1 日 · 第 1 代</div>
+        <div class="pet-state-line" id="char-backstory" hidden></div>
+        <div class="pet-bars">
+          <label class="inline">亲密度
+            <input id="pet-intimacy" type="range" min="0" max="100" value="0" disabled>
+          </label>
+          <label class="inline">心情
+            <input id="pet-mood" type="range" min="0" max="100" value="60" disabled>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="cs-stats" id="char-stats"></div>
+    <div class="cs-meta" id="char-meta"></div>
+
+    <details class="cs-fold" id="fold-card-d20">
+      <summary>交手数据 · d20 <span class="cs-dim" id="char-d20-sum">—</span></summary>
+      <div class="cs-d20" id="char-d20"></div>
+      <div class="cs-meta" id="char-d20-rules"></div>
+    </details>
+
+    <p class="tip" id="char-intro">
+      这是<b>江湖上的本事</b>, 不是读书的比喻: 六项根骨决定它出手多沉、多快、多耐,
+      技能决定它用哪一路打法, 绝招是它在遭遇里真能打出去的那几手。
+      陪读只是它攒修为的来路 —— 长了什么本事, 看它在自己的江湖里吃过什么亏。
+    </p>
+  </div>
+</section>
+
 <section class="card" id="card-growth">
   <div class="card-head">
-    <h2>1 · 陪读</h2>
-    <span class="hint">阅读器时长 → 成长证据</span>
+    <h2>陪读</h2>
+    <span class="hint">阅读器时长 → 它的阅历</span>
     <span class="pill" id="companion-pill">读取中…</span>
   </div>
   <div class="card-body">
@@ -131,14 +144,14 @@
     <p class="tip">
       陪读分钟来自<b>阅读器自己的时长记录</b> (人真的在读的那些分钟, 挂着不读不算)。
       它只累计时长 / 长「基本内功」/ 推经脉 —— <b>修为不在这里给</b>,
-      由下面的「后台推演」按这段时间的读书记录判定 (两处都给会双计)。
+      由「故事」页里那趟出门按这段时间的读书记录判定 (两处都给会双计)。
     </p>
   </div>
 </section>
 
 <section class="card" id="card-attrs">
   <div class="card-head">
-    <h2>2 · 六项根骨</h2>
+    <h2>六项根骨</h2>
     <span class="hint">初始 10 · 每项封顶 30 · 总和 180</span>
     <span class="pill" id="attr-pot">潜能 0</span>
   </div>
@@ -154,14 +167,14 @@
     <p class="tip">
       侠客行规矩: 潜能点自由分配, 每项封顶 30, 六项总和封顶 180。
       悟性直接决定技能等级上限 —— <code>(修为×10)^(1/3)+1</code>, 悟性不足 30 按比例打折。
-      门派加成是**额外**的, 不占你的潜能额度 —— 叛门即刻收回。
+      门派加成是<b>额外</b>的, 不占你的潜能额度 —— 叛门即刻收回。
     </p>
   </div>
 </section>
 
 <section class="card" id="card-schools">
   <div class="card-head">
-    <h2>3 · 门派</h2>
+    <h2>门派</h2>
     <span class="hint">入门得内功与绝招 · 叛门清声望与门忠</span>
   </div>
   <div class="card-body">
@@ -175,7 +188,7 @@
 
 <section class="card" id="card-skills">
   <div class="card-head">
-    <h2>4 · 技能与绝招</h2>
+    <h2>技能与绝招</h2>
     <span class="hint">绝招三要素: 成功率 / 定身 / 反噬 · 都会在遭遇里结算</span>
   </div>
   <div class="card-body">
@@ -197,7 +210,7 @@
 
 <section class="card" id="card-traits">
   <div class="card-head">
-    <h2>5 · 性情</h2>
+    <h2>性情</h2>
     <span class="hint">最多 6 条 · 总分 ≤ 100 · 上品 40 / 良品 30 / 常品 20 / 下品 10</span>
     <span class="pill" id="trait-pill">0 / 6</span>
   </div>
@@ -207,7 +220,7 @@
       <div class="cs-traits" id="trait-cards"></div>
     <p class="tip">
       侠客行叫「个人特征」: 黄色罕见, 红色天生, 蓝色常见, 绿色锦上添花。
-      获得靠觉醒点 —— 觉醒点从哪来, 等接上陪读再定。
+      觉醒点随阅历攒, 每条性情都会进战斗与判定的加值 (「交手数据」里能看到它落在哪)。
     </p>
     </details>
   </div>
@@ -215,7 +228,7 @@
 
 <section class="card" id="card-veins">
   <div class="card-head">
-    <h2>6 · 经脉</h2>
+    <h2>经脉</h2>
     <span class="hint">十层 · 通脉给五行亲和与属性加成</span>
     <span class="pill" id="vein-pill">0 / 10</span>
   </div>
@@ -228,9 +241,86 @@
   </div>
 </section>
 
+</div>
+
+<!-- ══════════════ 世界 ══════════════ -->
+<div class="pg-pane" data-pg="world">
+
+<section class="card" id="card-world">
+  <div class="card-head">
+    <h2>它自己的世界</h2>
+    <span class="hint">地名 / 势力 / 人物 / 器物 —— 一路走下来都在这片地上</span>
+    <span class="pill" id="world-pill">读取中…</span>
+  </div>
+  <div class="card-body">
+    <div class="pg-world-name" id="world-name">—</div>
+    <div class="cs-meta" id="world-meta"></div>
+    <div class="pg-world-grid">
+      <div class="pg-world-col"><h4>去处</h4><div id="world-regions"></div></div>
+      <div class="pg-world-col"><h4>势力</h4><div id="world-factions"></div></div>
+      <div class="pg-world-col"><h4>人物</h4><div id="world-notables"></div></div>
+      <div class="pg-world-col"><h4>器物</h4><div id="world-things"></div></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="mini" id="btn-world-regen">重新铺一次世界</button>
+      <span class="status" id="world-status"></span>
+    </div>
+    <p class="tip">
+      故事里的地方和人名都从这份名单长出来: 它在<b>自己</b>的江湖上走。
+      读的书只提供"意" —— 母题、意象、气韵、冲突, 一个名字都不借。
+      所以不管你最近读的是武侠、散文还是异国长篇, 它都还在这片地上。
+    </p>
+  </div>
+</section>
+
+<section class="card" id="card-proper">
+  <div class="card-head">
+    <h2>不借名字</h2>
+    <span class="hint">书里的专名会被挡在故事之外</span>
+    <span class="pill" id="proper-pill">读取中…</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-meta" id="proper-state"></div>
+    <div class="pg-chips" id="proper-chips"></div>
+    <p class="tip">
+      这道闸口每回都开: 故事写完之后, 会拿"读过的书里的人名 / 地名 / 书名"
+      过一遍。命中了就让模型重写一次; 仍命中就换成它自己世界里的名字
+      (那一回的记录上会标「已归化」)。
+    </p>
+  </div>
+</section>
+
+</div>
+
+<!-- ══════════════ 设置 ══════════════ -->
+<div class="pg-pane" data-pg="setup">
+
+<section class="card" id="card-chronicle-cfg">
+  <div class="card-head">
+    <h2>推演设置</h2>
+    <span class="hint">后台多久看一次账本 · 攒够几天才出门</span>
+  </div>
+  <div class="card-body">
+    <div class="grid">
+      <label class="inline-check"><input type="checkbox" id="ch-enabled"> 启用后台推演</label>
+      <label>间隔 (分钟)
+        <input id="ch-interval" type="number" min="5" max="1440" step="5">
+      </label>
+      <label>最少分钟 (低于此值视为没读)
+        <input id="ch-minmin" type="number" min="0" max="120" step="1">
+      </label>
+      <label class="inline-check"><input type="checkbox" id="ch-search"> 立卡时联网检索</label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" id="btn-chronicle-save">保存设置</button>
+      <span class="status" id="chronicle-cfg-status"></span>
+    </div>
+  </div>
+</section>
+
 <section class="card" id="card-persona">
   <div class="card-head">
-    <h2>7 · 人格</h2>
+    <h2>人格</h2>
     <span class="hint">书宠是谁 · 故事的口气</span>
   </div>
   <div class="card-body">
@@ -254,7 +344,7 @@
 
 <section class="card" id="card-llm">
   <div class="card-head">
-    <h2>8 · 模型接入</h2>
+    <h2>模型接入</h2>
     <span class="hint">书宠的大脑 —— 接哪个模型</span>
     <span class="pill" id="pet-state">读取中…</span>
     <button class="mini" id="btn-llm-toggle">收起</button>
@@ -297,7 +387,7 @@
       </label>
       <label>思考 (推理)
         <select id="llm-thinking">
-          <option value="off">关闭 (陪聊推荐)</option>
+          <option value="off">关闭 (推荐)</option>
           <option value="on">允许 (会慢)</option>
         </select>
       </label>
@@ -315,8 +405,8 @@
 
 <section class="card" id="card-models">
   <div class="card-head">
-    <h2>9 · 模型库</h2>
-    <span class="hint">多套端点 / 多把 key · 陪聊要快, 429 时随手换</span>
+    <h2>模型库</h2>
+    <span class="hint">多套端点 / 多把 key · 429 时随手换</span>
     <button class="mini" id="btn-models-toggle">收起</button>
   </div>
   <div class="card-body" id="models-body">
@@ -338,10 +428,43 @@
       <span id="models-status" class="status"></span>
     </div>
     <p class="tip">
-      「使用」= 把这行的端点 / 模型 / key 套进「8 · 模型接入」, 立即生效。
+      「使用」= 把这行的端点 / 模型 / key 套进「模型接入」, 立即生效。
       改了上面并保存 = 回到手动模式。
     </p>
   </div>
 </section>
+
+<section class="card" id="card-reborn">
+  <div class="card-head">
+    <h2>重开一世</h2>
+    <span class="hint">复位或转生 · 不可回退, 要你自己点头</span>
+    <span class="pill" id="reborn-pill">—</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-meta" id="reborn-state"></div>
+    <label class="pg-slider">
+      <span>带走的旧日阅历 <b id="reborn-val">0 分钟</b></span>
+      <input id="reborn-inherit" type="range" min="0" max="0" step="10" value="0">
+    </label>
+    <div class="cs-meta" id="reborn-hint"></div>
+    <div class="grid" style="margin-top:8px">
+      <label>新一代的名字 (可空)
+        <input id="reborn-name" placeholder="小墨" maxlength="24">
+      </label>
+    </div>
+    <div class="row">
+      <button class="primary" id="btn-reborn">复位 / 转生</button>
+      <span class="status" id="reborn-status"></span>
+    </div>
+    <p class="tip">
+      <b>复位</b> (拖到 0) = 白纸一张: 12 岁, 无门派, 故事清空。<br>
+      <b>转生</b> (拖动继承) = 带着那段阅历重来: 时间轴按分钟走 (6 分钟 = 故事里 1 天),
+      起点岁数、修为、内功、一点声望都按它折算, 再写一段"这一世的来历"。<br>
+      两种都会清空<b>往期故事</b>; 世界、书卡、遭遇足迹都留着 —— 江湖还在, 只是换了个人走。
+    </p>
+  </div>
+</section>
+
+</div>
 
 </div>

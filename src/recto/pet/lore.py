@@ -147,7 +147,11 @@ def build_book(book_key: str, *, force: bool = False,
     except Exception as e:  # noqa: BLE001
         log.warning("知识储备 · 读库失败: %s", e)
         return None
-    if row and not force and _age_days(row.get("updated_at") or "") < REFRESH_DAYS:
+    # 老卡 (有 seeds 列之前建的) 只有主题词, 没有"种子"。等真正用到它的时候
+    # 顺手重建一次 —— 不然故事只能吃主题词, 拿不到意象与气韵。
+    _seeds_missing = bool(row) and str(row.get("seeds") or "").strip() in ("", "{}")
+    if (row and not force and not _seeds_missing
+            and _age_days(row.get("updated_at") or "") < REFRESH_DAYS):
         c.close()
         return _row_view(row)
     card: dict[str, Any] | None = None
@@ -176,6 +180,7 @@ def build_book(book_key: str, *, force: bool = False,
     out = chat(guidance.render("lore"), user, max_tokens=900, temperature=0.3)
     data = jsonout.parse_obj(out) if out else None
     if data:
+        raw_seeds = data.get("seeds") if isinstance(data.get("seeds"), dict) else {}
         card = {
             "identity": jsonout.as_str(data.get("identity"), 40),
             "themes": jsonout.as_list(data.get("themes"), 6, 8),
@@ -183,6 +188,16 @@ def build_book(book_key: str, *, force: bool = False,
             "summary": jsonout.as_str(data.get("summary"), 300),
             "moods": jsonout.as_list(data.get("moods"), 4, 8),
             "hooks": jsonout.as_list(data.get("hooks"), 3, 30),
+            # 书宠只借"种子": 母题 / 意象 / 气韵 / 质地 / 冲突。
+            # 这些必须是能塞进**任何**世界的抽象 —— 一个专名都不许有,
+            # 否则换个背景读书, 故事就拼贴了 (2026-11-13 定的口径)。
+            "seeds": {
+                "motif": jsonout.as_list(raw_seeds.get("motif"), 5, 8),
+                "image": jsonout.as_list(raw_seeds.get("image"), 5, 8),
+                "weather": jsonout.as_str(raw_seeds.get("weather"), 40),
+                "texture": jsonout.as_str(raw_seeds.get("texture"), 60),
+                "conflict": jsonout.as_str(raw_seeds.get("conflict"), 60),
+            },
             "confidence": max(0.0, min(1.0, jsonout.as_float(data.get("confidence"), 0.3))),
         }
     elif row:
@@ -198,16 +213,19 @@ def build_book(book_key: str, *, force: bool = False,
     src = "search+model" if searched.get("status") == "ok" else "model"
     c.execute(
         "INSERT INTO lore_book (book, title, author, identity, themes, setting, summary,"
-        " source, searched, confidence, fetched_at, updated_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+        " seeds, source, searched, confidence, fetched_at, updated_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(book) DO UPDATE SET title=excluded.title, author=excluded.author,"
         " identity=excluded.identity, themes=excluded.themes, setting=excluded.setting,"
-        " summary=excluded.summary, source=excluded.source, searched=excluded.searched,"
+        " summary=excluded.summary, seeds=excluded.seeds, source=excluded.source,"
+        " searched=excluded.searched,"
         " confidence=excluded.confidence, fetched_at=excluded.fetched_at,"
         " updated_at=excluded.updated_at",
         (book_key, meta["title"], meta["author"], card["identity"],
          _json.dumps(card["themes"], ensure_ascii=False),
-         card["setting"], card["summary"], src, str(searched.get("status") or ""),
+         card["setting"], card["summary"],
+         _json.dumps(card.get("seeds") or {}, ensure_ascii=False),
+         src, str(searched.get("status") or ""),
          float(card["confidence"]), now, now))
     c.commit()
     row = store.one(c, "SELECT * FROM lore_book WHERE book=?", (book_key,))
@@ -295,15 +313,26 @@ def pending_chapters(book_key: str, limit: int = 3) -> list[dict[str, Any]]:
 def _row_view(row: dict[str, Any]) -> dict[str, Any]:
     import json as _json
 
-    def _j(v):
+    def _j(v, default="[]"):
         try:
-            return _json.loads(v or "[]")
+            out = _json.loads(v or default)
         except Exception:  # noqa: BLE001
-            return []
+            return _json.loads(default)
+        return out if isinstance(out, (list, dict)) else _json.loads(default)
 
+    seeds = _j(row.get("seeds"), "{}")
+    if not isinstance(seeds, dict):
+        seeds = {}
+    themes = _j(row.get("themes"))
+    if not seeds:
+        # 老卡 (有 seeds 列之前建的) → 用主题词兜一层种子。
+        # 不重建卡是有意的: 重建要花一次模型调用, 而主题词本身就够抽象。
+        seeds = {"motif": list(themes)[:6], "image": [], "weather": "",
+                 "texture": "", "conflict": ""}
     return {
         "book": row.get("book"), "title": row.get("title"), "author": row.get("author"),
-        "identity": row.get("identity") or "", "themes": _j(row.get("themes")),
+        "identity": row.get("identity") or "", "themes": themes,
+        "seeds": seeds,
         "setting": row.get("setting") or "", "summary": row.get("summary") or "",
         "source": row.get("source") or "", "searched": row.get("searched") or "",
         "confidence": float(row.get("confidence") or 0),

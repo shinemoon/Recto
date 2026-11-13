@@ -619,3 +619,116 @@
   .rc-pet .d20-v { grid-area: v; }
   .rc-pet .d20-tot { grid-area: tot; padding-left: 34px; }
 }
+
+/* ══════════════ 游戏化外壳 (2026-11-13) ══════════════════════════════
+ * 目的: 一眼看见"它是谁、还剩多少、走到哪"; 设置收进子页, 不干扰读故事。
+ * 直角口径沿用全站 (radius_scale=0), 只用高度阴影分层。
+ */
+
+/* ── 状态栏 (HUD) ───────────────────────────────────────────────── */
+.pg-bar {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1.1fr) minmax(180px, 1.4fr);
+  grid-template-areas: "face id gauges" "chips chips chips";
+  gap: 10px 14px;
+  padding: 14px var(--rc-pad);
+  margin-bottom: 12px;
+  background: var(--panel);
+  box-shadow: var(--rc-shadow, 0 1px 2px rgba(0,0,0,.12));
+}
+.pg-face {
+  grid-area: face;
+  width: 46px; height: 46px;
+  display: grid; place-items: center;
+  background: var(--rc-primary-container, color-mix(in srgb, var(--accent) 14%, transparent));
+  color: var(--rc-on-primary-container, var(--ink));
+  font-size: 18px; line-height: 1;
+}
+.pg-id { grid-area: id; min-width: 0; align-self: center; }
+.pg-name-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.pg-name { font-size: 1.32rem; font-weight: 700; letter-spacing: .01em; }
+.pg-lv { font-size: 12px; font-weight: 700; padding: 1px 6px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.pg-rank { font-size: 11.5px; color: var(--rc-mute); letter-spacing: .04em; }
+.pg-sub { font-size: 11.5px; color: var(--rc-mute); margin-top: 3px; }
+
+.pg-gauges { grid-area: gauges; display: grid; gap: 6px; align-content: center; }
+.pg-gauge { display: grid; grid-template-columns: 44px 1fr 62px; align-items: center; gap: 8px; }
+.pg-gauge-l { font-size: 10.5px; color: var(--rc-mute); letter-spacing: .04em; }
+.pg-gauge-bar { height: 6px; background: color-mix(in srgb, var(--ink) 10%, transparent); overflow: hidden; }
+.pg-gauge-bar > i { display: block; height: 100%; background: var(--accent); }
+.pg-gauge-bar.hp > i { background: var(--ok, #2e7d32); }
+.pg-gauge-bar.neili > i { background: var(--rc-primary); }
+.pg-gauge-bar.exp > i { background: var(--warn, #b26a00); }
+.pg-gauge-v { font-size: 10.5px; color: var(--ink-dim); text-align: right; font-variant-numeric: tabular-nums; }
+
+.pg-chips { grid-area: chips; display: flex; flex-wrap: wrap; gap: 6px; }
+.pg-chip { font-size: 11px; padding: 2px 7px; color: var(--ink-dim);
+  background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.pg-chip b { color: var(--ink); font-weight: 650; }
+
+/* ── 页签 ──────────────────────────────────────────────────────── */
+.pg-tabs {
+  display: flex; gap: 2px; margin: 0 0 12px;
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 6;
+  background: var(--bg);
+}
+.pg-tab {
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  padding: 10px 16px; min-height: 40px;
+  font: inherit; font-size: 13px; color: var(--rc-mute);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.pg-tab:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.pg-tab.is-on { color: var(--accent); font-weight: 650; border-bottom-color: var(--accent); }
+
+.pg-pane { display: none; }
+.pg-pane.is-on { display: block; }
+
+/* ── 行动区 (故事页) ─────────────────────────────────────────────── */
+.pg-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 4px; }
+.pg-main-act { min-height: 42px; padding-inline: 20px; font-weight: 650; letter-spacing: .02em; }
+
+/* ── 世界页 ────────────────────────────────────────────────────── */
+.pg-world-name {
+  font-size: 1.18rem; font-weight: 700; letter-spacing: .06em;
+  padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px dashed var(--line);
+}
+.pg-world-grid {
+  display: grid; gap: 14px; margin-top: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+.pg-world-col h4 {
+  margin: 0 0 6px; font-size: 11px; letter-spacing: .12em;
+  color: var(--rc-mute); font-weight: 650; text-transform: none;
+}
+.pg-world-item { padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--ink) 6%, transparent); }
+.pg-world-item:last-child { border-bottom: 0; }
+.pg-world-item .n { font-size: 13px; font-weight: 600; }
+.pg-world-item .r { font-size: 11px; color: var(--accent); margin-left: 6px; }
+.pg-world-item .d { display: block; font-size: 11.5px; color: var(--rc-mute); margin-top: 1px; }
+.pg-empty { font-size: 12px; color: var(--rc-mute); padding: 4px 0; }
+
+/* ── 复位 / 转生 ───────────────────────────────────────────────── */
+.pg-slider { display: grid; gap: 6px; margin: 10px 0 6px; font-size: 12.5px; color: var(--ink-dim); }
+.pg-slider b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.pg-slider input[type=range] { width: 100%; accent-color: var(--accent); }
+
+/* ── 窄屏 ──────────────────────────────────────────────────────── */
+@media (max-width: 860px) {
+  .pg-bar {
+    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-areas: "face id" "gauges gauges" "chips chips";
+  }
+  .pg-face { width: 40px; height: 40px; font-size: 16px; }
+  .pg-name { font-size: 1.16rem; }
+  .pg-tabs { overflow-x: auto; scrollbar-width: none; }
+  .pg-tabs::-webkit-scrollbar { display: none; }
+  .pg-tab { padding: 10px 13px; white-space: nowrap; }
+  .pg-world-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+}
+@media (max-width: 480px) {
+  .pg-world-grid { grid-template-columns: 1fr; }
+  .pg-gauge { grid-template-columns: 38px 1fr 56px; }
+}

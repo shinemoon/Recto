@@ -335,6 +335,23 @@ def cmd_pet(args) -> int:
             out = {"card": lore.card(args.refresh), "built": bool(card)}
         else:
             out = {"stats": lore.stats(), "books": lore.all_cards()}
+    elif act == "world":
+        from recto.pet import world as wmod
+
+        if args.world_regen:
+            wmod.ensure(force=True, use_model=True)
+        out = wmod.view()
+    elif act == "reborn":
+        # 复位 / 转生 —— 命令行是运维口, 不额外要 confirm (交互里已经写明了)
+        from recto.pet import reborn as rb
+
+        out = rb.reborn(inherit_minutes=int(args.inherit or 0),
+                        name=args.name or "")
+    elif act == "proper":
+        from recto.pet import proper as pmod
+
+        words = pmod.forbidden(force=True)
+        out = {"words": len(words), "sample": sorted(words)[:40]}
     else:
         out = {"error": f"未知动作: {act}"}
     _dump(out)
@@ -429,6 +446,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_pet = sub.add_parser("pet", help="书宠: 后台推演 / 游历 / 书籍底细 / 语料遭遇")
     p_pet.add_argument("action", choices=("state", "run", "story", "adventures", "cycles",
+                                         "world", "reborn", "proper",
                                           "encounters", "lore"))
     p_pet.add_argument("--dry-run", action="store_true", help="run 用: 只判不落地")
     p_pet.add_argument("--force", action="store_true", help="run 用: 无视最小分钟")
@@ -436,6 +454,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_pet.add_argument("--days", type=int, default=7)
     p_pet.add_argument("--refresh", default="", help="lore 用: 重建这本书的卡")
     p_pet.add_argument("--cycle", type=int, default=0, help="story 用: 指定回合 id (默认最近没故事的那回)")
+    p_pet.add_argument("--inherit", type=int, default=0,
+                       help="reborn 用: 继承上辈子多少分钟阅历 (0 = 白纸复位)")
+    p_pet.add_argument("--name", default="", help="reborn 用: 新一代的名字")
+    p_pet.add_argument("--world-regen", action="store_true", help="world 用: 重新铺一次世界")
     p_pet.set_defaults(func=cmd_pet)
 
     return p

@@ -109,6 +109,7 @@ function renderChar(ch) {
     if (L.stage === 'retiring') bits.push('已退隐 · 待传承');
     lif.textContent = bits.join(' · ');
   }
+  renderBar(ch);
   renderLife(ch.life);
 
   // 状态条
@@ -1387,10 +1388,267 @@ $('#btn-companion-feed').onclick = async () => {
   } catch (e) { setStatus(st, e.message, 'err'); }
 };
 
+/* ───────────────────────── 游戏化 HUD / 子页 / 世界 / 复位 ─────────
+ * 为什么有这一层: 面板上摆着十个卡片, 读故事时要一路滚过设置项。
+ * 现在拆成 4 个子页: 故事 (默认) / 人物 / 世界 / 设置, 页内切换不重载。
+ * 顶部状态栏只放"每回合都在变的数": 气血 / 内力 / 修为 / 声望 / 潜能 / 岁数。
+ */
+
+function barGauge(label, cur, max, cls) {
+  const pct = max > 0 ? Math.max(0, Math.min(100, Math.round(cur * 100 / max))) : 0;
+  return '<div class="pg-gauge"><span class="pg-gauge-l">' + esc(label) + '</span>' +
+    '<div class="pg-gauge-bar ' + (cls || '') + '"><i style="width:' + pct + '%"></i></div>' +
+    '<span class="pg-gauge-v">' + cur + ' / ' + max + '</span></div>';
+}
+
+function renderBar(ch) {
+  if (!ch) return;
+  const put = function (id, v) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = v;
+  };
+  put('bar-name', ch.name || '小墨');
+  put('bar-level', 'Lv.' + (ch.level || 1));
+  put('bar-rank', ch.rank || '初入江湖');
+  const L = ch.life || {};
+  const bits = [L.age_label || '12 岁', '故事第 ' + (L.day_no || 1) + ' 日',
+                '第 ' + (L.generation || ch.generation || 1) + ' 代'];
+  if (L.stage === 'retiring') bits.push('已退隐 · 待传承');
+  put('bar-life', bits.join(' · '));
+
+  const st = ch.stats || {};
+  const hp = st.hp || {};
+  const nl = st.neili || {};
+  const g = document.getElementById('bar-gauges');
+  if (g) {
+    g.innerHTML = barGauge('气血', hp.cur || 0, hp.max || 0, 'hp') +
+      barGauge('内力', nl.cur || 0, nl.max || 0, 'neili') +
+      barGauge('修为', ch.exp || 0, ch.exp_needed || 0, 'exp');
+  }
+  const c = document.getElementById('bar-chips');
+  if (c) {
+    const rows = [
+      '<span class="pg-chip">声望 <b>' + (ch.fame || 0) + '</b></span>',
+      '<span class="pg-chip">潜能 <b>' + (ch.pot || 0) + '</b></span>',
+      '<span class="pg-chip">陪读 <b>' + (ch.minutes || 0) + '</b> 分钟</span>',
+      '<span class="pg-chip">经脉 <b>' + (ch.vein || 0) + '</b>/10</span>',
+    ];
+    if (ch.school) rows.push('<span class="pg-chip">门派 <b>' + esc(ch.school.name) + '</b></span>');
+    c.innerHTML = rows.join('');
+  }
+  // 转生时的"来历"写在这里 (它自己说不清的那点东西)
+  const bs = document.getElementById('char-backstory');
+  if (bs) {
+    const txt = (L && L.backstory) || '';
+    bs.textContent = txt;
+    bs.hidden = !txt;
+  }
+  pgRebornHint();
+}
+
+/* ── 页签 ─────────────────────────────────────────────────────── */
+const PG_PANES = ['story', 'hero', 'world', 'setup'];
+
+function pgShow(name) {
+  if (PG_PANES.indexOf(name) < 0) name = 'story';
+  document.querySelectorAll('.pg-pane').forEach(function (el) {
+    el.classList.toggle('is-on', el.dataset.pg === name);
+  });
+  document.querySelectorAll('.pg-tab').forEach(function (el) {
+    const on = el.dataset.pg === name;
+    el.classList.toggle('is-on', on);
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  try { history.replaceState(null, '', '#' + name); } catch (e) { /* file:// 之类 */ }
+}
+
+function pgInit() {
+  const want = (location.hash || '').replace('#', '');
+  pgShow(PG_PANES.indexOf(want) >= 0 ? want : 'story');
+  // 委托: 页签是页内切换, 不许触发导航 (老坑: 拦了却没换页 → 哑链接)
+  document.addEventListener('click', function (e) {
+    const tab = e.target.closest('.pg-tab');
+    if (!tab) return;
+    e.preventDefault();
+    pgShow(tab.dataset.pg);
+  });
+}
+
+/* ── 世界页 ───────────────────────────────────────────────────── */
+function worldCol(rows, kind) {
+  if (!rows || !rows.length) return '<div class="pg-empty">还没有。</div>';
+  return rows.map(function (x) {
+    return '<div class="pg-world-item"><span class="n">' + esc(x.name || '') + '</span>' +
+      (x.role ? '<span class="r">' + esc(x.role) + '</span>' : '') +
+      (x.note ? '<span class="d">' + esc(x.note) + '</span>' : '') + '</div>';
+  }).join('');
+}
+
+async function loadWorld() {
+  try {
+    const r = await api('/api/world');
+    const pill = document.getElementById('world-pill');
+    if (pill) {
+      pill.className = 'pill ok';
+      pill.textContent = (r.source === 'model' ? '模型铺的' : '内置底本') +
+        ' · ' + ((r.counts && r.counts.regions) || 0) + ' 处';
+    }
+    const nm = document.getElementById('world-name');
+    if (nm) nm.textContent = r.name || '—';
+    const meta = document.getElementById('world-meta');
+    if (meta) {
+      const rows = [];
+      if (r.era) rows.push(['年代', r.era]);
+      if (r.law) rows.push(['规矩', r.law]);
+      meta.innerHTML = rows.map(function (kv) {
+        return '<div class="cs-meta-row"><span class="cs-meta-l">' + esc(kv[0]) +
+          '</span><span class="cs-meta-v">' + esc(String(kv[1])) + '</span></div>';
+      }).join('');
+    }
+    const put = function (id, html) {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    };
+    put('world-regions', worldCol(r.regions));
+    put('world-factions', worldCol(r.factions));
+    put('world-notables', worldCol(r.notables));
+    put('world-things', worldCol(r.things));
+    state.world = r;
+  } catch (e) {
+    setStatus(document.getElementById('world-status'), e.message, 'err');
+  }
+}
+
+async function loadProper() {
+  try {
+    const r = await api('/api/proper');
+    const pill = document.getElementById('proper-pill');
+    if (pill) {
+      pill.className = 'pill';
+      pill.textContent = (r.words || 0) + ' 个专属名';
+    }
+    const st = document.getElementById('proper-state');
+    if (st) {
+      const rows = [
+        ['挡在门外的词', String(r.words || 0) + ' 个 (书名 / 作者 / 人地门派 / 器物)'],
+        ['它自己的名字', String((r.allowed || []).length) + ' 个 (永不拦)'],
+        ['判定', '故事写完照表过一遍; 命中 → 重写一次 → 仍命中则替换成它自己的名字'],
+      ];
+      st.innerHTML = rows.map(function (kv) {
+        return '<div class="cs-meta-row"><span class="cs-meta-l">' + esc(kv[0]) +
+          '</span><span class="cs-meta-v">' + esc(kv[1]) + '</span></div>';
+      }).join('');
+    }
+    const ch = document.getElementById('proper-chips');
+    if (ch) {
+      ch.innerHTML = (r.sample || []).slice(0, 28).map(function (w) {
+        return '<span class="pg-chip">' + esc(w) + '</span>';
+      }).join('') || '<div class="pg-empty">还没有读到带专名的书。</div>';
+    }
+  } catch (e) { /* 专名闸门读不到不挡页面 */ }
+}
+
+/* ── 复位 / 转生 ─────────────────────────────────────────────── */
+function pgRebornHint() {
+  const inp = document.getElementById('reborn-inherit');
+  const lab = document.getElementById('reborn-val');
+  const hint = document.getElementById('reborn-hint');
+  const st = document.getElementById('reborn-state');
+  const pill = document.getElementById('reborn-pill');
+  const ch = state.char || {};
+  const cap = Math.max(0, ch.minutes || 0);
+  if (!inp) return;
+  if (inp.dataset.cap !== String(cap)) {
+    inp.dataset.cap = String(cap);
+    inp.max = String(cap);
+    inp.step = String(cap > 200 ? Math.round(cap / 100) : (cap > 0 ? 10 : 10));
+    if (Number(inp.value) > cap) inp.value = String(cap);
+    if (pill) {
+      pill.className = 'pill';
+      pill.textContent = cap > 0 ? ('可继承 ' + cap + ' 分钟') : '还没有阅历';
+    }
+  }
+  const mpd = (state.char && state.char.life && state.char.life.minutes_per_day) || 6;
+  const take = Math.max(0, Math.min(cap, Number(inp.value) || 0));
+  if (lab) lab.textContent = take + ' 分钟';
+  if (hint) {
+    if (take <= 0) {
+      hint.textContent = '白纸复位: 12 岁, 无门派, 故事清空。';
+    } else {
+      const days = Math.floor(take / mpd);
+      const age = 12 + Math.floor(days / 365);
+      hint.textContent = '转生: 故事内第 ' + (days + 1) + ' 日 · 起点 ' + age + ' 岁 · 约 ' +
+        (take * 2) + ' 修为 · 基本内功 ' + Math.floor(take / 300) + ' 级 · 声望约 ' +
+        Math.floor(take / 600) + '。';
+    }
+  }
+  if (st) {
+    const rows = [
+      ['当前', (ch.name || '小墨') + ' · Lv.' + (ch.level || 1) + ' · ' +
+        ((ch.life && ch.life.age_label) || '12 岁')],
+      ['清空', '往期故事与回合留痕 (世界 / 书卡 / 足迹都留着)'],
+      ['保留', '上一代的一生会存档到 lineage/'],
+    ];
+    st.innerHTML = rows.map(function (kv) {
+      return '<div class="cs-meta-row"><span class="cs-meta-l">' + esc(kv[0]) +
+        '</span><span class="cs-meta-v">' + esc(String(kv[1])) + '</span></div>';
+    }).join('');
+  }
+}
+
+async function doReborn() {
+  const inp = document.getElementById('reborn-inherit');
+  const nm = document.getElementById('reborn-name');
+  const st = document.getElementById('reborn-status');
+  const take = Math.max(0, Number((inp || {}).value) || 0);
+  const name = ((nm || {}).value || '').trim();
+  const label = take > 0 ? ('转生 (带走 ' + take + ' 分钟阅历)') : '复位 (白纸)';
+  if (!confirm('确认' + label + '?\n\n这一下不可回退: 往期故事会清空, ' +
+               '世界与书卡留着。' + (take > 0 ? '新一代会带着那段阅历重来。' : ''))) return;
+  setStatus(st, '正在重开…');
+  try {
+    const r = await api('/api/char/reborn', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true, inherit_minutes: take, name: name }),
+    });
+    if (r.char) renderChar(r.char);
+    if (inp) inp.value = '0';
+    await loadChronicle();
+    await loadWorld();
+    pgShow('story');
+    const back = (r.char && r.char.life && r.char.life.backstory) || r.backstory || '';
+    setStatus(st, '已重开 · 第 ' + ((r.char && r.char.generation) || 1) + ' 代' +
+      (back ? ' · ' + back.slice(0, 40) : ''), 'ok');
+  } catch (e) {
+    setStatus(st, e.message, 'err');
+  }
+}
+
+document.addEventListener('input', function (e) {
+  if (e.target && e.target.id === 'reborn-inherit') pgRebornHint();
+});
+document.addEventListener('click', function (e) {
+  if (e.target.closest('#btn-reborn')) { doReborn(); return; }
+  if (!e.target.closest('#btn-world-regen')) return;
+  const st = document.getElementById('world-status');
+  if (!confirm('重新铺一次世界?\n\n地名 / 势力 / 人物会换掉一批, 往期故事里用过的名字' +
+               '不会跟着改 —— 建议只在刚开局时重铺。')) return;
+  setStatus(st, '铺底中… (要调一次模型)');
+  api('/api/world/regen', { method: 'POST', body: '{}' })
+    .then(async function (r) {
+      await loadWorld();
+      setStatus(st, '已重铺 · ' + (r.name || ''), 'ok');
+    })
+    .catch(function (err) { setStatus(st, err.message, 'err'); });
+});
+
 (async function init() {
+  pgInit();
   await loadPresets();
   await loadConfig();
   await loadChar();
   await loadCompanion();
   await loadChronicle();
+  await loadWorld();
+  await loadProper();
 })();

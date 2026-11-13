@@ -23,6 +23,9 @@ from recto.pet import config as petcfg
 from recto.pet import growth as growth_mod
 from recto.pet import life as life_mod
 from recto.pet import lore as lore_mod
+from recto.pet import proper as proper_mod
+from recto.pet import reborn as reborn_mod
+from recto.pet import world as world_mod
 
 PREFIX = "/pet"
 
@@ -145,10 +148,42 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
         ch = cs.load_char()
         return cs.grant_trait(ch, str(_body(h).get("trait") or ""))
 
-    if path == "/char/reset":
+    # 复位 / 转生 —— 都要读者自己点头 (不可回退的清零)
+    if path in ("/char/reset", "/char/reborn"):
         if method != "POST":
             return 405, {"error": "method not allowed"}
-        return cs.reset_char()
+        body = _body(h)
+        if body.get("confirm") is not True:
+            ch = cs.load_char()
+            return 400, {"error": "复位 / 转生要读者自己点头: 请带 confirm=true",
+                         "available_minutes": int(ch.get("minutes") or 0),
+                         "char": cs.view(ch)}
+        try:
+            inherit = int(body.get("inherit_minutes") or 0)
+        except (TypeError, ValueError):
+            inherit = 0
+        out = reborn_mod.reborn(inherit_minutes=inherit,
+                                name=str(body.get("name") or ""),
+                                keep_lineage=bool(body.get("keep_lineage", True)))
+        return 200, {"ok": True, **out, "char": cs.view(out["char"]),
+                     "world": world_mod.view()}
+
+    # 架空世界 (它自己的地名 / 势力 / 人物 / 器物)
+    if path == "/world":
+        return 200, world_mod.view()
+
+    if path == "/world/regen":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        w = world_mod.ensure(force=True, use_model=True)
+        return 200, {"ok": True, "world": world_mod.view(),
+                     "name": w.get("name") or ""}
+
+    # 专名闸门现状 (排查"故事里怎么还会有书里的名字"用)
+    if path == "/proper":
+        words = proper_mod.forbidden(force=True)
+        return 200, {"words": len(words), "sample": sorted(words)[:40],
+                     "allowed": sorted(world_mod.all_names())[:40]}
 
     if path == "/char/name":
         if method != "POST":

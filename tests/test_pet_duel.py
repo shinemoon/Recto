@@ -174,9 +174,18 @@ terms = [{"term": "陈平安", "cat": "person", "count": 30},
          {"term": "泥瓶巷", "cat": "place", "count": 12},
          {"term": "剑", "cat": "object", "count": 40}]
 foe = duel.make_foe(ch, terms, seed=11)
-ok("陈平安" in foe["name"], f"对手从 person 语料取名 got {foe['name']}")
-ok("泥瓶巷" in foe["arena"], f"场地从 place 语料取 got {foe['arena']}")
-ok(foe["weapon_term"] == "剑", f"兵器从 object 语料取 got {foe['weapon_term']}")
+# 2026-11-13: 故事要自我架空 —— 对手 / 场地 / 器物一律取自**它自己的世界**,
+# 不再搬书里的专名 (语料只决定"这一趟更像遇上人还是走过地貌")。
+from recto.pet import world as _wmod
+
+_names = _wmod.all_names()
+_yu = {"陈平安", "泥瓶巷", "剑"}
+ok(not any(x in foe["name"] for x in _yu), f"对手名不搬书里的词 got {foe['name']}")
+ok(any(n and n in foe["name"] for n in _names) or "一个" in foe["name"],
+   f"对手名来自架空世界 or 无名路人 got {foe['name']}")
+ok(not any(x in foe["arena"] for x in _yu), f"场地不搬书里的词 got {foe['arena']}")
+ok((not foe["weapon_term"]) or foe["weapon_term"] in _names,
+   f"器物取自架空世界 got {foe['weapon_term']}")
 ok(foe["hp_max"] > 0 and foe["combat"]["damage"] > 0, "对手有气血与伤害")
 ok(abs(foe["hp_max"] - cs.derive(ch)["hp_max"]) <= cs.derive(ch)["hp_max"] * 0.3,
    f"对手份量跟书宠同量级 got {foe['hp_max']} vs {cs.derive(ch)['hp_max']}")
@@ -304,7 +313,9 @@ ok(out["status"] == "ok", f"回合成功 got {out.get('status')} {out.get('error
 d = out.get("duel") or {}
 ok(d.get("foe", {}).get("name"), f"回合里有遭遇 got {d.get('foe')}")
 ok(d.get("result") in ("win", "lose", "draw"), f"遭遇有结果 got {d.get('result')}")
-ok("陈平安" in (d.get("foe", {}).get("name") or ""), "对手来自真实语料遭遇")
+ok(bool((d.get("foe") or {}).get("name")), "对手有名字")
+ok("陈平安" not in ((d.get("foe") or {}).get("name") or ""),
+   "对手名不搬语料里的专名 (架空世界自洽)")
 
 advs = chron.adventures(limit=3)
 ok(advs and (advs[0].get("growth") or {}).get("duel"), "战报落进游历记录")

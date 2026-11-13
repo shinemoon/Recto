@@ -436,6 +436,10 @@ def new_char(name: str = "小墨") -> dict[str, Any]:
         "wish": 0,                     # 觉醒点
         "minutes": 0,                  # 累计陪读分钟 (已折算进修为的那部分)
         "credited_minutes": 0,         # 已从阅读时长折算过的分钟 (幂等锚点)
+        # 复位/转生那一刻, 阅读器那边的累计时长是多少 —— 作为新的零点。
+        # 没有它, 复位后下一轮心跳会立刻把**全部历史时长**重新折算回来,
+        # 复位等于没发生 (真踩过: 756 分钟立刻回到 12 岁第 127 日)。
+        "reading_baseline": 0,
         "skills": {},                  # 技能 id → 等级
         "last_skill_day": 0,           # 上次技能长进时的故事内天数 (限速用)
         "traits": [],                  # 已获性情 id
@@ -486,8 +490,9 @@ def load_char() -> dict[str, Any]:
     try:
         ch["generation"] = max(1, int(ch.get("generation") or 1))
         ch["last_skill_day"] = max(0, int(ch.get("last_skill_day") or 0))
+        ch["reading_baseline"] = max(0, int(ch.get("reading_baseline") or 0))
     except (TypeError, ValueError):
-        ch["generation"], ch["last_skill_day"] = 1, 0
+        ch["generation"], ch["last_skill_day"], ch["reading_baseline"] = 1, 0, 0
     # 自愈: credited_minutes 与 minutes 是同一个数的两个名字, 必须始终相等。
     # (第一版折算 724 分钟时, award_minutes 的单次封顶截掉了 244 分钟,
     #  但锚点已经推到 724 → 那 244 分钟永远补不回来。)

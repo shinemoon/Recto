@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS lore_book (
     themes      TEXT DEFAULT '[]',   -- JSON 数组: 主题词
     setting     TEXT DEFAULT '',     -- 世界设定 / 时代 / 地点
     summary     TEXT DEFAULT '',     -- 概要 (不剧透结局)
+    seeds       TEXT DEFAULT '{}',    -- JSON: 去专名的"种子" (母题/意象/气韵/质地)
     source      TEXT DEFAULT '',     -- search / model / manual
     searched    TEXT DEFAULT '',     -- 网络检索状态: ok / off / empty
     confidence  REAL DEFAULT 0,
@@ -108,6 +109,15 @@ CREATE INDEX IF NOT EXISTS ix_encounter_book ON encounter(book);
 CREATE INDEX IF NOT EXISTS ix_adventure_no ON adventure(no);
 """
 
+#: 后加的列 (老库靠 ALTER 补齐, 不重建表)。加列必须同时改这里的清单与
+#: 测试里手工建的 DDL —— 漏一处就会让读取报 "no such column"。
+ALTERS: list[tuple[str, str, str]] = [
+    # 2026-11-13: 故事要"自我架空", 书只提供去专名的种子
+    ("lore_book", "seeds", "TEXT DEFAULT '{}'"),
+    # 2026-11-13: 这一回用到/新造的世界元素 (给了哪几处、新记了哪些)
+    ("adventure", "world", "TEXT DEFAULT '{}'"),
+]
+
 
 # ------------------------------------------------------------------ 路径
 
@@ -147,11 +157,28 @@ def conn() -> sqlite3.Connection:
         pass
     with _LOCK:
         c.executescript(SCHEMA)
+        _migrate(c)
     try:
         os.chmod(p, 0o600)
     except OSError:
         pass
     return c
+
+
+def _migrate(c: sqlite3.Connection) -> None:
+    """老库补列 (幂等)。``ALTER TABLE`` 加列失败 (已存在) 一律忽略。"""
+    for table, col, decl in ALTERS:
+        try:
+            cols = {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+        except sqlite3.Error:
+            continue
+        if col in cols:
+            continue
+        try:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+            c.commit()
+        except sqlite3.Error:
+            pass
 
 
 # ------------------------------------------------------------------ 工具

@@ -300,10 +300,15 @@ d = json.loads(raw)
 ok(st == 200, "POST /pet/api/config 200")
 ok(d.get("char") and d["char"]["name"] == "小雪", "人格改名字 → 人物卡同步")
 
+# 复位现在走 reborn (要读者点头): 不带 confirm → 400 并回现状
 st, raw, _ = req("/pet/api/char/reset", "POST", {}, COOKIE)
+d = json.loads(raw)
+ok(st == 400 and "confirm" in d.get("error", ""), "不带 confirm 的复位被挡下")
+st, raw, _ = req("/pet/api/char/reset", "POST", {"confirm": True}, COOKIE)
 d = json.loads(raw)
 ok(st == 200 and d["char"]["level"] == 1, "POST /pet/api/char/reset 200 且重置")
 ok(d["char"]["school"] is None, "重置后无门派")
+ok(d.get("cleared", {}).get("adventures") is not None, "复位报告清了多少故事")
 st, raw, _ = req("/pet/api/char/reset", "GET", cookie=COOKIE)
 ok(st == 405, "GET reset → 405")
 

@@ -35,7 +35,7 @@ from typing import Any
 from recto.core import clock
 from recto.pet import charsheet as cs
 from recto.pet import config as petcfg
-from recto.pet import encounters, guidance, growth, jsonout, life, lore, store
+from recto.pet import encounters, guidance, growth, jsonout, life, lore, proper, store
 
 log = logging.getLogger("recto.pet.chronicle")
 
@@ -333,10 +333,12 @@ def judge(ev: dict[str, Any], ch: dict[str, Any]) -> dict[str, Any]:
                  "age": life.age_years(ch),
                  "minutes_per_story_day": life.cfg()["minutes_per_day"],
                  "retire_age": life.cfg()["retire_age"]},
-        "reading": [{k: v for k, v in r.items() if k != "lore"} for r in ev["reading"]],
-        "encounters": {"days": ev["encounters"].get("days"),
-                       "terms": ev["encounters"].get("terms", [])[:25],
-                       "cats": ev["encounters"].get("cats", {})},
+        # 只给"这段时间读了多久、推了几章、动了什么手, 以及那段路是什么味道"。
+        # **不给书名 / 作者 / 章名 / 语料原词** —— 书宠的世界是自己架空的,
+        # 书只借意不借名 (2026-11-13)。模型看到名字就会写进判词与故事, 换本书就拼贴。
+        "reading": [_reading_brief(r) for r in ev["reading"]],
+        "traces": {"days": ev["encounters"].get("days"),
+                   "cats": ev["encounters"].get("cats", {})},
         "last_growth": ev.get("last_growth") or {},
         "last_duel": ev.get("last_duel") or {},
         # 上一回路上没过的那几道坎 —— "该练什么"的第一手依据之一
@@ -375,8 +377,9 @@ def _fallback_legacy(ch: dict[str, Any]) -> dict[str, Any]:
             "孩子接过砚台, 双手有点抖。他没有再多说什么 —— 该教的都教了, "
             "剩下的路, 谁替谁走都不算数。"
         ),
-        "terms_used": [],
-        "themes_used": ["传承"],
+        "traces_used": [],
+        "seeds_used": ["传承"],
+        "world_new": [],
         "tail": "门关上, 院子里的扫地声换了一个人。",
         "verdict": "退隐, 待传承。",
         "growth_shown": [],
@@ -469,20 +472,70 @@ def _checks_brief(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _reading_brief(r: dict[str, Any]) -> dict[str, Any]:
+    """一段读书记录的**去书化**摘要 (给模型看的)。
+
+    只留: 读了多久 / 推了几章 / 有没有动手 / 那段路是什么味道 (seeds)。
+    书名、作者、章节号一律不外传 —— 否则模型顺手就把别人的世界写进来。
+    """
+    card = r.get("lore") or {}
+    seeds = card.get("seeds") if isinstance(card.get("seeds"), dict) else {}
+    out = {
+        "minutes": int(r.get("minutes") or 0),
+        "chapters": int(r.get("chapters") or 0),
+        "notes": int(r.get("notes") or 0),
+        "bookmarks": int(r.get("bookmarks") or 0),
+        "progress_known": bool(r.get("progress_known")),
+        "percent_from": r.get("percent_from"),
+        "percent_to": r.get("percent_to"),
+    }
+    if seeds:
+        out["seeds"] = {
+            "motif": list(seeds.get("motif") or [])[:6],
+            "image": list(seeds.get("image") or [])[:6],
+            "weather": seeds.get("weather") or "",
+            "texture": seeds.get("texture") or "",
+            "conflict": seeds.get("conflict") or "",
+        }
+    elif card.get("themes"):
+        # 老卡没有 seeds → 主题词本身就是抽象的, 直接当母题用
+        out["seeds"] = {"motif": list(card.get("themes") or [])[:6], "image": []}
+    return out
+
+
+def _traces(ev: dict[str, Any], limit: int = 8) -> list[dict[str, Any]]:
+    """遭遇的**类别密度** (只有类别与次数, 没有词)。
+
+    为什么只给类别: 语料里的词就是别人书里的人名地名, 给出去等于把两个世界
+    缝在一起。类别密度足以表达"这段时间这一路读得多", 具体用什么由它自己定。
+    """
+    cats = (ev.get("encounters") or {}).get("cats") or {}
+    out = [{"cat": str(k), "count": int(v or 0)} for k, v in cats.items() if int(v or 0) > 0]
+    out.sort(key=lambda x: -x["count"])
+    return out[:limit]
+
+
+def _world_brief() -> dict[str, Any]:
+    try:
+        from recto.pet import world as _world
+
+        return _world.brief()
+    except Exception as e:  # noqa: BLE001 — 世界读不出来也让这一回走下去
+        log.warning("推演 · 读世界失败: %s", e)
+        return {}
+
+
 def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
                        gain: dict[str, Any], prev: dict[str, Any] | None,
                        change: dict[str, Any] | None = None) -> dict[str, Any]:
-    books = []
+    seeds: list[dict[str, Any]] = []
     for r in ev["reading"][:4]:
         card = r.get("lore") or {}
-        books.append({
-            "title": r.get("title"), "identity": card.get("identity") or "",
-            "themes": card.get("themes") or [], "setting": card.get("setting") or "",
-            "summary": card.get("summary") or "",
-            "motifs": [c.get("gist", "")[:60] for c in (card.get("chapters") or [])][:3],
-        })
-    terms = [{"term": t.get("term"), "cat": t.get("cat"), "count": t.get("count")}
-             for t in ev["encounters"].get("terms", [])[:20]]
+        sd = card.get("seeds") if isinstance(card.get("seeds"), dict) else {}
+        if not sd and card.get("themes"):
+            sd = {"motif": list(card.get("themes") or [])[:6]}
+        if sd:
+            seeds.append(sd)
     return {
         "char": _char_brief(ch),
         "duel": _duel_brief(gain.get("duel") or None),
@@ -498,8 +551,12 @@ def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
                  "story_day": life.story_day(ch),
                  "day_no": life.story_day(ch) + 1,
                  "minutes_per_story_day": life.cfg()["minutes_per_day"]},
-        "books": books,
-        "terms": terms,
+        # 它自己的世界 (地名 / 势力 / 人物 / 器物) —— 故事在这片地上走
+        "world": _world_brief(),
+        # 书只借"意": 母题 / 意象 / 气韵 / 质地 / 冲突, 一个专名都没有
+        "seeds": seeds,
+        # 语料只给类别密度, 不给词
+        "traces": _traces(ev),
         "previous": prev or {},
         "window": ev["window"],
     }
@@ -514,6 +571,10 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
     很容易撞 429 / 超时 —— 实测就丢过一整回的故事。这里多给一次机会 (间隔 2s),
     仍然失败才算这一回合没出门。
 
+    **专名闸门**: 写完之后拿"读过的书里的人名地名书名"过一遍 (``proper``)。
+    命中了就带着"这些词不许出现"重写一次; 仍命中则做替换兜底 (故事上标
+    ``sanitized``)。这一层的目的是保住"世界自洽"这条底线, 不是修辞洁癖。
+
     ``guide="legacy"`` 时走「退隐 + 传承」那道工序 (多返回一个 ``heir`` 提议)。
     """
     payload = _adventure_payload(ev, ch, gain, prev, change)
@@ -522,26 +583,45 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         payload["growth"]["age"] = life.age_years(ch)
     user = ("按 %s.md 的契约写这一回。只输出 JSON。\n\n" % guide
             + json.dumps(payload, ensure_ascii=False, indent=1))
-    data = None
-    for attempt in (1, 2):
-        out = lore.chat(guidance.render(guide), user, max_tokens=1600,
-                        temperature=0.9)
-        data = jsonout.parse_obj(out) if out else None
-        if data:
-            break
-        log.info("游历 · 第 %d 次没拿到可解析的故事, 稍后重试", attempt)
-        time.sleep(2.0)
+    data = _compose_once(guide, user)
+    body = jsonout.as_text((data or {}).get("body"), 2600)
+    hits = proper.check(body) if body else []
+    if hits:
+        # 一次性重写: 把命中的名字点出来, 明说"换掉, 用你自己世界的东西"
+        log.info("游历 · 上一稿带了别人书里的名字 (%s), 重写一次",
+                 "、".join(h["word"] for h in hits[:6]))
+        payload["forbidden"] = [h["word"] for h in hits[:12]]
+        payload["fix_note"] = (
+            "上一稿里出现了别人书里的名字 (见 forbidden)。这些名字属于读者读过的书, "
+            "不是你的世界 —— 换成 world 里的地名/人名, 或者自己造一个并报进 world_new。"
+            "整体重写这一回, 段落照旧。")
+        user2 = ("按 %s.md 的契约重写这一回。只输出 JSON。\n\n" % guide
+                 + json.dumps(payload, ensure_ascii=False, indent=1))
+        data2 = _compose_once(guide, user2)
+        body2 = jsonout.as_text((data2 or {}).get("body"), 2600)
+        if body2 and not proper.check(body2):
+            data, body = data2, body2
+        else:
+            # 重写也没干净 → 兜底替换 (保住"世界是自造的"这条底线)
+            body, replaced = proper.scrub(body, hits)
+            if data2 and body2:
+                data, body = data2, body2
+                body, replaced = proper.scrub(body, proper.check(body))
+            data = data or {}
+            data["_sanitized"] = replaced
     if not data:
         return None
-    body = jsonout.as_text(data.get("body"), 2600)
     if len(body) < 120:
         return None
     story = {
         "title": jsonout.as_str(data.get("title"), 40) or "一回游历",
         "place": jsonout.as_str(data.get("place"), 20),
         "body": body,
-        "terms_used": jsonout.as_list(data.get("terms_used"), 6, 16),
-        "themes_used": jsonout.as_list(data.get("themes_used"), 4, 16),
+        # 兼容两种字段名: 新契约叫 seeds_used / traces_used
+        "seeds_used": (jsonout.as_list(data.get("seeds_used"), 6, 16)
+                       or jsonout.as_list(data.get("themes_used"), 4, 16)),
+        "traces_used": jsonout.as_list(data.get("traces_used"), 6, 16),
+        "world_new": data.get("world_new") if isinstance(data.get("world_new"), list) else [],
         "tail": jsonout.as_str(data.get("tail"), 60),
         "verdict": jsonout.as_str(data.get("verdict"), 40),
         "growth_shown": jsonout.as_list(data.get("growth_shown"), 5, 24),
@@ -549,6 +629,8 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         "checks_shown": bool(data.get("checks_shown")),
         "days": jsonout.as_int(data.get("days"), 1, 1, 5),
     }
+    if data.get("_sanitized"):
+        story["sanitized"] = list(data["_sanitized"])
     if guide == "legacy":
         h = data.get("heir") if isinstance(data.get("heir"), dict) else {}
         kind = str(h.get("type") or "").strip()
@@ -560,6 +642,19 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
             "reason": jsonout.as_str(h.get("reason"), 80) or life.propose_default(ch)["reason"],
         }
     return story
+
+
+def _compose_once(guide: str, user: str) -> dict[str, Any] | None:
+    """一次写故事 (失败重试一次, 间隔 2s)。"""
+    for attempt in (1, 2):
+        out = lore.chat(guidance.render(guide), user, max_tokens=1600,
+                        temperature=0.9)
+        data = jsonout.parse_obj(out) if out else None
+        if data:
+            return data
+        log.info("游历 · 第 %d 次没拿到可解析的故事, 稍后重试", attempt)
+        time.sleep(2.0)
+    return None
 
 
 # ------------------------------------------------------------------ 主流程
@@ -802,8 +897,8 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
             "INSERT INTO adventure (cycle, at, no, title, place, body, themes, terms,"
             " growth, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (cycle_id, at, adv_no, story["title"], story["place"], story["body"],
-             json.dumps(story["themes_used"], ensure_ascii=False),
-             json.dumps(story["terms_used"], ensure_ascii=False),
+             json.dumps(story.get("seeds_used") or [], ensure_ascii=False),
+             json.dumps(story.get("traces_used") or [], ensure_ascii=False),
              json.dumps({"exp": applied.get("exp"), "levels": applied.get("levels"),
                          "fame": applied.get("fame"), "pot": applied.get("pot"),
                          "trait": trait_gained,
@@ -820,6 +915,14 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                          "tag": "retire" if retiring else ""},
                         ensure_ascii=False),
              at))
+        # 故事里新造的地名/人物/器物记回世界 —— 下次还能认出它们
+        if story.get("world_new"):
+            try:
+                from recto.pet import world as _world
+
+                story["world_added"] = _world.remember(story["world_new"])
+            except Exception as e:  # noqa: BLE001
+                log.warning("推演 · 记住世界元素失败: %s", e)
         if retiring:
             heir = story.get("heir") or life.propose_default(ch)
             life.mark_retired(ch, heir=heir, story_no=adv_no, title=story["title"])
@@ -985,8 +1088,8 @@ def backfill_adventure(cycle_id: int | None = None) -> dict[str, Any] | None:
         "INSERT INTO adventure (cycle, at, no, title, place, body, themes, terms,"
         " growth, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (int(row.get("id") or 0), at, no, story["title"], story["place"], story["body"],
-         json.dumps(story["themes_used"], ensure_ascii=False),
-         json.dumps(story["terms_used"], ensure_ascii=False),
+         json.dumps(story.get("seeds_used") or [], ensure_ascii=False),
+         json.dumps(story.get("traces_used") or [], ensure_ascii=False),
          json.dumps({"exp": gain.get("exp"), "backfill": True,
                      "duel": gain.get("duel"), "checks": gain.get("checks") or [],
                      "days": int((_jdict(row.get("evidence")) or {}).get("days") or 0)},

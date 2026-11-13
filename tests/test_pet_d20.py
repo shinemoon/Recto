@@ -45,6 +45,7 @@ from recto.pet import chronicle as chron  # noqa: E402
 from recto.pet import d20  # noqa: E402
 from recto.pet import duel  # noqa: E402
 from recto.pet import store  # noqa: E402
+from recto.pet import world  # noqa: E402
 
 PASS = FAIL = 0
 
@@ -155,7 +156,12 @@ terms = [{"term": "陈平安", "cat": "person", "count": 30},
          {"term": "剑", "cat": "object", "count": 40}]
 
 foe = duel.make_foe(ch, terms, seed=11)
-ok("陈平安" in foe["name"] and "泥瓶巷" in foe["arena"], "对手与场地从语料长出来")
+_names = world.all_names()
+ok("陈平安" not in foe["name"] and "泥瓶巷" not in foe["arena"],
+   "对手与场地不再搬书里的专名 (2026-11-13 架空口径)")
+ok(any(n and n in foe["name"] for n in _names) or "一个" in foe["name"],
+   f"对手名取自架空世界 got {foe['name']}")
+ok(foe["arena"] in _names, f"场地取自架空世界 got {foe['arena']}")
 ok(foe["d20"]["ac"] > 0 and foe["d20"]["damage"]["sides"] >= 4, "对手也有 d20 数值")
 ok(abs(foe["hp_max"] - cs.derive(ch)["hp_max"]) <= cs.derive(ch)["hp_max"] * 0.35,
    f"对手份量同量级 got {foe['hp_max']}")
@@ -247,9 +253,12 @@ ok(two[0]["white"] is True, "路那一类是白检定")
 reds = [t for sd in range(30) for t in ck.plan(ch, terms, seed=sd, count=2)
         if t["white"] is False]
 ok(reds, "抽得到红检定 (一次定生死)")
-ok(any("泥瓶巷" in t["target"] or "陈平安" in t["target"] for t in two),
-   f"坎落在语料上 got {[t['target'] for t in two]}")
-ok(two[0]["target"].startswith("在泥瓶巷"), "场地类的坎写成'在<地方>…'")
+ok(any(n and n in t["target"] for t in two for n in world.all_names()),
+   f"坎落在架空世界的地/人上 got {[t['target'] for t in two]}")
+ok(not any("泥瓶巷" in t["target"] or "陈平安" in t["target"] for t in two),
+   "坎不落在别人书里的专名上")
+ok(two[0]["target"].startswith("在"), "场地类的坎写成'在<地方>…'")
+ok("泥瓶巷" not in two[0]["target"], "坎不落在别人书里的地名上")
 
 got1 = ck.resolve(ch, terms, seed=7, memory={})
 ok(len(got1["checks"]) == 2, "掷出两道坎")
@@ -381,8 +390,11 @@ cin.close()
 out = chron.run(trigger="manual")
 ok(out["status"] == "ok", f"回合成功 got {out.get('status')} {out.get('error','')}")
 ok(len(out.get("checks") or []) == 2, f"回合里带两道坎 got {len(out.get('checks') or [])}")
-ok(any("泥瓶巷" in (c.get("target") or "") or "陈平安" in (c.get("target") or "")
-       for c in out.get("checks") or []), "坎落在真实语料上")
+ok(any(n and n in (c.get("target") or "")
+       for c in out.get("checks") or [] for n in world.all_names()),
+   "坎落在（架空世界的）具体地方上")
+ok(not any("泥瓶巷" in (c.get("target") or "") or "陈平安" in (c.get("target") or "")
+           for c in out.get("checks") or []), "坎不搬书里的专名")
 
 advs = chron.adventures(limit=1)
 g = (advs[0].get("growth") or {}) if advs else {}

@@ -65,13 +65,25 @@ def _terms_of(cat: str, terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 # ------------------------------------------------------------------ 对手
 
+def _world() -> dict[str, Any]:
+    """当前架空世界 (对手 / 场地的名字从这里取)。"""
+    try:
+        from recto.pet import world as wmod
+
+        return wmod.load()
+    except Exception:  # noqa: BLE001 — 世界读不出来就用兜底池
+        return {}
+
+
 def make_foe(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
              seed: int | None = None) -> dict[str, Any]:
     """按书宠当前的份量, 造一个挡路的人。
 
-    对手从**语料里长出来**: 有 ``person`` 类的词就用它当名号 (读者这段时间
-    真遇到的角色类型), 有 ``place`` 的当场地, 有 ``object`` 的当兵器。
-    没有语料就退回江湖上最常见的那种人 —— 不空转。
+    **名字与场地一律取自它自己的架空世界** (``world.notables`` / ``regions`` /
+    ``things``), 语料只用来决定"这段时间更像遇上人, 还是更像走过地貌"。
+
+    为什么不再拿语料词当名号: 那些词是别人书里的人名地名, 搬进故事等于把两个
+    世界缝在一起 —— 今天抄武侠, 明天抄散文, 前后就不自洽了 (2026-11-13 改)。
     """
     seed = int(seed if seed is not None else 0)
     rng = random.Random(seed)
@@ -81,14 +93,27 @@ def make_foe(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
     places = _terms_of("place", terms)
     objects = _terms_of("object", terms)
 
-    if persons:
-        name = "一个自称「" + str(persons[0]["term"])[:8] + "」的人"
-        why = "在道上堵住了这条路"
+    w = _world()
+    notables = [x for x in (w.get("notables") or []) if str(x.get("name") or "")]
+    regions = [x for x in (w.get("regions") or []) if str(x.get("name") or "")]
+    things = [x for x in (w.get("things") or []) if str(x.get("name") or "")]
+
+    # 语料里"人"这类多 → 这一趟更可能撞上人; 否则多半是路人甲
+    if persons and notables and rng.random() < 0.65:
+        who = notables[rng.randrange(len(notables))]
+        name = str(who.get("name"))
+        role = str(who.get("role") or "")
+        name = (role + " " + name) if role else name
+        why = str(who.get("note") or "") or "在道上堵住了这条路"
     else:
         pick = rng.choice(FOE_POOL)
         name, why = pick["name"], pick["why"]
-    arena = (str(places[0]["term"])[:8] + "一带") if places else rng.choice(PLACE_POOL)
-    weapon_term = str(objects[0]["term"])[:8] if objects else ""
+    if regions and (places or rng.random() < 0.5):
+        arena = str(regions[rng.randrange(len(regions))].get("name"))
+    else:
+        arena = rng.choice(PLACE_POOL)
+    weapon_term = (str(things[rng.randrange(len(things))].get("name"))
+                   if objects and things else "")
 
     # 份量: 跟书宠同量级 (±2 级), 不该出现"三岁娃娃打宗师"
     lv = max(1, int(ch.get("level") or 1) + rng.randint(-2, 2))

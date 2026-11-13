@@ -249,7 +249,10 @@ def credit_reading_minutes(ch: dict[str, Any], total_minutes: int, *,
     的"陪读 N 分钟"跟陪读卡里的"累计 N 分钟"对不上 (真踩过)。
 
     """
-    total = max(0, int(total_minutes or 0))
+    # 基线: 复位 / 转生那一刻的累计时长。""历史""不该被新一代继承,
+    # 只有基线之后的阅读才喂给它 (否则复位第二秒就长回原样)。
+    base = max(0, int(ch.get("reading_baseline") or 0))
+    total = max(base, int(total_minutes or 0)) - base
     credited = max(0, int(ch.get("credited_minutes") or 0))
     delta = total - credited
     if delta <= 0:

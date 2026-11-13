@@ -21,16 +21,13 @@
            "hp": {"cur": 48, "max": 96}, "neili": {"cur": 60, "max": 80},
            "story_day": 12, "age": 12},
   "reading": [
-    {"title": "示例长篇", "author": "某作者", "minutes": 96,
-     "chapter_from": 171, "chapter_to": 189, "chapters": 18,
-     "notes": 3, "bookmarks": 1, "percent_from": 27.1, "percent_to": 31.9,
-     "lore": {"identity": "……", "themes": ["……"], "setting": "……", "summary": "……"}}
+    {"minutes": 96, "chapters": 18, "notes": 3, "bookmarks": 1,
+     "percent_from": 27.1, "percent_to": 31.9, "progress_known": true,
+     "seeds": {"motif": ["迟到的赎罪"], "image": ["熄了又亮的灯"],
+               "weather": "常年阴雨, 冷得干净", "texture": "粗粝",
+               "conflict": "守住一样东西要拿另一样去换"}}
   ],
-  "encounters": {
-    "days": 2,
-    "terms": [{"term": "……", "cat": "place", "count": 14, "books": 1}],
-    "cats": {"place": 42, "person": 30}
-  },
+  "traces": {"days": 2, "cats": {"place": 42, "person": 30, "object": 11}},
   "skill_menu": [{"id": "jianfa", "name": "剑法", "type": "weapon"},
                  {"id": "yizhenjianxue", "name": "一针见血", "type": "perform"}],
   "last_growth": {"at": "2026-11-11T22:00:00", "exp": 120, "fame": 5},
@@ -55,9 +52,15 @@
   此时 `chapters = 0` 与 `percent_from = percent_to` 是"未知", **不是"没有推进"** ——
   不要因此扣分, 也不要因此加成, 按分钟与批注判断即可。
 - `notes` / `bookmarks` 是**动手痕迹**; 有批注说明读进去了, 比只翻页值钱。
-- `encounters.terms` 是这段时间在正文里**真遇到过**的语料词及其次数 ——
-  它反映"这段时间这个江湖在他眼前铺开了哪些角落"。
-- `lore` 是这本书的底细 (可能为空: 没建卡就是空对象)。
+- **输入里没有书名、没有书里的人物地名** (2026-11-13 起的有意设计): 书宠的世界是
+  自己架空的, 书只借"意"。所以判词里也不要写"读了某本书" —— 写"这一段路走的是
+  什么味道": 苍凉的、温厚的、凛冽的。
+- `traces.cats` 是这段时间在正文里反复撞见的**类别**与次数 (人 / 地貌 / 器物 /
+  势力 / 事)。**这里没有词** —— 给类别是为了让判词贴近"这段时间读了什么味道",
+  不是让你把某本书里的东西算进成长。次数多只说明"这段时间这一路读得多"。
+- `reading[].seeds` 是那本书提炼出来的**种子** (母题 / 意象 / 气韵 / 质地 / 冲突),
+  **已去掉一切专名**。它决定"这一段成长像什么味道", 不决定具体数值。
+  它可能为空 (没建卡 / 老卡) —— 那就只看分钟与动手痕迹。
 - `char.combat` / `char.hp` / `char.neili` 是它**交手时用的那套数** (命中 / 闪避 /
   伤害 / 减伤 / 气血 / 内力)。`char.hp.cur` 远低于 `max` 说明它前几场打得不轻。
 - `last_duel` 是**上一场遭遇**的战果 (胜负与伤)。它是"该练哪门功夫"的第一手依据。
