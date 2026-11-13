@@ -703,3 +703,165 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
 .rv-kw-time   { background-color: rgba(64, 210, 210, .30); }
 .rv-kw-term   { background-color: rgba(160, 168, 180, .30); }
 .rv-kw-work   { background-color: rgba(255, 110, 150, .30); }
+
+/* ---- 注释 (脚注 / 尾注 / 边注) --------------------------------------
+   正文里只留 `.rv-fn` 标记，注释正文由 JS 按形态呈现:
+     popover.is-on   就地弹出 (fixed 浮层, 不参与排版)
+     panel.is-on     右侧浮层清单 (同样不参与排版)
+     .rv-notes       章末列表 (参与排版)
+   marker 必须做到**不改变行高** —— 分页靠列高算页数, 一个上标把行撑高
+   就会连带整章重排, 所以 line-height:0 + 相对位移, 不用 vertical-align。 */
+.rv-fn {
+  font-size: .64em;
+  line-height: 0;
+  position: relative;
+  top: -.46em;
+  margin: 0 .06em;
+  padding: 0 .16em;
+  border-radius: 999px;
+  color: var(--rv-accent, #8a5a2b);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.rv-fn:hover, .rv-fn:focus-visible { background: color-mix(in srgb, var(--rv-accent) 16%, transparent); }
+.rv-fn:focus-visible { outline: 2px solid color-mix(in srgb, var(--rv-accent) 55%, transparent); outline-offset: 1px; }
+.rv-fn.is-hit { background: color-mix(in srgb, var(--rv-accent) 26%, transparent); }
+.rv-fn[aria-expanded="true"] { background: color-mix(in srgb, var(--rv-accent) 22%, transparent); }
+.rv-fn-void { color: var(--rv-dim); opacity: .75; }
+
+/* 就地弹出 */
+.rv-npop {
+  position: fixed;
+  z-index: 46;
+  max-width: min(24rem, 86vw);
+  max-height: 42vh;
+  overflow: auto;
+  padding: .7rem .8rem .8rem;
+  border-radius: var(--rv-radius-lg, 12px);
+  background: var(--rv-panel);
+  color: var(--rv-fg);
+  border: 1px solid var(--rv-line);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .22);
+  font-size: .82rem;
+  line-height: 1.72;
+  text-align: left;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .16s ease, transform .16s ease;
+}
+.rv-npop.is-on { opacity: 1; transform: none; }
+.rv-npop-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .6rem;
+  margin-bottom: .3rem;
+  color: var(--rv-dim);
+  font-size: .74rem;
+  letter-spacing: .04em;
+}
+.rv-npop-h b { font-weight: 600; }
+.rv-npop-h button {
+  border: 0; background: transparent; color: var(--rv-dim);
+  font-size: 1rem; line-height: 1; padding: 0 .15rem; cursor: pointer;
+}
+.rv-npop-b { white-space: pre-wrap; }
+/* 手机: 从底部升起的卡片, 不挤在标记旁边 */
+.rv-npop.is-sheet {
+  left: .6rem; right: .6rem; top: auto; bottom: .6rem;
+  max-width: none; max-height: 46vh;
+  transform: translateY(8px);
+}
+.rv-npop.is-sheet.is-on { transform: none; }
+
+/* 侧栏清单 */
+.rv-npanel {
+  position: fixed;
+  z-index: 46;
+  top: calc(var(--rv-bar-h, 44px) + 8px);
+  right: 8px;
+  bottom: 3.4rem;
+  width: min(22rem, 40vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--rv-panel);
+  color: var(--rv-fg);
+  border: 1px solid var(--rv-line);
+  border-radius: var(--rv-radius-lg, 12px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .2);
+  font-size: .82rem;
+  opacity: 0;
+  transform: translateX(6px);
+  transition: opacity .16s ease, transform .16s ease;
+}
+.rv-npanel.is-on { opacity: 1; transform: none; }
+.rv-npanel-h {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .6rem; padding: .55rem .7rem;
+  border-bottom: 1px solid var(--rv-line);
+  color: var(--rv-dim); font-size: .74rem; letter-spacing: .04em;
+}
+.rv-npanel-h b { font-weight: 600; }
+.rv-npanel-h button {
+  border: 0; background: transparent; color: var(--rv-dim);
+  font-size: 1rem; line-height: 1; padding: 0 .15rem; cursor: pointer;
+}
+.rv-npanel-list { overflow: auto; padding: .35rem; }
+.rv-npanel-empty { padding: .8rem .5rem; color: var(--rv-dim); }
+.rv-npanel-item {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr;
+  gap: .1rem .45rem;
+  width: 100%;
+  text-align: left;
+  padding: .45rem .5rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.7;
+  cursor: pointer;
+}
+.rv-npanel-item:hover { background: color-mix(in srgb, var(--rv-fg) 6%, transparent); }
+.rv-npanel-item.is-on { background: color-mix(in srgb, var(--rv-accent) 14%, transparent); }
+.rv-npanel-n { color: var(--rv-accent); font-variant-numeric: tabular-nums; }
+
+/* 章末列表 (参与排版: 页数由 scrollWidth 现量, 会自动多出若干页) */
+.rv-notes {
+  margin: 2.4em 0 .6em;
+  padding-top: .8em;
+  border-top: 1px solid var(--rv-line);
+  font-size: .82em;
+  line-height: 1.75;
+  text-align: left;
+  text-indent: 0;
+  break-inside: auto;
+}
+.rv-notes-h {
+  margin: 0 0 .5em;
+  font-size: .92em;
+  font-weight: 600;
+  letter-spacing: .12em;
+  color: var(--rv-dim);
+  text-align: left;
+}
+.rv-notes-list { display: block; }
+.rv-notes-i {
+  display: grid;
+  grid-template-columns: 1.6em 1fr;
+  gap: .4em;
+  padding: .18em .2em;
+  border-radius: 6px;
+  scroll-margin-top: calc(var(--rv-bar-h, 44px) + 8px);
+}
+.rv-notes-i.is-hit { background: color-mix(in srgb, var(--rv-accent) 14%, transparent); }
+.rv-notes-i[data-orphan="1"] { color: var(--rv-dim); }
+.rv-notes-n { color: var(--rv-accent); font-variant-numeric: tabular-nums; }
+.rv-notes-t { white-space: pre-wrap; word-break: break-word; }
+
+@media (max-width: 720px) {
+  .rv-npanel { width: auto; left: .5rem; right: .5rem; bottom: .5rem; }
+}

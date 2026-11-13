@@ -166,6 +166,12 @@ _READER_HTML = """
         <button type="button" data-indent="0" aria-pressed="false">无</button>
         <button type="button" data-indent="2" aria-pressed="true">两字</button>
       </div></div>
+    <div class="rv-typo-row rv-wide"><span>注释呈现</span>
+      <div class="rv-seg" id="rv-notemode" role="group" aria-label="注释呈现">
+        <button type="button" data-notemode="popover" aria-pressed="true">弹出</button>
+        <button type="button" data-notemode="panel" aria-pressed="false">侧栏</button>
+        <button type="button" data-notemode="endnotes" aria-pressed="false">章末</button>
+      </div></div>
     <div class="rv-typo-row rv-wide" id="rv-kw-row" hidden><span>关键词高亮</span>
       <div class="rv-seg" id="rv-kw" role="group" aria-label="关键词高亮">
         <button type="button" data-kw="0" aria-pressed="false">关</button>
@@ -352,7 +358,10 @@ def _chapter_payload(doc: bookfile.BookDoc, idx: int) -> dict:
     cjk = _cjk_ratio("".join(b.text for b in blocks)) >= 0.3
     return {"i": idx, "title": ch.title, "start": ch.start, "size": ch.size,
             "catalog": ch.catalog_id, "cjk": cjk,
-            "blocks": [b.as_dict() for b in blocks]}
+            "blocks": [b.as_dict() for b in blocks],
+            # 注释单独下发（正文里只留 <sup class="rv-fn" data-note="N"> 标记）。
+            # 前端按用户选的形态呈现：弹出 / 侧栏 / 章末。
+            "notes": doc.notes(idx)}
 
 
 def _track_chapter(key: str, idx: int, payload: dict) -> None:

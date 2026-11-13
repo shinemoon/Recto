@@ -39,6 +39,7 @@
     cur: 0,
     loaded: {},          // chapter index -> element
     blocks: {},          // chapter index -> [block data]
+    bnotes: {},          // chapter index -> 书里的注释 [{n,text,orphan}]
     cjk: {},             // chapter index -> 是否中文段落 (决定首行缩进等版式)
     notes: [],
     marks: [],
@@ -381,8 +382,10 @@
     }
     S.loaded[data.i] = box;
     S.blocks[data.i] = data.blocks;
+    if (data.notes) S.bnotes[data.i] = data.notes;
     paintHighlights(data.i);
     kmApply();
+    applyNoteBlock(data.i);       // 章末形态: 注释块挂在本章最后
     return box;
   }
 
@@ -406,6 +409,7 @@
     api('/chapter/' + idx).then(function (data) {
       if (!data || !data.blocks) { settle(null); return; }
       S.blocks[idx] = data.blocks;
+      S.bnotes[idx] = data.notes || [];
       S.cjk[idx] = !!data.cjk;
       settle(data.blocks);
     }).catch(function (e) {
@@ -663,6 +667,7 @@
   function goPage(p, opts) {
     opts = opts || {};
     if (!isPaged()) return;
+    if (notePop && !notePop.hidden) closeNotePop();
     var prev = S.page;
     S.page = Math.max(0, Math.min(p, S.pageCount - 1));
     var moved = S.page !== prev;
@@ -1793,6 +1798,8 @@
     if (!noteEdit.hidden) { closeNoteEdit(); hit = true; }
     if (!selBar.hidden) { selBar.hidden = true; hit = true; }
     if (typoEl && !typoEl.hidden) { hideTypo(); hit = true; }
+    if (notePop && !notePop.hidden) { closeNotePop(); hit = true; }
+    if (notePanel && !notePanel.hidden) { closeNotePanel(); hit = true; }
     return hit;
   }
 
@@ -2045,6 +2052,10 @@
     if (fontInp && document.activeElement !== fontInp) fontInp.value = fontLabelFor(S.look.font);
     $$('[data-indent]', typoEl).forEach(function (b) {
       b.setAttribute('aria-pressed', b.dataset.indent === S.look.indent ? 'true' : 'false');
+    });
+    var nm = noteMode();
+    $$('[data-notemode]', typoEl).forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.notemode === nm ? 'true' : 'false');
     });
   }
 
@@ -2355,6 +2366,8 @@
       if (ind) setIndent(ind.dataset.indent);
       var kw = ev.target.closest && ev.target.closest('[data-kw]');
       if (kw) setKw(kw.dataset.kw === '1');
+      var nm = ev.target.closest && ev.target.closest('[data-notemode]');
+      if (nm) setNoteMode(nm.dataset.notemode);
     });
   }
   if (fontInp) {
@@ -2525,15 +2538,273 @@
   mainEl.addEventListener('click', function (ev) {
     var wasSelBar = mainDownSelBar;
     mainDownSelBar = false;
+    // "这次点击是从排版面板里按下去的" —— 用**时间戳**而不是布尔量:
+    // 面板可能被程序化关闭 (点标记/快捷键/别的面板顶上), 那时没有新的
+    // pointerdown 来复位一个布尔标记, 紧接着的一次正文点击就被静默吞掉
+    // (实测踩过)。时间戳会自己过期, 不会残留。
+    var fromTypo = downInTypoAt && (Date.now() - downInTypoAt) < 1200;
+    downInTypoAt = 0;
     // 刚滑过一页 / 刚拖过 → 别顺手把顶栏也切了
     if (Date.now() - Math.max(S.swipedAt || 0, S.draggedAt || 0) < 320) return;
-    if (downInTypo) return;                        // 这次点击是从排版面板里按下去的
+    if (fromTypo) return;                           // 这次点击是从排版面板里按下去的
     if (ev.target.closest && ev.target.closest('a')) return;
+    var fnHit = ev.target.closest && ev.target.closest('.rv-fn');
+    if (fnHit) { openNote(fnHit); return; }   // 注释标记: 别顺手把顶栏切了
     var sel = window.getSelection();
     if (sel && String(sel).length) return;
     if (dismissPopups()) return;
     if (wasSelBar) return;
     setBar(!barHidden);
+  });
+
+  // ---------- 注释 (脚注 / 尾注 / 边注) ----------
+  // 正文里只留 `<sup class="rv-fn" data-note="N">N</sup>` 标记，注释正文由章节
+  // 接口的 `notes` 单独下发 —— 因为在源书里注释正文的位置五花八门（有的紧跟在
+  // 段落后面、有的堆在章末、有的塞在段落内部），留在正文流里就成了"注释全文插
+  // 在段落之间"。三种呈现形态:
+  //   popover  就地弹出（默认）
+  //   panel    右侧浮层清单（只覆盖, 不改版面, 分页/滚动都安全）
+  //   endnotes 章末列表（参与排版, 章末出现"注释"区块）
+  var NOTE_MODES = ['popover', 'panel', 'endnotes'];
+  var notePop = null, notePanel = null;
+
+  function noteMode() {
+    var v = '';
+    try { v = localStorage.getItem('recto.note') || ''; } catch (e) { v = ''; }
+    return NOTE_MODES.indexOf(v) >= 0 ? v : 'popover';
+  }
+
+  function notesOf(ch) { return (S.bnotes && S.bnotes[ch]) || []; }
+
+  function noteOf(ch, n) {
+    var list = notesOf(ch);
+    for (var i = 0; i < list.length; i++) if (+list[i].n === +n) return list[i];
+    return null;
+  }
+
+  function noteBody(note) {
+    if (!note) return '（这条注释没有正文）';
+    var t = note.text || '（这条注释没有正文）';
+    return note.orphan ? '（正文里没有标注引用）' + t : t;
+  }
+
+  function notePopEl() {
+    if (notePop) return notePop;
+    notePop = document.createElement('div');
+    notePop.className = 'rv-npop';
+    notePop.hidden = true;
+    notePop.setAttribute('role', 'dialog');
+    notePop.innerHTML = '<div class="rv-npop-h"><b></b>' +
+      '<button type="button" data-npop="close" aria-label="关闭">×</button></div>' +
+      '<div class="rv-npop-b"></div>';
+    (root || document.body).appendChild(notePop);
+    return notePop;
+  }
+
+  function closeNotePop() {
+    if (!notePop || notePop.hidden) return;
+    notePop.hidden = true;
+    notePop.classList.remove('is-on', 'is-sheet');
+    if (S.noteMark) { S.noteMark.setAttribute('aria-expanded', 'false'); S.noteMark = null; }
+  }
+
+  function showNotePop(markEl, ch, n) {
+    var el = notePopEl();
+    el.querySelector('.rv-npop-h b').textContent = '注释 ' + n;
+    el.querySelector('.rv-npop-b').textContent = noteBody(noteOf(ch, n));
+    el.dataset.ch = ch;
+    el.dataset.n = n;
+    el.hidden = false;
+    el.classList.add('is-on');
+    var narrow = window.innerWidth < 620;
+    el.classList.toggle('is-sheet', narrow);
+    var r = markEl.getBoundingClientRect();
+    var box = el.getBoundingClientRect();
+    var w = box.width, h = box.height;
+    if (narrow) {
+      el.style.left = '';
+      el.style.top = '';
+    } else {
+      var left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2),
+                          Math.max(8, window.innerWidth - w - 8));
+      var top = r.top - h - 10;
+      if (top < 8) top = Math.min(window.innerHeight - h - 8, r.bottom + 10);
+      el.style.left = Math.round(left) + 'px';
+      el.style.top = Math.round(top) + 'px';
+    }
+    if (S.noteMark && S.noteMark !== markEl) S.noteMark.setAttribute('aria-expanded', 'false');
+    S.noteMark = markEl;
+    markEl.setAttribute('aria-expanded', 'true');
+    closeNotePanel();
+  }
+
+  function notePanelEl() {
+    if (notePanel) return notePanel;
+    notePanel = document.createElement('div');
+    notePanel.className = 'rv-npanel';
+    notePanel.hidden = true;
+    notePanel.setAttribute('role', 'dialog');
+    notePanel.innerHTML = '<div class="rv-npanel-h"><b></b>' +
+      '<button type="button" data-npanel="close" aria-label="关闭">×</button></div>' +
+      '<div class="rv-npanel-list"></div>';
+    (root || document.body).appendChild(notePanel);
+    return notePanel;
+  }
+
+  function closeNotePanel() {
+    if (!notePanel || notePanel.hidden) return;
+    notePanel.hidden = true;
+    notePanel.classList.remove('is-on');
+  }
+
+  function openNotePanel(ch, n) {
+    var el = notePanelEl();
+    el.querySelector('.rv-npanel-h b').textContent = '注释 · 第 ' + (ch + 1) + ' 章';
+    var box = el.querySelector('.rv-npanel-list');
+    box.innerHTML = '';
+    var list = notesOf(ch);
+    if (!list.length) {
+      var empty = document.createElement('div');
+      empty.className = 'rv-npanel-empty';
+      empty.textContent = '这一章没有注释';
+      box.appendChild(empty);
+    }
+    list.forEach(function (note) {
+      var item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'rv-npanel-item' + (+note.n === +n ? ' is-on' : '');
+      item.dataset.note = note.n;
+      item.dataset.ch = ch;
+      var num = document.createElement('span');
+      num.className = 'rv-npanel-n';
+      num.textContent = note.n;
+      var tx = document.createElement('span');
+      tx.className = 'rv-npanel-t';
+      tx.textContent = noteBody(note);
+      item.appendChild(num);
+      item.appendChild(tx);
+      box.appendChild(item);
+    });
+    el.hidden = false;
+    el.classList.add('is-on');
+    closeNotePop();
+    var on = box.querySelector('.rv-npanel-item.is-on');
+    if (on && on.scrollIntoView) on.scrollIntoView({ block: 'center' });
+  }
+
+  // 章末形态: 注释块跟着章节走 (不标 .rv-blk —— 它不参与"页首段"游标,
+  // 只是章末的一段附加内容; 页数由 scrollWidth 现量, 所以照样算得准)
+  function noteBlockHtml(ch) {
+    var list = notesOf(ch);
+    if (!list.length) return '';
+    var out = ['<div class="rv-notes" data-notes-ch="' + ch + '">',
+               '<div class="rv-notes-h">注释</div><div class="rv-notes-list">'];
+    list.forEach(function (note) {
+      out.push('<div class="rv-notes-i" id="rv-note-' + ch + '-' + note.n + '"' +
+               ' data-note="' + note.n + '"' +
+               (note.orphan ? ' data-orphan="1"' : '') + '>' +
+               '<span class="rv-notes-n">' + note.n + '</span>' +
+               '<span class="rv-notes-t">' + escapeHtml(noteBody(note)) + '</span></div>');
+    });
+    out.push('</div></div>');
+    return out.join('');
+  }
+
+  function applyNoteBlock(ch) {
+    var art = chapterEl(ch);
+    if (!art) return;
+    var old = art.querySelector('.rv-notes');
+    var html = noteMode() === 'endnotes' ? noteBlockHtml(ch) : '';
+    if (!html) { if (old) old.remove(); return; }
+    if (old) { old.outerHTML = html; return; }
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    if (tmp.firstChild) art.appendChild(tmp.firstChild);
+  }
+
+  function pageOfAnyEl(el) {
+    if (!el || !viewEl || !S.pageStride) return 0;
+    var vr = viewEl.getBoundingClientRect();
+    return Math.max(0, Math.round((el.getBoundingClientRect().left - vr.left) / S.pageStride) + S.page);
+  }
+
+  function jumpToNote(ch, n) {
+    var el = document.getElementById('rv-note-' + ch + '-' + n);
+    if (!el) return false;
+    flipStop();
+    if (isPaged()) {
+      rebuildFlow();
+      goPage(pageOfAnyEl(el));
+    } else {
+      var barH = bar.getBoundingClientRect().height || 44;
+      var top = el.getBoundingClientRect().top + window.scrollY - barH - 10;
+      window.scrollTo({ top: Math.max(0, top) });
+    }
+    el.classList.add('is-hit');
+    setTimeout(function () { el.classList.remove('is-hit'); }, 1500);
+    return true;
+  }
+
+  function openNote(markEl) {
+    var art = markEl.closest ? markEl.closest('.rv-ch') : null;
+    var ch = art ? +art.dataset.ch : S.cur;
+    var n = +markEl.dataset.note;
+    if (!n) return;
+    var mode = noteMode();
+    if (mode === 'endnotes' && jumpToNote(ch, n)) return;
+    if (mode === 'panel') { openNotePanel(ch, n); return; }
+    showNotePop(markEl, ch, n);
+  }
+
+  function setNoteMode(m) {
+    if (NOTE_MODES.indexOf(m) < 0) return;
+    try { localStorage.setItem('recto.note', m); } catch (e) { /* 隐私模式忽略 */ }
+    closeNotePop();
+    closeNotePanel();
+    var keep = currentAnchor();
+    Object.keys(S.loaded || {}).forEach(function (k) { applyNoteBlock(+k); });
+    paintLook();
+    queueRelayout(keep);
+  }
+
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('[data-npop="close"],[data-npanel="close"]');
+    if (b) { closeNotePop(); closeNotePanel(); return; }
+    var it = ev.target.closest && ev.target.closest('.rv-npanel-item');
+    if (it) {
+      // 侧栏里点某条 -> 正文里滚到标记那一处 (分页时按页跳), 不改变当前形态
+      var ch = +it.dataset.ch, n = +it.dataset.note;
+      var art = chapterEl(ch);
+      if (art) {
+        var mark = art.querySelector('.rv-fn[data-note="' + n + '"]');
+        if (mark) {
+          flipStop();
+          if (isPaged()) { rebuildFlow(); goPage(pageOfAnyEl(mark)); }
+          else {
+            var barH = bar.getBoundingClientRect().height || 44;
+            window.scrollTo({ top: Math.max(0, mark.getBoundingClientRect().top +
+                                            window.scrollY - barH - 10) });
+          }
+          mark.classList.add('is-hit');
+          setTimeout(function () { mark.classList.remove('is-hit'); }, 1500);
+        }
+      }
+      return;
+    }
+    if (notePop && !notePop.hidden && !notePop.contains(ev.target)) {
+      var mk = ev.target.closest && ev.target.closest('.rv-fn');
+      if (!mk) closeNotePop();
+    }
+  });
+
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    var t = ev.target;
+    if (!t || !t.closest) return;
+    var mk = t.closest('.rv-fn');
+    if (!mk) return;
+    ev.preventDefault();
+    openNote(mk);
   });
 
   // ---------- 顶部按钮 ----------
@@ -2557,15 +2828,19 @@
   // 一次点击算不算"点正文" / "点面板外", 看**按下点**而不是 click 的 target。
   // 因为字体清单在 mousedown 里就收起了: 等 mouseup 时指针底下已经换人,
   // 浏览器把 click 派发给两者的共同祖先 (= 正文), 于是"选个字体"顺带把面板关了。
-  var downInTypo = false;
+  var downInTypoAt = 0;
   document.addEventListener('pointerdown', function (ev) {
-    downInTypo = !!(typoEl && !typoEl.hidden && typoEl.contains(ev.target));
+    downInTypoAt = (typoEl && !typoEl.hidden && typoEl.contains(ev.target))
+      ? Date.now() : 0;
   }, true);
+  // 每次点击处理完就清掉 —— 面板里的点击不走 mainEl, 不清的话它会留给
+  // 下一次正文点击 (冒泡阶段跑的, 一定在 mainEl 之后)
+  document.addEventListener('click', function () { downInTypoAt = 0; }, false);
 
   // 点面板外面收起 (面板自己 / 排版按钮 / 从面板里按下去的这次点击除外)
   document.addEventListener('click', function (ev) {
-    if (!typoEl || typoEl.hidden) return;
-    if (downInTypo) return;
+    if (!typoEl || typoEl.hidden) { downInTypoAt = 0; return; }
+    if (downInTypoAt && Date.now() - downInTypoAt < 1200) return;
     if (typoEl.contains(ev.target)) return;
     if (ev.target.closest && ev.target.closest('[data-act="typo"]')) return;
     hideTypo();
@@ -2731,6 +3006,14 @@
       return a ? { ch: a.ch, off: a.off } : null;
     },
     hint: function () { return pageHintRead(); },
+    notes: function () {
+      var ch = S.cur;
+      return { mode: noteMode(), ch: ch, count: notesOf(ch).length,
+               marks: $$('.rv-ch[data-ch="' + ch + '"] .rv-fn', contentEl).length,
+               block: !!document.querySelector('.rv-notes[data-notes-ch="' + ch + '"]'),
+               pop: !!(notePop && !notePop.hidden),
+               panel: !!(notePanel && !notePanel.hidden) };
+    },
     kw: function () {
       return { on: kmOn(), mode: KM.mode, words: KM.words, ranges: KM.ranges,
                spans: KM.spans, err: KM.err,
