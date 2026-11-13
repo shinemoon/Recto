@@ -458,6 +458,15 @@
 
 
 /* ── 一回里的那一场交手 (后端算出来的战报) ─────────────────────── */
+.adv-warn {
+  margin: 10px 0 0;
+  padding: 6px 10px;
+  font-size: .84rem;
+  color: var(--rc-on-surface, #333);
+  background: color-mix(in srgb, #d9822b 14%, transparent);
+  border-left: 3px solid #d9822b;
+}
+
 .adv-duel {
   margin: 12px 0 16px;
   padding: 12px 14px;

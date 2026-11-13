@@ -51,6 +51,37 @@ FOE_POOL = [
 PLACE_POOL = ["荒村口", "石桥下", "渡口", "山神庙前", "林间小路", "集市尽头",
               "干涸的河滩", "关道边的茶棚"]
 
+#: 名号是"人"的时候, 得有个**动手的理由**。
+#: 世界里的 `note` 是一句旁白 (「无人见过真容, 声音魅惑人心」), 那不是理由 ——
+#: 直接拿它当 ``why``, 写故事的人就会觉得"这人不必打", 于是把整场交手悄悄删掉
+#: (2026-11-13 实测: 第三回就是这么写的 —— 柳如烟原是"情报机构"的旁白,
+#:  写成了喝茶谈天收场, 而战报是 16 拍、气血掉到 9/61)。
+FOE_WHY = [
+    "受人所托, 拦在这条路上不让人过去",
+    "认出了你手上的路数, 要替人讨个说法",
+    "说你在别处欠下了一笔, 今日来收",
+    "昨夜里在你手上折了面子, 今日带了话回来",
+    "有人出了价, 买你走不过这道口子",
+    "认定你身上带着不该带的东西, 要搜",
+    "挡在门前, 只说要过先赢他",
+]
+
+#: 名号/旁白里写着兵器, 就不能让他空手使拳 —— 文辞与兵刃得对得上
+_WEAPON_WORDS = (
+    (("剑",), "jianfa"), (("刀",), "daofa"), (("棍", "棒", "杖"), "gunfa"),
+    (("拳",), "quanfa"), (("掌",), "zhangfa"), (("指", "点穴"), "zhifa"),
+    (("腿", "脚"), "tuifa"),
+)
+
+
+def _weapon_hint(*texts: Any) -> str:
+    """从名号/旁白里读出他用什么 —— 读不出就返回空串 (由调用方掷一个)。"""
+    blob = "".join(str(t or "") for t in texts)
+    for words, skill in _WEAPON_WORDS:
+        if any(w in blob for w in words):
+            return skill
+    return ""
+
 WEAPON_CN = {"jianfa": "一柄剑", "daofa": "一把刀", "gunfa": "一根齐眉棍",
              "quanfa": "一双拳头", "zhangfa": "两只手掌", "zhifa": "一根食指",
              "tuifa": "一双腿", "qinggong": "一双快脚"}
@@ -106,12 +137,15 @@ def make_foe(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
         name = str(who.get("name"))
         role = str(who.get("role") or "")
         name = (role + " " + name) if role else name
-        why = str(who.get("note") or "") or "在道上堵住了这条路"
+        # 理由要用"会动手"的那种; 旁白只当纹理, 不进 why
+        why = str(rng.choice(FOE_WHY))
+        note = str(who.get("note") or "")
+        foe_weapon_hint = _weapon_hint(role, name, note)
     else:
         pick = rng.choice(FOE_POOL)
         name, why = pick["name"], pick["why"]
         # 名号里写着"刀客"的不能使拳 —— 文辞与兵刃得对得上
-        foe_weapon_hint = str(pick.get("weapon") or "")
+        foe_weapon_hint = str(pick.get("weapon") or "") or _weapon_hint(name, why)
     if regions and (places or rng.random() < 0.5):
         arena = str(regions[rng.randrange(len(regions))].get("name"))
     else:

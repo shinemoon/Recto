@@ -27,6 +27,7 @@ import json
 import logging
 import math
 import os
+import re
 import threading
 import zlib
 import time
@@ -435,8 +436,9 @@ def _duel_brief(duel: dict[str, Any] | None) -> dict[str, Any] | None:
     """
     if not duel:
         return None
-    keep_foe = ("name", "why", "arena", "weapon_cn", "weapon_term", "level",
-                "hp", "hp_max")
+    # 不把 weapon_term (世界里的器物) 递给写故事的人: 它读起来像"他拿的就是这件",
+    # 跟 weapon_cn 打架 (实测出现过 "一把刀" 配 "断魂琴")。
+    keep_foe = ("name", "why", "arena", "weapon_cn", "level", "hp", "hp_max")
     rounds = []
     for e in duel.get("rounds") or []:
         rounds.append({
@@ -455,6 +457,42 @@ def _duel_brief(duel: dict[str, Any] | None) -> dict[str, Any] | None:
         "rounds": rounds,
         "initiative": {"order": (duel.get("initiative") or {}).get("order") or []},
     }
+
+
+#: 交手"发生过"的痕迹。**不查对手名字** —— 写故事的人常把有名有姓的对手
+#: 改称"黑衣人"/"那人", 那是它的自由 (实测第二回就是"黑衣人", 名字一次没出现,
+#: 打得却最狠)。这里只看**打斗的密度**: 一击、一撤、见血各有各的词。
+_STRIKE_WORDS = (
+    "一剑", "一刀", "刀锋", "剑锋", "剑尖", "刀尖", "递出", "出鞘", "出招", "交手",
+    "招架", "闪身", "让开", "退开", "退了", "见血", "血", "中招", "劈", "直刺",
+    "撩", "横切", "扫过来", "撞在一起", "格开", "内息", "气血", "伤口", "虎口",
+    "兵刃", "拳", "掌", "腿", "闷哼", "咬牙", "震得", "火星四溅",
+)
+_STRIKE_MIN = 5     # 至少这么多次"打击痕迹"
+_STRIKE_UNIQ = 4    # 且至少这么多种 (防同一个词刷次数)
+
+
+def _duel_in_body(body: str, duel: dict[str, Any] | None,
+                  data: dict[str, Any] | None) -> bool:
+    """这一场交手到底写进正文没有。
+
+    **为什么不能只信模型自报的 ``duel_shown``**: 2026-11-13 实测三回, 这一栏
+    三回都留空 —— 可其中两回正文里打得极狠 (只是没置这面旗), 一回真把交手丢了
+    (写成喝茶谈天, 而战报 16 拍、气血从 61 掉到 9)。自报既不完整也不可信。
+
+    **为什么也不查对手名字**: 第二回把有名有姓的对手写成"黑衣人", 名字一次没出现,
+    但那才是打得最实的一回。判据只能是打斗密度:
+    真打的三回实测 17/19 次打击痕迹 (每百字 1.7~2.0), 纯对话那一回只有 3 次
+    (每百字 0.23) —— 差一个量级, 阈值取在中间。
+    """
+    if not duel:
+        return True
+    body = body or ""
+    if not body:
+        return False
+    hits = sum(body.count(w) for w in _STRIKE_WORDS)
+    uniq = sum(1 for w in _STRIKE_WORDS if w in body)
+    return bool(hits >= _STRIKE_MIN and uniq >= _STRIKE_UNIQ)
 
 
 def _checks_brief(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -590,6 +628,34 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
             + json.dumps(payload, ensure_ascii=False, indent=1))
     data = _compose_once(guide, user)
     body = jsonout.as_text((data or {}).get("body"), 2600)
+
+    # ── 交手闸门: 这一回真打了一场, 故事里却一个字没打 —— 重写一次。
+    duel_req = payload.get("duel") or None
+    duel_ok = _duel_in_body(body, duel_req, data)
+    if duel_req and not duel_ok:
+        foe = duel_req.get("foe") or {}
+        log.info("游历 · 上一稿漏了这一场交手 (%s · %s), 重写一次",
+                 foe.get("name"), duel_req.get("result_cn"))
+        payload["duel_note"] = (
+            "上一稿没写这一场交手。这一回**当真有一个人动过手**: 对手是 "
+            f"{foe.get('name')} ({foe.get('weapon_cn')}), 在 {foe.get('arena')}, "
+            f"结果为「{duel_req.get('result_cn')}」, 打完它的气血是 "
+            f"{(duel_req.get('hp') or {}).get('to')}/{(duel_req.get('hp') or {}).get('max')}。"
+            "这一场必须写进正文 (把其中三四拍揉成连贯的几段动作, 招式用真名, "
+            "伤要留着; **不许按回合编号罗列**, 也不许写「略去」这类括注), "
+            "并且 duel_shown 置 true。整体重写这一回。")
+        user2 = ("按 %s.md 的契约重写这一回。只输出 JSON。\n\n" % guide
+                 + json.dumps(payload, ensure_ascii=False, indent=1))
+        data2 = _compose_once(guide, user2)
+        body2 = jsonout.as_text((data2 or {}).get("body"), 2600)
+        if body2 and _duel_in_body(body2, duel_req, data2):
+            data, body = data2, body2
+            duel_ok = True
+        payload.pop("duel_note", None)
+        if not duel_ok:
+            log.warning("游历 · 重写后仍未写这一场交手 (%s) —— 这一回按缺交手记",
+                        foe.get("name"))
+
     hits = proper.check(body) if body else []
     if hits:
         # 一次性重写: 把命中的名字点出来, 明说"换掉, 用你自己世界的东西"
@@ -630,12 +696,14 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         "tail": jsonout.as_str(data.get("tail"), 60),
         "verdict": jsonout.as_str(data.get("verdict"), 40),
         "growth_shown": jsonout.as_list(data.get("growth_shown"), 5, 24),
-        "duel_shown": bool(data.get("duel_shown")),
+        "duel_shown": bool(duel_ok),
         "checks_shown": bool(data.get("checks_shown")),
         "days": jsonout.as_int(data.get("days"), 1, 1, 5),
     }
     if data.get("_sanitized"):
         story["sanitized"] = list(data["_sanitized"])
+    if payload.get("duel") and not story["duel_shown"]:
+        story["duel_omitted"] = True
     if guide == "legacy":
         h = data.get("heir") if isinstance(data.get("heir"), dict) else {}
         kind = str(h.get("type") or "").strip()
@@ -926,6 +994,8 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                          "vein": change.get("vein"),
                          "growth_shown": story.get("growth_shown") or [],
                          "checks_shown": bool(story.get("checks_shown")),
+                         "duel_shown": bool(story.get("duel_shown")),
+                         "duel_omitted": bool(story.get("duel_omitted")),
                          "duel": duel_out,
                          "checks": checks_out,
                          "days": int(ev.get("days") or 0),
@@ -1110,6 +1180,8 @@ def backfill_adventure(cycle_id: int | None = None) -> dict[str, Any] | None:
          json.dumps(story.get("seeds_used") or [], ensure_ascii=False),
          json.dumps(story.get("traces_used") or [], ensure_ascii=False),
          json.dumps({"exp": gain.get("exp"), "backfill": True,
+                     "duel_shown": bool(story.get("duel_shown")),
+                     "duel_omitted": bool(story.get("duel_omitted")),
                      "duel": gain.get("duel"), "checks": gain.get("checks") or [],
                      "days": int((_jdict(row.get("evidence")) or {}).get("days") or 0)},
                     ensure_ascii=False), at))
@@ -1128,6 +1200,99 @@ def backfill_adventure(cycle_id: int | None = None) -> dict[str, Any] | None:
     st.pop("last_story_error", None)
     save_state(st)
     log.info("游历 · 补写了第 %d 回 (回合 #%s)", no, row.get("id"))
+    return story
+
+
+def _evidence_of_cycle(cycle_id: int) -> dict[str, Any] | None:
+    """从 cycle 行重建"写故事需要的证据" (含书籍底细)。
+
+    cycle.evidence 里存着当时的 reading / encounters, 但**没存书籍底细** ——
+    种子要现读 (``lore.card``), 这样补写/重写都跟当时看的是同一本书。
+    """
+    c = store.conn()
+    row = store.one(c, "SELECT * FROM cycle WHERE id=?", (int(cycle_id),))
+    c.close()
+    if not row:
+        return None
+    ev_raw = _jdict(row.get("evidence"))
+    reading = []
+    for r in ev_raw.get("reading") or []:
+        if not isinstance(r, dict):
+            continue
+        item = dict(r)
+        card = lore.card(str(item.get("book") or ""), chapters=3)
+        item["lore"] = {} if card.get("missing") else card
+        reading.append(item)
+    return {"window": {"from": row.get("from_at"), "to": row.get("to_at"),
+                       "hours": 0},
+            "reading": reading,
+            "encounters": ev_raw.get("encounters") or {"terms": [], "cats": {}},
+            "days": int(ev_raw.get("days") or 0),
+            "minutes": int(row.get("minutes") or 0),
+            "cycle_id": int(row.get("id") or 0)}
+
+
+def repair_adventure(no: int) -> dict[str, Any] | None:
+    """**重写**某一回的正文 (数值一律不动)。
+
+    什么时候要它: 交手闸门判出"这一回真打了一场, 正文里却一个字没打"
+    (旧故事回头核实时会打上 ``duel_omitted``)。重写只换正文与标题 ——
+    战报、路上的坎、成长全是已经落账的事实, 不能因为重写而改数。
+    """
+    c = store.conn()
+    row = store.one(c, "SELECT * FROM adventure WHERE no=?", (int(no),))
+    prev_row = store.one(c, "SELECT * FROM adventure WHERE no<? ORDER BY no DESC LIMIT 1",
+                         (int(no),))
+    c.close()
+    if not row:
+        return None
+    ev = _evidence_of_cycle(int(row.get("cycle") or 0))
+    if not ev:
+        log.warning("游历 · 第 %s 回找不到原回合证据, 无法重写", no)
+        return None
+    g = _jdict(row.get("growth"))
+    gain = {"exp": g.get("exp"), "fame": g.get("fame"), "pot": g.get("pot"),
+            "levels": g.get("levels"), "duel": g.get("duel") or None,
+            "checks": g.get("checks") or []}
+    prev = None
+    if prev_row:
+        prev = {"no": int(prev_row.get("no") or 0),
+                "title": prev_row.get("title") or "",
+                "place": prev_row.get("place") or "",
+                "tail": _tail_of(prev_row)}
+    ch = cs.load_char()
+    story = compose(ev, ch, gain, prev)
+    if not story:
+        log.warning("游历 · 第 %s 回重写失败: %s", no,
+                    lore.LAST_ERROR or "模型没写出这一回")
+        return None
+    g.update({
+        "growth_shown": story.get("growth_shown") or [],
+        "checks_shown": bool(story.get("checks_shown")),
+        "duel_shown": bool(story.get("duel_shown")),
+        "duel_omitted": bool(story.get("duel_omitted")),
+        "rewritten_at": clock.iso_local(),
+    })
+    db = store.conn()
+    db.execute(
+        "UPDATE adventure SET title=?, place=?, body=?, themes=?, terms=?, growth=?"
+        " WHERE id=?",
+        (story["title"], story["place"], story["body"],
+         json.dumps(story.get("seeds_used") or [], ensure_ascii=False),
+         json.dumps(story.get("traces_used") or [], ensure_ascii=False),
+         json.dumps(g, ensure_ascii=False), int(row["id"])))
+    db.commit()
+    db.close()
+    # 重写时模型新造的地名/人物照旧记回世界
+    if story.get("world_new"):
+        try:
+            from recto.pet import world as _world
+
+            story["world_added"] = _world.remember(story["world_new"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("游历 · 重写时记住世界元素失败: %s", e)
+    log.info("游历 · 第 %s 回已重写 (%s 字, 交手 %s)", no, len(story["body"]),
+             "写出来了" if g["duel_shown"] else "仍没写")
     return story
 
 
@@ -1158,12 +1323,19 @@ def adventures(limit: int = 20) -> list[dict[str, Any]]:
         return []
     out = []
     for r in rows:
+        g = _jdict(r.get("growth"))
+        body = r.get("body") or ""
+        # 老记录没有这两面旗 (交手闸门是 2026-11-13 才有的) —— 按正文现核实一遍,
+        # 免得页面上"打过一场却没写"的旧故事装作写过。
+        if "duel_shown" not in g and (g.get("duel") or None):
+            g["duel_shown"] = _duel_in_body(body, g.get("duel"), None)
+            g["duel_omitted"] = not g["duel_shown"]
         out.append({
             "id": r["id"], "no": int(r.get("no") or 0), "at": r.get("at"),
             "title": r.get("title") or "", "place": r.get("place") or "",
-            "body": r.get("body") or "",
+            "body": body,
             "themes": _jlist(r.get("themes")), "terms": _jlist(r.get("terms")),
-            "growth": _jdict(r.get("growth")),
+            "growth": g,
         })
     return out
 

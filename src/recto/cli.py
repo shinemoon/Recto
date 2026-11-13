@@ -321,6 +321,12 @@ def cmd_pet(args) -> int:
         out = chronicle.run(trigger="cli", force=args.force, dry=args.dry_run)
     elif act == "story":
         out = {"story": chronicle.backfill_adventure(args.cycle or None)}
+    elif act == "rewrite":
+        # 重写某一回的正文 (数值不动): 交给交手闸门, 交了手却没写的会被补上
+        no = int(args.no or 0)
+        out = {"story": chronicle.repair_adventure(no) if no else None}
+        if not no:
+            out["error"] = "rewrite 要 --no <第几回>"
     elif act == "adventures":
         out = {"adventures": chronicle.adventures(limit=args.limit)}
     elif act == "cycles":
@@ -445,8 +451,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_tm.set_defaults(func=cmd_time)
 
     p_pet = sub.add_parser("pet", help="书宠: 后台推演 / 游历 / 书籍底细 / 语料遭遇")
-    p_pet.add_argument("action", choices=("state", "run", "story", "adventures", "cycles",
-                                         "world", "reborn", "proper",
+    p_pet.add_argument("action", choices=("state", "run", "story", "rewrite", "adventures",
+                                          "cycles", "world", "reborn", "proper",
                                           "encounters", "lore"))
     p_pet.add_argument("--dry-run", action="store_true", help="run 用: 只判不落地")
     p_pet.add_argument("--force", action="store_true", help="run 用: 无视最小分钟")
@@ -454,6 +460,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pet.add_argument("--days", type=int, default=7)
     p_pet.add_argument("--refresh", default="", help="lore 用: 重建这本书的卡")
     p_pet.add_argument("--cycle", type=int, default=0, help="story 用: 指定回合 id (默认最近没故事的那回)")
+    p_pet.add_argument("--no", type=int, default=0, help="rewrite 用: 第几回 (按故事序号)")
     p_pet.add_argument("--inherit", type=int, default=0,
                        help="reborn 用: 继承上辈子多少分钟阅历 (0 = 白纸复位)")
     p_pet.add_argument("--name", default="", help="reborn 用: 新一代的名字")

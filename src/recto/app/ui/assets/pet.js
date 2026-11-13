@@ -1070,6 +1070,9 @@ function renderChronicle(v) {
               return '<span class="adv-chip ok">' + esc(t) + '</span>';
             }).join('') + '</div>'
           : '') +
+        (g.duel_omitted
+          ? '<div class="adv-warn">这一回真打了一场, 正文里却没写出来 (战报仍在下面)</div>'
+          : '') +
         duelBlock(g.duel) +
         '<div class="adv-body">' + advParagraphs(latest.body) + '</div>' +
         checksBlock(g.checks) +
