@@ -107,7 +107,7 @@ def fake_chat(system, user, **kw):
         return json.dumps({
             "assessment": {"depth": "深读", "breadth": "专一", "one_line": "读得沉"},
             "growth": {"exp": 99999, "pot": 9, "fame": 99, "morality": 2,
-                       "skills": {"dushuwudao": 1, "不存在的功夫": 1, "neigong_mochi": 1,
+                       "skills": {"jianfa": 1, "不存在的功夫": 1, "neigong_mochi": 1,
                                   "sword": 1},
                        "trait": "lengyan", "reason": "读了 40 分钟, 推进 6 章"},
             "next_hint": "往北走"}, ensure_ascii=False)
@@ -146,14 +146,14 @@ ok(lore.pending_chapters(BOOK) == [], "写完之后不再排队")
 ev = {"total_minutes": 40, "reading": [{"book": BOOK, "minutes": 40, "chapters": 6}],
       "window": {"from": "", "to": "", "hours": 1}}
 raw = {"assessment": {}, "growth": {"exp": 99999, "pot": 9, "fame": 99, "morality": 9,
-                                    "skills": {"dushuwudao": 1, "bogus": 1},
+                                    "skills": {"jianfa": 1, "bogus": 1},
                                     "trait": ""}}
 cl = ch.clamp(raw, ev)
 ok(cl["growth"]["exp"] == 40 * 6, f"修为上限 = 分钟 × 6 got {cl['growth']['exp']}")
 ok(cl["growth"]["pot"] == 3, f"潜能上限 3 got {cl['growth']['pot']}")
 ok(cl["growth"]["fame"] == 20, f"声望上限 20 got {cl['growth']['fame']}")
 ok(cl["growth"]["morality"] == 5, f"心性上限 5 got {cl['growth']['morality']}")
-ok(list(cl["growth"]["skills"]) == ["dushuwudao"], f"技能白名单 got {cl['growth']['skills']}")
+ok(list(cl["growth"]["skills"]) == ["jianfa"], f"技能白名单 got {cl['growth']['skills']}")
 ok(cl["growth"]["trait"] == "", "未知性情被丢掉")
 
 ev0 = {"total_minutes": 0, "reading": [], "window": {}}
@@ -171,11 +171,11 @@ cu = cs.new_char()
 cu["minutes"] = 60 * 9          # 已在故事内走了 9 天 → 技能闸门开着
 be = int(cu["exp"])
 aw = g.award_judged(cu, {"exp": 250, "pot": 1, "fame": 6, "morality": -2,
-                         "skills": {"dushuwudao": 1, "bogus": 1}}, max_exp=300)
+                         "skills": {"jianfa": 1, "bogus": 1}}, max_exp=300)
 ok(aw["exp"] == 250, f"修为按判定落地 got {aw['exp']}")
 ok(int(cu["level"]) == 2 and int(cu["exp"]) == be + 250 - 100,
    f"升级把修为吃掉 (lvl={cu['level']} exp={cu['exp']})")
-ok(aw["skills"] == {"dushuwudao": 1}, f"技能只落白名单 got {aw['skills']}")
+ok(aw["skills"] == {"jianfa": 1}, f"技能只落白名单 got {aw['skills']}")
 ok(int(cu["morality"]) == -2, "心性可负 (但不超 5)")
 aw2 = g.award_judged(cu, {"exp": 500, "pot": 0, "fame": 0}, max_exp=100)
 ok(aw2["exp"] == 100 and aw2["clamped"]["exp"] is True, "超上限被夹且标出来")

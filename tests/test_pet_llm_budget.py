@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -136,8 +137,10 @@ ok("minutes" not in brief, "不再暴露裸 minutes (模型会当本回合基数
 eq(brief.get("lifetime_minutes"), 677, "lifetime_minutes 是累计值")
 
 # ---------------------------------------------------------------- 4 窗口解释
+from recto.core import clock as _clock     # 别把"今天"写死 —— 隔天就跑红了
+_today = _clock.fmt_sec(time.time(), "%Y-%m-%d")
 st = {"last_at": "2026-11-12T18:26:56", "story_day": 11,
-      "credit": {"x|2026-11-12": 51, "x|2026-11-11": 29},
+      "credit": {f"x|{_today}": 51, "x|2020-01-01": 29},
       "progress": {}}
 ev = ch.gather(st)
 ok("already_today" in ev, "gather 返回 already_today")

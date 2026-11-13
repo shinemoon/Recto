@@ -160,14 +160,19 @@ def case_pet_char_probe_restores():
         htxt = helper.read_text("utf-8")
         for cmd in ("save", "restore", "reset", "clear"):
             ok(f'"{cmd}"' in htxt, f"快照工具支持 {cmd}")
-        # 还原必须**字段级** —— 整份 copyfile 会把陪读心跳刚写的
-        # (修为/等级/累计分钟/锚点) 一起盖掉 (真踩过: 探针跑完等级退回快照那一刻)
+        # 还原 = 以快照为底重建 + 只增不减的成长项与当前取大。
+        # 为什么不是整份 copyfile: 陪读心跳一直在写 (修为/等级/分钟/锚点),
+        # 整份覆盖会把刚写进去的盖掉 (真踩过: 探针跑完等级退回快照那一刻)。
+        # 为什么不能只回填几个字段: 探针开跑会 reset, 只回填门派/性情就补不回
+        # 等级与技能 (真踩过: 用户的 4 级书宠被留成 1 级无门派)。
         ok("shutil.copyfile(SNAP, CHAR)" not in htxt,
-           "还原不是整份覆盖 (会盖掉心跳写的修为)")
-        ok("credited_minutes" not in htxt,
-           "还原不碰锚点 credited_minutes")
-        ok('"school"' in htxt and '"traits"' in htxt,
-           "还原只动玩家操作那几项 (门派/性情/根骨/潜能)")
+           "还原不是整份 copyfile (会盖掉心跳写的修为)")
+        ok("max(" in htxt and "credited_minutes" in htxt,
+           "成长项 (分钟/锚点/修为) 与当前取大, 不盲覆盖")
+        ok("dict(snap)" in htxt,
+           "以快照为底重建 (门派/性情/根骨/潜能都在快照里)")
+        ok("level" in htxt and "skills" in htxt,
+           "等级与技能也回填 (探针会 reset, 只回填几个字段补不回来)")
 
 
 def main():

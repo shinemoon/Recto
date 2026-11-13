@@ -30,6 +30,17 @@ function snapTool(cmd) {
 const snapshot = snapTool('save');
 snapTool('reset');
 
+// 无论如何都要还原 —— 中途抛异常 / 超时被杀时, 结尾那句 restore 根本不会执行。
+// (老坑: 探针在点击那一步超时, 用户存档被留成 1 级无门派。)
+let restoredDone = false;
+function restoreOnce() {
+  if (restoredDone) return;
+  restoredDone = true;
+  try { console.log(snapTool('restore')); } catch (e) { console.log('还原失败:', e.message); }
+}
+process.on('exit', restoreOnce);
+process.on('uncaughtException', (e) => { console.log('探针异常:', e.message); restoreOnce(); process.exit(1); });
+
 const BASE = process.env.RECTO_BASE || '5015';
 const URL = `http://127.0.0.1:${BASE}`;
 
@@ -78,6 +89,12 @@ const metaRows = await page.$$eval('#char-meta .cs-meta-row', (els) => els.map((
 ok(metaRows.length >= 6, `名片 ${metaRows.length} 行`);
 ok(metaRows.join(' ').includes('修为'), '名片含修为');
 ok(metaRows.join(' ').includes('五行'), '名片含五行');
+// 武侠体系: 属性在故事里的"用处"要摆出来 (命中/闪避/伤害/主修)
+ok(metaRows.join(' ').includes('交手'), '名片含交手数值');
+ok(/命中 \d+ · 闪避 \d+ · 招架 \d+/.test(metaRows.join(' ')),
+  `交手三数齐全: ${metaRows.find((r) => r.includes('交手')) || ''}`);
+ok(/伤害 \d+/.test(metaRows.join(' ')), '名片含伤害');
+ok(metaRows.join(' ').includes('主修'), '名片含主修功夫');
 
 // ── 六项根骨 ──────────────────────────────────────────
 const attrs = await page.$$eval('#attr-rows tr', (rows) => rows.map((r) => ({
@@ -98,6 +115,9 @@ const potTxt = (await page.textContent('#attr-pot')) || '';
 ok(potTxt.includes('潜能'), `潜能徽标: ${potTxt.trim()}`);
 
 // ── 门派 ──────────────────────────────────────────────
+// 折叠区默认是收起的 (门派 / 技能 / 性情 / 经脉四块) —— 量内容前先展开
+await page.$$eval('details.cs-fold', (ds) => ds.forEach((d) => { d.open = true; }));
+await page.waitForTimeout(120);
 const schools = await page.$$eval('#school-cards .cs-school', (els) => els.map((e) => ({
   name: e.querySelector('b')?.textContent?.trim(),
   on: e.classList.contains('is-on'),
@@ -151,7 +171,7 @@ const bumped = afterSchool.find((a) => a.value !== a.base);
 ok(!!bumped, `入门后有一项被加成: ${bumped ? bumped.name + ' ' + bumped.value + ' (基础 ' + bumped.base + ')' : ''}`);
 ok(bumped && bumped.raw.includes('门派'), `加成构成写进表格: ${bumped ? bumped.raw : ''}`);
 const skillRows1 = await page.$$eval('#skill-rows tr', (r) => r.length);
-ok(skillRows1 === 2, `入门得 2 项 (内功 + 绝招): ${skillRows1}`);
+ok(skillRows1 === 3, `入门得 3 项 (内功 + 本门兵器 + 绝招): ${skillRows1}`);
 const perfRow = await page.$$eval('#skill-rows tr', (rows) => rows.map((r) => ({
   name: r.children[0].textContent.trim(),
   type: r.children[1].textContent.trim(),
@@ -159,7 +179,7 @@ const perfRow = await page.$$eval('#skill-rows tr', (rows) => rows.map((r) => ({
   busy: r.children[6].textContent.trim(),
   fail: r.children[7].textContent.trim(),
 })));
-const perf = perfRow.find((r) => r.type === '绝招');
+const perf = perfRow.find((r) => r.type.startsWith('绝招'));
 ok(!!perf, '有绝招行');
 ok(/%$/.test(perf?.rate || ''), `绝招成功率带%: ${perf?.rate}`);
 ok(Number(perf?.busy) > 0 && Number(perf?.fail) > 0, `定身/反噬都有值 (${perf?.busy}/${perf?.fail})`);
@@ -202,14 +222,40 @@ const mobCols = await mob.evaluate(() => {
 });
 ok(mobCols <= 2, `手机状态条两列 (${mobCols})`);
 
+// ── 交手战报区块 (duelBlock) 渲染 ─────────────────────
+const duelHtml = await page.evaluate(() => {
+  if (typeof duelBlock !== 'function') return { missing: true };
+  const box = document.createElement('div');
+  box.innerHTML = duelBlock({
+    result: 'lose', result_cn: '负',
+    foe: { name: '一个带斗笠的刀客', arena: '渡口', weapon_cn: '一把刀' },
+    summary: '输了 —— 吃了对方一记重的', moves: ['踏雪无痕'],
+    rounds: [{ text: '他一拳打中对方, 伤 12' }, { text: '对方一刀劈下, 伤 31' }],
+    hp: { from: 61, to: 4, max: 61 }, fame: 0,
+  });
+  return {
+    missing: false,
+    blocks: box.querySelectorAll('.adv-duel').length,
+    lose: box.querySelectorAll('.pill.err').length,
+    rounds: box.querySelectorAll('.adv-duel-r span').length,
+    move: box.querySelectorAll('.adv-chip.ok').length,
+    txt: box.textContent,
+  };
+});
+ok(!duelHtml.missing, 'duelBlock 是全局函数 (页面脚本是经典脚本)');
+ok(duelHtml.blocks === 1, '交手区块能渲染');
+ok(duelHtml.lose === 1, '败仗标红 (pill err)');
+ok(duelHtml.rounds === 2, `逐拍战报渲染 ${duelHtml.rounds} 行`);
+ok(duelHtml.move === 1, '使过的绝招有 chip');
+ok((duelHtml.txt || '').includes('气血 61 → 4'), '气血变化写进战报');
+
 // ── 页面无 JS 报错 ────────────────────────────────────
 ok(pageErrors.length === 0, `0 JS 报错 ${pageErrors.length ? pageErrors.slice(0, 3).join(' | ') : ''}`);
 
 await browser.close();
 
 // 收尾: 还原用户原本的书宠 (探针入门派/觉醒性情都落盘了)
-const restored = snapTool('restore');
-console.log(restored);
+restoreOnce();
 
 console.log(`\n${'='.repeat(46)}`);
 console.log(`PASS ${PASS}  FAIL ${FAIL}`);

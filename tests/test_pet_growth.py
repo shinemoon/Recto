@@ -4,7 +4,7 @@
 
 验的事:
   * 换算: 分钟 → 修为 / 升级 / 潜能 / 声望
-  * 技能自动长进 (读书悟道) 按累计分钟, 不是按这一次
+  * 技能自动长进 (基本内功) 按累计分钟, 不是按这一次
   * 经脉按累计分钟推进
   * 只增不减 (传 0 / 负数不改任何东西)
   * 研讨长技能不许超上限
@@ -81,7 +81,7 @@ ok(not r2["skills"], f"本次不该给技能 got {r2['skills']}")
 
 r2b = g.award_minutes(ch, 200)
 ok(ch["skills"].get(g.AUTO_SKILL) == 1,
-   f"累计 400 分钟 → 读书悟道 1 级 got {ch['skills'].get(g.AUTO_SKILL)}")
+   f"累计 400 分钟 → 基本内功 1 级 got {ch['skills'].get(g.AUTO_SKILL)}")
 ok(r2b["skills"].get(g.AUTO_SKILL) == 1, f"本次增益 1 级 got {r2b['skills']}")
 
 # ── 只增不减 ─────────────────────────────────────────────
@@ -111,14 +111,14 @@ ok(ch3["vein"] == 3, f"630 分钟 → 通 3 层 got {ch3['vein']}")
 ok(g.SKILL_DAYS_PER_LEVEL == 8, "技能 8 个故事日一级")
 cg = cs.new_char()
 cg["minutes"] = 60 * 3            # 故事内第 3 天
-aw_g1 = g.award_judged(cg, {"exp": 100, "skills": {"dushuwudao": 1}}, max_exp=200)
+aw_g1 = g.award_judged(cg, {"exp": 100, "skills": {"jibenneigong": 1}}, max_exp=200)
 ok(not aw_g1["skills"], f"第 3 天不该长技能 got {aw_g1['skills']}")
 ok(aw_g1["skill_gate"]["blocked"] is True, "闸门关着")
 cg["minutes"] = 60 * 9            # 第 9 天
-aw_g2 = g.award_judged(cg, {"exp": 100, "skills": {"dushuwudao": 1}}, max_exp=200)
-ok(aw_g2["skills"] == {"dushuwudao": 1}, f"第 9 天长一级 got {aw_g2['skills']}")
+aw_g2 = g.award_judged(cg, {"exp": 100, "skills": {"jibenneigong": 1}}, max_exp=200)
+ok(aw_g2["skills"] == {"jibenneigong": 1}, f"第 9 天长一级 got {aw_g2['skills']}")
 ok(int(cg["last_skill_day"]) == 9, "记住这次长技能的故事日")
-aw_g3 = g.award_judged(cg, {"exp": 100, "skills": {"dushuwudao": 1}}, max_exp=200)
+aw_g3 = g.award_judged(cg, {"exp": 100, "skills": {"jibenneigong": 1}}, max_exp=200)
 ok(not aw_g3["skills"], "同一天内不会连涨")
 
 # ── 先天属性: 升级偶得 (成长才看得见) ──────────────────────
@@ -142,15 +142,15 @@ ok(bool(cj.get("born")) or int((cb["born"] or {}).get("wu") or 0) >= 1,
 # ── 研讨: 长技能不许超上限 ────────────────────────────────
 ch4 = cs.new_char()
 ch4["exp"] = 100
-r4 = g.skill_boost(ch4, "dushuwudao", 1)
+r4 = g.skill_boost(ch4, "jibenneigong", 1)
 ok(r4.get("ok"), f"研讨成功 got {r4}")
-ok(ch4["skills"]["dushuwudao"] == 1, "读书悟道 1 级")
-r5 = g.skill_boost(ch4, "dushuwudao", 999)
+ok(ch4["skills"]["jibenneigong"] == 1, "基本内功 1 级")
+r5 = g.skill_boost(ch4, "jibenneigong", 999)
 ok(not r5.get("ok") and "上限" in r5.get("error", ""),
    f"超上限被拒 got {r5.get('error','')}")
 r6 = g.skill_boost(ch4, "不存在", 1)
 ok(not r6.get("ok"), "未知技能被拒")
-r7 = g.skill_boost(ch4, "dushuwudao", 0)
+r7 = g.skill_boost(ch4, "jibenneigong", 0)
 ok(not r7.get("ok"), "等级 0 被拒")
 
 # ── 规则随 schema 一起发 ────────────────────────────────
@@ -205,7 +205,7 @@ ok(d["char"]["minutes"] == 120, f"累计分钟 {d['char']['minutes']}")
 st, raw, _ = req("/pet/api/char/grow", "GET", cookie=COOKIE)
 ok(st == 405, f"GET grow → 405 got {st}")
 
-st, raw, _ = req("/pet/api/char/skill", "POST", {"skill": "dushuwudao", "levels": 1}, COOKIE)
+st, raw, _ = req("/pet/api/char/skill", "POST", {"skill": "jibenneigong", "levels": 1}, COOKIE)
 d = json.loads(raw)
 ok(st == 200, f"POST /pet/api/char/skill 200 got {st}")
 ok(d["char"]["skills"], "技能表非空")

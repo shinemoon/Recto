@@ -57,8 +57,14 @@ def restore() -> int:
     真踩过: 探针跑完, 等级/修为/累计分钟 全退回快照那一刻的值。
     探针动的只有"玩家操作"那几项, 恢复它们就够。
 
-    动的字段: 门派 / 性情 / 根骨 / 潜能点 (探针会入门派、觉醒性情、分配潜能点)
-    不动的字段: 修为 / 等级 / 声望 / 累计分钟 / 锚点 / 经脉 / 技能 —— 那些是"自然增长"
+    恢复 = **整份照快照重建**, 再把"只增不减"的成长项与当前取大。
+
+    为什么以快照为底: 探针开跑时会 ``reset`` 重开一只, 重置之后存档里
+    等级 / 修为 / 声望 / 技能 / 门派 全没了 —— 只挑几个字段回填是补不回来的
+    (真踩过: 用户的书宠被探针留成 1 级无门派)。
+
+    为什么还要与当前取大: 这期间陪读心跳 (pet/companion.py) 可能又涨了分钟 / 修为,
+    整份覆盖会把刚写进去的盖掉。
     """
     if not SNAP.exists():
         print("没有快照可还原:", SNAP)
@@ -67,20 +73,45 @@ def restore() -> int:
         snap = json.loads(SNAP.read_text("utf-8"))
         cur = json.loads(CHAR.read_text("utf-8"))
     except (OSError, json.JSONDecodeError) as e:
-        # 读不出来就**不动** —— 整份覆盖会把心跳写的修为盖掉, 那比不还原更糟。
-        print(f"读存档失败 ({e}) —— 没还原 (整份覆盖会盖掉陪读心跳写的修为)")
+        print(f"读存档失败 ({e}) —— 没还原")
         return 1
-    for k in ("school", "traits", "attrs", "pot", "morality", "loyalty"):
-        if k in snap:
-            cur[k] = snap[k]
+
+    def _i(v, d=0):
+        try:
+            return int(v or 0)
+        except (TypeError, ValueError):
+            return d
+
+    # 以**快照为准**重建整份存档 (探针开跑时会 reset, 只有快照里还有玩家原本的一切),
+    # 再把"只增不减"的成长项与当前取大 (这期间陪读心跳可能又涨了)。
+    out = dict(snap)
+    for k in ("fame", "minutes", "credited_minutes", "vein", "generation",
+              "last_skill_day", "wish"):
+        if k in snap or k in cur:
+            out[k] = max(_i(snap.get(k)), _i(cur.get(k)))
+    sl, cl = _i(snap.get("level"), 1), _i(cur.get("level"), 1)
+    if cl > sl or (cl == sl and _i(cur.get("exp")) > _i(snap.get("exp"))):
+        out["level"] = cl
+        out["exp"] = _i(cur.get("exp"))
+    else:
+        out["level"] = sl
+        out["exp"] = _i(snap.get("exp"))
+    ss, cs2 = snap.get("skills") or {}, cur.get("skills") or {}
+    merged = {str(k): max(_i(ss.get(k)), _i(cs2.get(k))) for k in set(ss) | set(cs2)}
+    out["skills"] = {k: v for k, v in merged.items() if v > 0}
+    # 气血 / 内力取当前那份 (探针不打架, 但心跳不改它; 当前更低说明确实被打过)
+    for k in ("hp", "neili"):
+        if k in cur:
+            out[k] = cur[k]
+
     tmp = CHAR.with_name(f".{CHAR.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(cur, ensure_ascii=False, indent=2), "utf-8")
+    tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2), "utf-8")
     try:
         os.chmod(tmp, 0o600)
     except OSError:
         pass
     os.replace(tmp, CHAR)
-    print("已还原 (门派/性情/根骨/潜能):", CHAR)
+    print("已还原 (整份照快照 / 成长项取大):", CHAR)
     return 0
 
 

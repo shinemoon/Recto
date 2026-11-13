@@ -12,7 +12,8 @@
   · 升级 → 潜能点: 每级 ``POT_PER_LEVEL`` 点 (自由分配到六项根骨)
   · 升级 → 声望: 每级 ``FAME_PER_LEVEL`` 点
   · 经脉: 按累计陪读分钟推进 (层数门槛见 ``charsheet.VEINS``)
-  · 技能: 陪读时长自动长「读书悟道」, 别的技能靠**研讨** (还没做)
+  · 技能: 陪读时长自动长「基本内功」(读书如打坐 —— 内力是慢功夫),
+         真武学与绝招由后台推演判定 (一次最多一门一级)
 
 **留白的部分** (等接阅读器再定)
 
@@ -38,8 +39,10 @@ EXP_PER_MINUTE = 2
 POT_PER_LEVEL = 3
 #: 每升 1 级给几点声望
 FAME_PER_LEVEL = 5
-#: 陪读时长自动长哪门功夫 (对应 MUD 北侠的「读书」—— 唯一不消耗潜能的涨法)
-AUTO_SKILL = "dushuwudao"
+#: 陪读时长自动长哪门功夫。
+#: 选「基本内功」而不是某路兵器: 坐着读书长的是内力底子, 不是剑法 ——
+#: 兵刃与绝招要靠真出门、真交手, 由判定那一步给 (见 chronicle.md)。
+AUTO_SKILL = "jibenneigong"
 #: AUTO_SKILL 每多少分钟长 1 级。
 #: 一小时阅读 = 故事内一天 ⇒ 300 分钟 = 五天一级 —— 慢到"翻半个月书才长一层"。
 AUTO_SKILL_MINUTES_PER_LEVEL = 300
@@ -72,8 +75,13 @@ GROWTH_RULES: dict[str, Any] = {
         "retire_age": None,              # 80 岁退隐 → 等读者确认传承
     },
     # 判定口径 (后台 skill 给数, 代码只夹逼): 每回合上限
-    "judged_caps": {"exp": 3000, "pot": 3, "fame": 20, "skills": 2,
+    "judged_caps": {"exp": 3000, "pot": 3, "fame": 20, "skills": 1,
                     "morality": 5, "trait": 1},
+    "combat": {
+        "note": "属性 / 技能 / 绝招在遭遇里真的被用到: 命中看身法与主修, "
+                "伤害看臂力与兵刃, 绝招吃内力、会反噬。",
+        "pfm_effects": ["damage", "control", "defend", "evade", "heal", "buff"],
+    },
     "pending": [
         "划线 / 批注 是否额外给修为 (现按「批注加成」间接算进判定)",
         "重读同一本书要不要打折 (现由模型按 chapters 推进量判断)",
@@ -181,7 +189,7 @@ def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True,
         ch["fame"] = int(ch.get("fame") or 0) + FAME_PER_LEVEL * levels
         born_gain = _apply_born(ch, before_level)
 
-    # 陪读自动长「读书悟道」—— 按累计分钟算, 不是按这次 (每 N 分钟整一格)
+    # 陪读自动长「基本内功」—— 按累计分钟算, 不是按这次 (每 N 分钟整一格)
     skill_gain_map: dict[str, int] = {}
     if skill_gain and AUTO_SKILL in cs.SKILL_BY_ID:
         skills = ch.get("skills") or {}
@@ -375,9 +383,7 @@ def award_judged(ch: dict[str, Any], j: dict[str, Any], *,
             if not sk or int(lv or 0) <= 0:
                 continue
             cur = int((ch.get("skills") or {}).get(str(sid), 0))
-            cap = min(int(sk.get("cap", 30)),
-                      cs.skill_cap(int(ch.get("exp") or 0),
-                                   cs.effective_attrs(ch).get(sk.get("attr", "wu"), 10)))
+            cap = cs.cap_for(ch, sk)
             if cur + 1 > cap:
                 continue
             ch.setdefault("skills", {})[str(sid)] = cur + 1

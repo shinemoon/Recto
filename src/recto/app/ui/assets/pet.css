@@ -455,3 +455,22 @@
 }
 .rc-pet .legacy-name input { max-width: 200px; }
 .rc-pet .legacy-why { font-size: 12.5px; color: var(--rc-mute); margin: 0 0 6px; }
+
+
+/* ── 一回里的那一场交手 (后端算出来的战报) ─────────────────────── */
+.adv-duel {
+  margin: 12px 0 16px;
+  padding: 12px 14px;
+  background: var(--rc-surface-variant, rgba(0,0,0,.03));
+  border-left: 3px solid var(--rc-primary, #6750a4);
+}
+.adv-duel-h {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline;
+  margin-bottom: 8px;
+}
+.adv-duel-h b { font-size: 1.02rem; }
+.adv-duel-r {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: .86rem; line-height: 1.6; opacity: .86;
+}
+.adv-duel-f { margin-top: 8px; font-size: .82rem; }

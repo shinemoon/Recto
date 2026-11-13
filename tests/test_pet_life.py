@@ -100,7 +100,7 @@ ok(not life.ready_to_retire(ch1) and life.stage(ch1) == "retiring",
 old = cs.new_char("老墨")
 old["generation"] = 1
 old["school"] = "moshi"
-old["skills"] = {"dushuwudao": 20, "xuantiejian": 9}
+old["skills"] = {"jianfa": 20, "daofa": 9}
 old["fame"] = 200
 old["morality"] = 40
 old["minutes"] = (80 - 12) * 365 * 60
@@ -112,7 +112,7 @@ ok(new["name"] == "小砚", f"用传承人的名字 got {new['name']}")
 ok(new["generation"] == 2, f"第 2 代 got {new['generation']}")
 ok(new["minutes"] == 0 and life.age_years(new) == 12, "新人从 12 岁、零分钟起")
 ok(new["school"] == "moshi", "徒弟承师门")
-ok(new["skills"].get("dushuwudao") == 6, f"家学三成 (20 → 6) got {new['skills']}")
+ok(new["skills"].get("jianfa") == 6, f"家学三成 (20 → 6) got {new['skills']}")
 ok("xuantiejian" not in new["skills"], f"只传最高那一门 got {new['skills']}")
 ok(new["fame"] == 10, f"声望余荫 200//20 = 10 got {new['fame']}")
 ok(new["morality"] == 20, f"心性留一半 got {new['morality']}")
@@ -129,10 +129,10 @@ ok(saved["_age"] == 80 and saved["name"] == "老墨", "存档里带着年岁")
 # 学生不入门派
 old2 = cs.new_char("老李")
 old2["school"] = "tieyan"
-old2["skills"] = {"dushuwudao": 3}
+old2["skills"] = {"jianfa": 3}
 res2 = life.inherit(old2, "student")
 ok(res2["char"]["school"] == "", "学生不承门派")
-ok(res2["char"]["skills"].get("dushuwudao") == 1, "三成最少 1 级")
+ok(res2["char"]["skills"].get("jianfa") == 1, "三成最少 1 级")
 
 # 未知类型 → 按徒弟处理
 res3 = life.inherit(cs.new_char("老赵"), "bogus")

@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import threading
+import zlib
 import time
 from pathlib import Path
 from typing import Any
@@ -150,6 +151,11 @@ def _char_brief(ch: dict[str, Any]) -> dict[str, Any]:
         "age": life.age_years(ch),
         "age_label": life.age_label(ch),
         "generation": int(ch.get("generation") or 1),
+        # 交手用的几个数 (故事里的"遭遇"读的就是这些) —— 让判成长的那一步
+        # 也能看出"它现在打得过谁、差在哪", 而不是盯着阅读量
+        "combat": dict((cs.derive(ch).get("combat") or {})),
+        "hp": cs.resources(ch)["hp"],
+        "neili": cs.resources(ch)["neili"],
     }
 
 
@@ -240,6 +246,7 @@ def gather(st: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
     return {"window": window, "reading": reading, "total_minutes": total_new,
             "from_ts": from_ts, "from_day": from_day,
             "prev_at": st.get("last_at") or "", "already_today": already,
+            "last_duel": st.get("last_duel") or {},
             "encounters": encounters.recent(days=max(2, int(window["hours"] // 24) + 2),
                                             limit=40)}
 
@@ -329,6 +336,10 @@ def judge(ev: dict[str, Any], ch: dict[str, Any]) -> dict[str, Any]:
                        "terms": ev["encounters"].get("terms", [])[:25],
                        "cats": ev["encounters"].get("cats", {})},
         "last_growth": ev.get("last_growth") or {},
+        "last_duel": ev.get("last_duel") or {},
+        # 能长哪几门功夫 —— 给 id 让模型从里面挑, 不许自己发明招式名
+        "skill_menu": [{"id": x["id"], "name": x["name"], "type": x["type"]}
+                       for x in cs.SKILLS],
     }
     user = ("按 chronicle.md 的契约判断这一回合的成长。只输出 JSON。\n\n"
             + json.dumps(payload, ensure_ascii=False, indent=1))
@@ -419,6 +430,7 @@ def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
              for t in ev["encounters"].get("terms", [])[:20]]
     return {
         "char": _char_brief(ch),
+        "duel": (gain.get("duel") or None),
         "growth": {"exp": gain.get("exp"), "fame": gain.get("fame"),
                    "levels": gain.get("levels"), "pot": gain.get("pot"),
                    "vein": (change or {}).get("vein"),
@@ -477,6 +489,7 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         "tail": jsonout.as_str(data.get("tail"), 60),
         "verdict": jsonout.as_str(data.get("verdict"), 40),
         "growth_shown": jsonout.as_list(data.get("growth_shown"), 5, 24),
+        "duel_shown": bool(data.get("duel_shown")),
         "days": jsonout.as_int(data.get("days"), 1, 1, 5),
     }
     if guide == "legacy":
@@ -614,8 +627,23 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     gain = dict(j.get("growth") or {})
 
     if dry:
+        # 预演: 在**副本**上打一场, 让"先会怎么判"也能看到大概会撞上谁 (不落盘)
+        preview = None
+        if not life.ready_to_retire(ch):
+            try:
+                from recto.pet import duel as _duel
+
+                terms = ev["encounters"].get("terms") or []
+                tag = "|".join(sorted(str(t.get("term") or "") for t in terms[:12]))
+                seed = zlib.crc32(
+                    f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
+                ) & 0x7FFFFFFF
+                preview = _duel.resolve(json.loads(json.dumps(ch)), terms=terms, seed=seed)
+            except Exception as e:  # noqa: BLE001
+                log.warning("推演 · 预演遭遇失败: %s", e)
         return {**ctx, "status": "dry", "window": ev["window"], "minutes": minutes,
                 "days": ev["days"], "reading": ev["reading"], "judgement": j,
+                "duel": preview,
                 "fallback": bool(j.get("_fallback")),
                 "fallback_why": str(j.get("_fallback_why") or ""),
                 "skill_version": guidance.version("chronicle"),
@@ -637,8 +665,28 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
             trait_gained = tid
     change = _change_brief(before, ch)
 
-    # ── 走一趟 (到岁数了这一趟就是"退隐 + 传承")
+    # ── 遭遇: 这一趟路上会撞上谁、打不打得过 —— 由 duel 算, 故事只负责照写。
+    #    种子取 (名字|故事日|这段时间见过的词), 同一天重跑结果一致 (可复现)。
     retiring = life.ready_to_retire(ch)
+    duel_out: dict[str, Any] | None = None
+    if not retiring:
+        try:
+            from recto.pet import duel as _duel
+
+            terms = ev["encounters"].get("terms") or []
+            tag = "|".join(sorted(str(t.get("term") or "") for t in terms[:12]))
+            seed = zlib.crc32(
+                f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
+            ) & 0x7FFFFFFF
+            duel_out = _duel.resolve(ch, terms=terms, seed=seed)
+            applied["duel"] = duel_out
+            log.info("推演 · 遭遇 %s · %s · 气血 %s/%s",
+                     (duel_out.get("foe") or {}).get("name"), duel_out.get("result_cn"),
+                     duel_out["hp"]["to"], duel_out["hp"]["max"])
+        except Exception as e:  # noqa: BLE001 — 打不起来不该拖垮这一回
+            log.warning("推演 · 遭遇结算失败 (这一回只写游历): %s", e)
+
+    # ── 走一趟 (到岁数了这一趟就是"退隐 + 传承")
     prev_row = _last_adventure()
     prev = None
     if prev_row:
@@ -680,6 +728,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                          "attrs": change.get("attrs") or [],
                          "vein": change.get("vein"),
                          "growth_shown": story.get("growth_shown") or [],
+                         "duel": duel_out,
                          "days": int(ev.get("days") or 0),
                          "story_day": life.story_day(ch),
                          "age": life.age_years(ch),
@@ -689,6 +738,12 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
         if retiring:
             heir = story.get("heir") or life.propose_default(ch)
             life.mark_retired(ch, heir=heir, story_no=adv_no, title=story["title"])
+    # 打完这一场, 回去上药歇半日 —— 气血内力回一截 (受伤的痕迹仍写着)
+    try:
+        cs.restore(ch, 0.5 + 0.5 * int(ev.get("days") or 0))
+    except Exception as e:  # noqa: BLE001
+        log.warning("推演 · 调息失败: %s", e)
+
     keep = int(c.get("keep_adventures") or 200)
     db.execute("DELETE FROM adventure WHERE id NOT IN"
                " (SELECT id FROM adventure ORDER BY id DESC LIMIT ?)", (keep,))
@@ -721,7 +776,12 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                                "fame": applied.get("fame"),
                                "levels": applied.get("levels"),
                                "days": int(ev.get("days") or 0)},
-               "last_summary": (j.get("assessment") or {}).get("one_line") or ""})
+               "last_summary": (j.get("assessment") or {}).get("one_line") or "",
+               "last_duel": (None if not duel_out else {
+                   "foe": (duel_out.get("foe") or {}).get("name"),
+                   "result": duel_out.get("result_cn"),
+                   "summary": duel_out.get("summary"),
+                   "hp": duel_out.get("hp")})})
     save_state(st)
     cs.save_char(ch)          # 成长 / 技能 / 退隐标记 一起落盘 (一次写完)
 
@@ -741,7 +801,8 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
             "change": change, "retiring": retiring,
             "fallback": bool(j.get("_fallback")),
             "fallback_why": str(j.get("_fallback_why") or ""),
-            "adventure": story, "skill_version": guidance.version("chronicle"),
+            "adventure": story, "duel": duel_out,
+            "skill_version": guidance.version("chronicle"),
             "life": life.view(ch), "char": cs.view(ch)}
 
 

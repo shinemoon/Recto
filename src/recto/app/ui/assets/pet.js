@@ -57,7 +57,10 @@ async function api(url, opts) {
 
 /* ───────────────────────── 人物面板 (武侠) ───────────────────────── */
 
-const TYPE_CN = { basic: '基本功', kungfu: '武学', neigong: '内功', perform: '绝招' };
+const TYPE_CN = { basic: '基本功', weapon: '兵器', fist: '拳脚', qinggong: '轻功',
+                   neigong: '内功', perform: '绝招', art: '杂学' };
+const EFFECT_CN = { damage: '伤害', control: '控住', defend: '守势',
+                    evade: '身法', heal: '疗伤', buff: '涨己' };
 
 function attrName(key) {
   const a = (state.schema && state.schema.attrs || []).find((x) => x.key === key);
@@ -128,6 +131,12 @@ function renderChar(ch) {
     rows.push(['心性', ch.morality || 0]);
     rows.push(['觉醒点', ch.wish || 0]);
     rows.push(['内功', 'Lv.' + (ch.neigong_level || 0)]);
+    const cb = ch.combat || {};
+    if (cb.hit != null) {
+      rows.push(['交手', '命中 ' + cb.hit + ' · 闪避 ' + cb.dodge + ' · 招架 ' + cb.parry]);
+      rows.push(['出手', '伤害 ' + cb.damage + ' · 减伤 ' + (cb.take_pct || 0) + '%' +
+        (cb.main && cb.main.name ? ' · 主修 ' + cb.main.name + ' ' + cb.main.level + ' 级' : ' · 主修 无')]);
+    }
     const wx = ch.wuxing || {};
     rows.push(['五行', Object.keys(wx).map((k) => k + wx[k]).join(' ') || '—']);
     meta.innerHTML = rows.map((r) =>
@@ -189,6 +198,10 @@ function renderChar(ch) {
         (cur ? '<span class="pill ok">已入门</span>' : '') + '</div>' +
         '<div class="cs-school-d">' + esc(s.desc) + '</div>' +
         '<div class="cs-school-k">长于: ' + (s.attrs || []).map(attrName).join(' · ') + '</div>' +
+        (s.weapon_name
+          ? '<div class="cs-school-k">本门: ' + esc(s.weapon_name) + ' · ' +
+            esc(s.neigong_name || '') + ' · 绝招 ' + esc(s.perform_name || '') + '</div>'
+          : '') +
         '<div class="row"><button class="mini' + (cur ? '' : ' primary') + '" data-school="' +
         esc(s.id) + '">' + (cur ? '已是本门' : '入门') + '</button></div>' +
         '</div>';
@@ -232,7 +245,8 @@ function renderChar(ch) {
       const perf = s.type === 'perform';
       tr.innerHTML =
         '<td class="nowrap"><b>' + esc(s.name) + '</b></td>' +
-        '<td class="nowrap cs-dim">' + esc(TYPE_CN[s.type] || s.type) + '</td>' +
+        '<td class="nowrap cs-dim">' + esc(TYPE_CN[s.type] || s.type) +
+          (s.effect ? '·' + esc(EFFECT_CN[s.effect] || s.effect) : '') + '</td>' +
         '<td class="nowrap cs-dim">' + esc(attrName(s.attr)) + '</td>' +
         '<td class="num">' + s.level + '</td>' +
         '<td class="num cs-dim">' + (s.cap != null ? s.cap : '—') + '</td>' +
@@ -248,7 +262,8 @@ function renderChar(ch) {
   if (skt) {
     const n = (ch.skills || []).length;
     skt.textContent = n
-      ? ('共 ' + n + ' 项。绝招成功率 = 基础值 + 对应根骨 + 绝招等级×2 (最高 95%), 失败会反噬。')
+      ? ('共 ' + n + ' 项。招式参数在游历的遭遇里真被用到: 命中看身法与主修, ' +
+         '伤害看臂力与兵刃, 绝招吃内力、失手会反噬。')
       : '还没有技能 —— 入门得内功与绝招, 其余靠陪读修习。';
   }
   // 折叠起来的技能表, 摘要里给出"几项 / 最高几级", 不点开也能看出长进
@@ -747,6 +762,31 @@ function advParagraphs(body) {
   }).join('');
 }
 
+/** 这一回真打的那一场 (后端算出来的战报, 不是编的) */
+function duelBlock(d) {
+  if (!d || !d.foe) return '';
+  const rounds = (d.rounds || []).slice(0, 6);
+  const res = d.result === 'win' ? 'ok' : (d.result === 'lose' ? 'err' : 'warn');
+  return '<div class="adv-duel">' +
+    '<div class="adv-duel-h"><span class="pill ' + res + '">' +
+      esc(d.result_cn || '') + '</span>' +
+      '<b>' + esc(d.foe.name || '对手') + '</b>' +
+      '<span class="cs-dim">' + esc(d.foe.arena || '') +
+      (d.foe.weapon_cn ? ' · ' + esc(d.foe.weapon_cn) : '') + '</span>' +
+      '<span class="cs-dim">' + esc(d.summary || '') + '</span></div>' +
+    '<div class="adv-duel-r">' + rounds.map(function (r) {
+      return '<span>' + esc(r.text || '') + '</span>';
+    }).join('') + '</div>' +
+    (d.moves && d.moves.length
+      ? '<div class="adv-chips">' + d.moves.map(function (m) {
+          return '<span class="adv-chip ok">使 ' + esc(m) + '</span>';
+        }).join('') + '</div>'
+      : '') +
+    '<div class="cs-dim adv-duel-f">气血 ' + (d.hp ? d.hp.from + ' → ' + d.hp.to +
+      ' / ' + d.hp.max : '—') + (d.fame ? ' · 声望 +' + d.fame : '') + '</div>' +
+    '</div>';
+}
+
 function renderChronicle(v) {
   const pill = $('#chronicle-pill');
   const box = $('#chronicle-state');
@@ -857,6 +897,7 @@ function renderChronicle(v) {
               return '<span class="adv-chip ok">' + esc(t) + '</span>';
             }).join('') + '</div>'
           : '') +
+        duelBlock(g.duel) +
         '<div class="adv-body">' + advParagraphs(latest.body) + '</div>' +
         (latest.terms && latest.terms.length
           ? '<div class="adv-chips">' + latest.terms.map(function (t) {
@@ -974,6 +1015,16 @@ function renderRunResult(r) {
   if ((!reading || !reading.length) && !r.minutes) {
     const n = windowNote(r);
     if (n) lines.push('<div class="adv-run-line">' + esc(n) + '</div>');
+  }
+  if (r.duel) {
+    const d = r.duel;
+    lines.push('<div class="adv-run-line">遭遇 (' +
+      (r.status === 'dry' ? '预演, 不落盘' : '已结算') + '): ' +
+      esc((d.foe || {}).name || '有人挡路') + ' · ' + esc(d.result_cn || '') +
+      ' · 气血 ' + ((d.hp || {}).from) + ' → ' + ((d.hp || {}).to) + '</div>');
+    if ((d.moves || []).length) {
+      lines.push('<div class="adv-run-line">使过: ' + d.moves.map(esc).join(' / ') + '</div>');
+    }
   }
   if (r.adventure) {
     lines.push('<div class="adv-run-line">游历: ' + esc(r.adventure.title) + '</div>');

@@ -1,27 +1,28 @@
-"""书宠的人物属性体系 —— 武侠人物参数 (取法参考 MUD《侠客行》)。
+"""书宠的人物体系 —— 江湖上的那一套 (取法参考 MUD《侠客行》)。
 
-**为什么照《侠客行》的路子**: 读书这件事本身就有"修炼"的味道 ——
-北侠里"读书"是唯一**不消耗潜能**的涨技能方式, 陪读 ≈ 打坐, 讨论 ≈ 切磋。
-这套隐喻天然贴合, 所以属性 / 技能 / 绝招 / 经脉的骨架直接借过来,
-只把"战斗"那一层换成"陪伴"。
+**这一套是武侠世界的, 不是阅读的比喻。** 书宠靠陪读攒下来的东西, 长成的
+是**拳脚、兵刃、内功、绝招**: 六项根骨决定它交手时有多重、多快、多耐;
+技能决定它用哪一路打法; 绝招是它在遭遇里真能打出去的那几手, 有内力开销、
+有成功率、有反噬。读书只是**来路**, 不是**内容**。
 
 **借了什么**
-  · 六项根骨 (臂力 / 根骨 / 悟性 / 身法 / 定力 / 耐力): 初始 10、上限 30、总和 100
-  · 潜能加点: 升级与陪读得潜能点, 自由分配到六项
-  · 状态值: 气血 / 精神 / 内力 / 精力 (当前 + 上限)
-  · 技能等级上限公式 ``(exp*10)^(1/3)+1`` (以 30 悟性为基准, 悟性越低打折)
-  · 绝招三要素: 成功率 / 定身 (busy) / 反噬 (失败惩罚), 另加内力消耗
+  · 六项根骨 (臂力 / 根骨 / 悟性 / 身法 / 定力 / 耐力): 初始 10、每项上限 30
+  · 潜能加点: 升级与陪读得潜能点, 自由分配
+  · 状态值: 气血 / 精神 / 内力 / 精力 (当前 + 上限; 气血与内力会被交手吃掉)
+  · 技能等级上限 ``(exp*10)^(1/3)+1`` (以 30 悟性为基准, 悟性越低打折)
   · 内功 (exert) 与绝招 (pfm) 分开; 内功吃内力上限
+  · 绝招三要素: 成功率 / 定身 (busy) / 反噬 (fail), 另加内力消耗
   · 经脉十层, 通脉给五行亲和
-  · 性情 (trait) 四色点数: 黄 40 / 红 30 / 蓝 20 / 绿 10, 最多 6 种, 总分 ≤ 100
+  · 天生禀赋 (侠客行叫"性情") 四色点数: 黄 40 / 红 30 / 蓝 20 / 绿 10, 最多 6 条
   · 门派 / 声望 / 门忠 / 心性 / 觉醒点
 
-**没借什么**: 战斗、PK、道德值对师门的影响。这套体系是**展示 + 成长接口**,
-"读一段书涨多少"留到接阅读器时再定 —— 那时才有真实数据可依据。
+**在哪用得上**: ``recto.pet.duel`` —— 每回游历会先结算一次遭遇 (交手),
+它读的就是这里的 ``derive()["combat"]``、技能等级与绝招参数, 打完把气血与
+内力写回存档。故事只负责把那一场照实写出来。
 
 **存档**: ``<pet_dir>/char.json`` (权限 600)。
 
-**派生值一律实时算, 不入库** —— 免得公式改了以后旧存档里的数字对不上。
+**派生值一律实时算, 不入库** —— 免得公式改过以后旧存档里的数字对不上。
 (老坑: 同一份数据有两个来源, 迟早打架。)
 """
 from __future__ import annotations
@@ -36,31 +37,33 @@ _LOCK = threading.Lock()
 
 # ------------------------------------------------------------------ 定义表
 
-# 六项根骨。key 沿用 MUD 的缩写, 名字保留武侠味, alias 是书宠语境的说法。
+# 六项根骨 —— 侠客行的老六样。读书只是书宠攒本事的**来路**, 长出来的
+# 一律是江湖上的本事: 出手、挨打、起落、稳心。所以每一项都直接对应
+# 交手时会用到的那个数 (命中 / 闪避 / 伤害 / 气血 / 内力)。
 ATTRS: list[dict[str, Any]] = [
     {
-        "key": "li", "name": "臂力", "alias": "笔力", "init": 10, "cap": 30,
-        "desc": "落笔快不快、记得下多少字。摘录与批注的份量看它。",
+        "key": "li", "name": "臂力", "alias": "劲道", "init": 10, "cap": 30,
+        "desc": "拳、刀、枪上的劲。交手时决定伤害轻重, 也决定托不托得住重兵器。",
     },
     {
-        "key": "gen", "name": "根骨", "alias": "心骨", "init": 10, "cap": 30,
-        "desc": "根基厚不厚。精力上限、抗疲劳、承载绝招的余量都归它。",
+        "key": "gen", "name": "根骨", "alias": "筋骨", "init": 10, "cap": 30,
+        "desc": "气血底子与筋骨强度。气血上限、挨打的耐受、重伤还能撑几回合都看它。",
     },
     {
         "key": "wu", "name": "悟性", "alias": "悟性", "init": 10, "cap": 30,
-        "desc": "读一遍能懂几分。技能上限公式按它打折, 领悟类绝招靠它。",
+        "desc": "一点就透。学招快、招式上限高, 也更容易看出对手招式里的破绽。",
     },
     {
         "key": "shen", "name": "身法", "alias": "身法", "init": 10, "cap": 30,
-        "desc": "反应快慢、检索旧段落的灵光。跟不上你的节奏就出不了声。",
+        "desc": "起落进退。先手、闪避、追人、脱身都靠它。",
     },
     {
         "key": "ding", "name": "定力", "alias": "定力", "init": 10, "cap": 30,
-        "desc": "坐不坐得住。心神上限、抗打断、不剧透的克制都看它。",
+        "desc": "心神不乱。中招之后还能稳住招式, 抗摄魂、抗迷药、抗人激将。",
     },
     {
         "key": "na", "name": "耐力", "alias": "耐力", "init": 10, "cap": 30,
-        "desc": "能陪你读多久。每日陪读时长上限靠它。",
+        "desc": "久战不疲。内力回得快, 长途赶路不趴下, 一夜未睡也还能出手。",
     },
 ]
 
@@ -70,177 +73,280 @@ ATTR_BY_KEY = {a["key"]: a for a in ATTRS}
 # 品质: 侠客行里的名号 (黄 40 / 红 30 / 蓝 20 / 绿 10)
 TRAIT_COLORS: dict[str, dict[str, Any]] = {
     "gold": {"name": "上品", "points": 40, "desc": "罕见。一条抵十条。"},
-    "red": {"name": "良品", "points": 30, "desc": "难得。天生的脾性。"},
+    "red": {"name": "良品", "points": 30, "desc": "难得。天生的筋骨。"},
     "blue": {"name": "常品", "points": 20, "desc": "常见。也能改命。"},
     "green": {"name": "下品", "points": 10, "desc": "锦上添花。"},
 }
 
+# 天生禀赋 (侠客行叫"性情")。每条都带 ``mods`` —— 这些不是好看的形容词,
+# 直接进 ``derive()["combat"]``: 命中 / 闪避 / 伤害 / 减伤 / 气血 / 内力。
+# mods 的键:
+#   attr {项: +n}   直接加在根骨上 (与门派加成同层, 派生不入库)
+#   hit/dodge/speed/parry/damage/crit   交手数值
+#   take_pct        受到的伤害 ±% (负=减伤)
+#   neili_pct/hp_pct 内力 / 气血上限 ±%
+#   skill_cap_pct   技能上限 ±%
+#   fail            绝招反噬 ±级
 TRAITS: list[dict[str, Any]] = [
     # 上品 (40)
-    {"id": "guowubuwang", "name": "过目不忘", "color": "gold",
-     "desc": "读过的段落, 隔很久再遇见也能一眼认出。"},
-    {"id": "bizheweilongshen", "name": "笔走龙蛇", "color": "gold",
-     "desc": "摘录飞快, 一口气记下的字比旁人多三成。"},
-    {"id": "xinyoulingxi", "name": "心有灵犀", "color": "gold",
-     "desc": "你说半句, 它接得上另外半句。"},
-    {"id": "bowenqiangji", "name": "博闻强记", "color": "gold",
-     "desc": "跨着书也能联想, 常把别处的故事搬来给你听。"},
+    {"id": "gugqingqi", "name": "骨骼清奇", "color": "gold",
+     "desc": "筋络天生顺, 学招比别人快一截 (技能上限 +12%)。",
+     "mods": {"skill_cap_pct": 12}},
+    {"id": "tianshengshenli", "name": "天生神力", "color": "gold",
+     "desc": "生下来手上有桩。臂力 +3, 出手就是重的。",
+     "mods": {"attr": {"li": 3}}},
+    {"id": "tieguqingpi", "name": "铁骨铜皮", "color": "gold",
+     "desc": "皮肉筋骨像熟过的铁。挨打减伤一成半。",
+     "mods": {"take_pct": -15}},
+    {"id": "xinruzhishui", "name": "心如止水", "color": "gold",
+     "desc": "心不动。定力 +3, 绝招反噬还轻一级。",
+     "mods": {"attr": {"ding": 3}, "fail": -1}},
     # 良品 (30)
-    {"id": "yuchujingren", "name": "语出惊人", "color": "red",
-     "desc": "偶尔一句直击要害, 说完自己也要愣一下。"},
-    {"id": "butubukuai", "name": "不吐不快", "color": "red",
-     "desc": "憋不住话, 会主动插嘴 —— 你不一定爱听。"},
-    {"id": "yanjianyihe", "name": "言简意赅", "color": "red",
-     "desc": "话少, 但每句都在点上。"},
-    {"id": "youqiubiying", "name": "有求必应", "color": "red",
-     "desc": "你问它必答, 哪怕答的是「我不知道」。"},
+    {"id": "muliguoren", "name": "目力过人", "color": "red",
+     "desc": "十丈外看得见剑尖的毛刺。命中 +6。",
+     "mods": {"hit": 6}},
+    {"id": "shenqingruyan", "name": "身轻如燕", "color": "red",
+     "desc": "落脚没声。闪避 +6。",
+     "mods": {"dodge": 6}},
+    {"id": "neiximianchang", "name": "内息绵长", "color": "red",
+     "desc": "一口气能转很久。内力上限 +20%。",
+     "mods": {"neili_pct": 20}},
+    {"id": "chushourudian", "name": "出手如电", "color": "red",
+     "desc": "刀出鞘比人眨眼还快。先手 +8。",
+     "mods": {"speed": 8}},
     # 常品 (20)
-    {"id": "jingruochuzi", "name": "静若处子", "color": "blue",
-     "desc": "你读书时它就安静待着, 除非你先开口。"},
-    {"id": "wenguzhixin", "name": "温故知新", "color": "blue",
-     "desc": "常常提起你上周读过的段落。"},
-    {"id": "pangruowuren", "name": "旁若无人", "color": "blue",
-     "desc": "沉浸得紧, 外面发生什么都不理。"},
-    {"id": "haoweirenshi", "name": "好为人师", "color": "blue",
-     "desc": "爱讲道理, 有时挺啰嗦。"},
+    {"id": "wenzhawenda", "name": "稳扎稳打", "color": "blue",
+     "desc": "下盘沉, 招架不散。招架 +8。",
+     "mods": {"parry": 8}},
+    {"id": "jinguqiangjian", "name": "筋骨强健", "color": "blue",
+     "desc": "经得住摔打。气血上限 +12%。",
+     "mods": {"hp_pct": 12}},
+    {"id": "wuxingtiancheng", "name": "悟性天成", "color": "blue",
+     "desc": "听一遍就会。悟性 +2。",
+     "mods": {"attr": {"wu": 2}}},
+    {"id": "ercongmuming", "name": "耳聪目明", "color": "blue",
+     "desc": "背后有人摸上来也听得见。命中 +3、闪避 +3。",
+     "mods": {"hit": 3, "dodge": 3}},
     # 下品 (10)
-    {"id": "jianweizhizhu", "name": "见微知著", "color": "green",
-     "desc": "细节敏感, 一个标点变化都能察觉。"},
-    {"id": "qinxuebuzhu", "name": "勤学不辍", "color": "green",
-     "desc": "陪得越久, 长得越快。"},
-    {"id": "ouchouzoushen", "name": "偶尔走神", "color": "green",
-     "desc": "走着走着就飘远了, 得你拽回来。"},
-    {"id": "tiaoshi", "name": "挑食", "color": "green",
-     "desc": "不合口味的书它懒得投入。"},
+    {"id": "dandaxixin", "name": "胆大心细", "color": "green",
+     "desc": "敢下手, 也看得准。暴击 +4。",
+     "mods": {"crit": 4}},
+    {"id": "sichanlanda", "name": "死缠烂打", "color": "green",
+     "desc": "见血之后反而更狠。气血低于三成时伤害 +12%。",
+     "mods": {"low_hp_damage": 12}},
+    {"id": "yanjishoukuai", "name": "眼疾手快", "color": "green",
+     "desc": "手比眼快半步。先手 +3。",
+     "mods": {"speed": 3}},
+    {"id": "haoyonghaodou", "name": "好勇斗狠", "color": "green",
+     "desc": "下手不留余力。伤害 +4, 却也容易结仇。",
+     "mods": {"damage": 4}},
 ]
 
 TRAIT_BY_ID = {t["id"]: t for t in TRAITS}
 
-# 门派 (自创武侠门派, 不照搬任何现成 MUD 的门派表)
+# 门派 —— 自创, 各有本门内功与一路绝招。``attrs`` 是长项, ``bonus`` 是入门加成
+# (派生值: 叛门即刻收回)。
 SCHOOLS: list[dict[str, Any]] = [
     {
         "id": "mochi", "name": "墨池剑庐", "sect": "外门",
-        "attrs": ["li", "wu"], "bonus": {"li": 2},
-        "neigong": "guanhai", "perform": "yiqihcheng",
-        "desc": "外门出身, 起手快、记性好。适合跟着你一路狂读。",
+        "attrs": ["li", "shen"], "bonus": {"li": 2},
+        "neigong": "guanhai", "perform": "yiqihcheng", "weapon": "jianfa",
+        "desc": "以剑入道的剑庐。出手快、剑走轻灵, 一手快剑正面难挡。",
     },
     {
         "id": "tieyan", "name": "铁砚堂", "sect": "外门",
         "attrs": ["li", "na"], "bonus": {"na": 2},
-        "neigong": "monengong", "perform": "tiehuayingou",
-        "desc": "苦功路数。熬得住, 一天读十小时也不喊累。",
+        "neigong": "monengong", "perform": "tiehuayingou", "weapon": "daofa",
+        "desc": "苦功路数的刀堂。刀沉势大, 挨得住也砍得实。",
     },
     {
         "id": "jingxin", "name": "静心斋", "sect": "内门",
         "attrs": ["ding", "gen"], "bonus": {"ding": 2},
-        "neigong": "yangqijue", "perform": "budongrushan",
-        "desc": "坐得住的功夫。心神厚, 你读得再入神它也不躁。",
+        "neigong": "yangqijue", "perform": "budongrushan", "weapon": "zhangfa",
+        "desc": "坐得住的功夫。掌法守多攻少, 心神厚, 久战不散。",
     },
     {
         "id": "fengxue", "name": "风雪阁", "sect": "内门",
         "attrs": ["shen", "na"], "bonus": {"shen": 2},
-        "neigong": "taxuegong", "perform": "taxuewuchen",
-        "desc": "轻灵一路。反应快, 旧段落召之即来。",
+        "neigong": "taxuegong", "perform": "taxuewuchen", "weapon": "tuifa",
+        "extras": ["qinggong"],
+        "desc": "轻灵一路。踏雪无痕, 追得上也逃得掉。",
     },
     {
         "id": "lingxi", "name": "灵犀谷", "sect": "内门",
         "attrs": ["wu", "shen"], "bonus": {"wu": 2},
-        "neigong": "tongmingjue", "perform": "lingxizhetong",
-        "desc": "悟性一路。讲得出道理, 也猜得到你要问什么。",
+        "neigong": "tongmingjue", "perform": "lingxizhetong", "weapon": "zhifa",
+        "desc": "以指代剑。指法认穴极准, 一手点穴就能让对手动不了。",
     },
     {
         "id": "tingsong", "name": "听松府", "sect": "内门",
         "attrs": ["gen", "ding"], "bonus": {"gen": 2},
-        "neigong": "woyungong", "perform": "songfengchangxiao",
-        "desc": "养气为主。气血厚, 陪你熬长夜也不垮。",
+        "neigong": "woyungong", "perform": "songfengchangxiao", "weapon": "quanfa",
+        "desc": "养气为主的拳门。气血厚、内息长, 能熬到对手先喘。",
     },
 ]
 
 SCHOOL_BY_ID = {s["id"]: s for s in SCHOOLS}
 
-# 技能表。type: basic 基本功 / kungfu 武学 / neigong 内功 / perform 绝招
+# 技能表。
+#   type: basic 基本功 / weapon 兵器 / fist 拳脚 / qinggong 轻功 /
+#         neigong 内功 / perform 绝招 / art 杂学
+#   attr: 决定上限与成功率的那项根骨
+#   use : 它在**交手或赶路**时具体干什么 —— 写故事与结算都按这一句来
+#
+# 绝招 (perform) 的三要素照侠客行: ``rate`` 基础成功率 / ``busy`` 成功让对方
+# 定身几回合 / ``fail`` 失败反噬几级; ``cost`` 是内力开销; ``effect`` 决定它
+# 在交手里的作用 (damage 伤害 / control 控住 / defend 守 / evade 身法 /
+# heal 回气血 / buff 涨自己)。
 SKILLS: list[dict[str, Any]] = [
-    # 基本功
-    {"id": "yanli", "name": "眼力", "type": "basic", "attr": "shen", "cap": 20,
-     "desc": "看字快, 抓得住重点。"},
-    {"id": "erli", "name": "耳力", "type": "basic", "attr": "ding", "cap": 20,
-     "desc": "你念到哪, 它接到哪。"},
-    {"id": "jingxinli", "name": "静心", "type": "basic", "attr": "ding", "cap": 20,
-     "desc": "坐下来就不飘。"},
-    {"id": "shouji", "name": "手记", "type": "basic", "attr": "li", "cap": 20,
-     "desc": "抄录、划线、批注的基本功。"},
-    # 武学
-    {"id": "dushuwudao", "name": "读书悟道", "type": "kungfu", "attr": "wu", "cap": 30,
-     "desc": "陪读时涨修为的主路 —— 不消耗潜能, 像北侠的「读书」。"},
-    {"id": "chaojing", "name": "抄经", "type": "kungfu", "attr": "li", "cap": 30,
-     "desc": "替你抄下值得留下的句子。"},
-    {"id": "pianzhuodianjing", "name": "批注点睛", "type": "kungfu", "attr": "wu", "cap": 30,
-     "desc": "一句话点出段落要害。"},
-    {"id": "zhuiqinsuyuan", "name": "追根溯源", "type": "kungfu", "attr": "gen", "cap": 30,
-     "desc": "把前后文串起来, 免得断章取义。"},
-    {"id": "huifushidian", "name": "回溯拾遗", "type": "kungfu", "attr": "shen", "cap": 30,
-     "desc": "从旧段落里翻出你要的那句。"},
-    # 内功 (exert)
-    {"id": "jingzuo", "name": "静坐", "type": "neigong", "attr": "gen", "cap": 30,
-     "desc": "吐纳心神。恢复精神。"},
-    {"id": "tuna", "name": "吐纳", "type": "neigong", "attr": "gen", "cap": 30,
-     "desc": "调匀气息。恢复精力, 也抬内力上限。"},
-    {"id": "ningshen", "name": "凝神", "type": "neigong", "attr": "wu", "cap": 30,
-     "desc": "收摄心神。恢复内力。"},
-    # 内功 (门派)
+    # ── 基本功
+    {"id": "jibenneigong", "name": "基本内功", "type": "basic", "attr": "gen", "cap": 20,
+     "desc": "吐纳的底子。内力上限与回气速度的根。",
+     "use": "打坐回气; 内力上限的基数。"},
+    {"id": "jibenquanjiao", "name": "基本拳脚", "type": "basic", "attr": "li", "cap": 20,
+     "desc": "空手过招的底子。手里没家伙时全靠它。",
+     "use": "空手交手不落下风; 被缴了兵器也有得打。"},
+    {"id": "jibenzhaojia", "name": "基本招架", "type": "basic", "attr": "gen", "cap": 20,
+     "desc": "卸力、格挡、不让人打实。",
+     "use": "交手时卸掉一部分来势, 减伤。"},
+    {"id": "jibenshenfa", "name": "基本身法", "type": "basic", "attr": "shen", "cap": 20,
+     "desc": "起落、转身、错步的底子。",
+     "use": "闪避与先手的底子。"},
+    {"id": "jibenyinggong", "name": "基本硬功", "type": "basic", "attr": "gen", "cap": 20,
+     "desc": "挨打不伤筋骨的功夫。",
+     "use": "硬吃一击也不倒; 减伤。"},
+    # ── 兵器 (武学)
+    {"id": "jianfa", "name": "剑法", "type": "weapon", "attr": "shen", "cap": 30,
+     "desc": "轻灵一路的兵刃功夫, 走的是快与准。",
+     "use": "剑在手时的主攻手段, 出手快、破绽小。"},
+    {"id": "daofa", "name": "刀法", "type": "weapon", "attr": "li", "cap": 30,
+     "desc": "沉、猛、直来直去, 一刀是一刀。",
+     "use": "刀在手时的主攻手段, 伤害最重。"},
+    {"id": "gunfa", "name": "棍法", "type": "weapon", "attr": "li", "cap": 30,
+     "desc": "长兵扫打, 一丈之内把人逼开。",
+     "use": "以长打短, 让对手近不了身。"},
+    # ── 拳脚
+    {"id": "quanfa", "name": "拳法", "type": "fist", "attr": "li", "cap": 30,
+     "desc": "近身硬打, 拳拳到肉。",
+     "use": "贴身缠斗时的主攻手段。"},
+    {"id": "zhangfa", "name": "掌法", "type": "fist", "attr": "wu", "cap": 30,
+     "desc": "以掌代兵, 推、按、劈、切, 讲的是听劲。",
+     "use": "化解来势、推开对手, 攻守都成。"},
+    {"id": "zhifa", "name": "指法", "type": "fist", "attr": "wu", "cap": 30,
+     "desc": "认穴打点, 一指下去对手半边就麻。",
+     "use": "点穴与破招, 常用来控住对手。"},
+    {"id": "tuifa", "name": "腿法", "type": "fist", "attr": "shen", "cap": 30,
+     "desc": "下三路最难防。踢、扫、蹬、撩。",
+     "use": "破人下盘、绕后偷袭。"},
+    # ── 轻功
+    {"id": "qinggong", "name": "轻功", "type": "qinggong", "attr": "shen", "cap": 30,
+     "desc": "登高、越墙、踏水、追人。",
+     "use": "追上逃的人、甩掉追的人; 交手时抢身位。"},
+    # ── 内功 (通用 + 门派)
     {"id": "guanhai", "name": "观海诀", "type": "neigong", "attr": "wu", "cap": 40,
-     "desc": "墨池剑庐内功。心神涨得快。"},
+     "desc": "墨池剑庐内功。气走轻灵, 剑上更快一分。",
+     "use": "回内力快; 剑法出手加成。"},
     {"id": "monengong", "name": "磨墨功", "type": "neigong", "attr": "li", "cap": 40,
-     "desc": "铁砚堂内功。笔力与耐力长。"},
+     "desc": "铁砚堂内功。一层一层压下力来, 越练手越沉。",
+     "use": "内力上限厚; 刀法伤害加成。"},
     {"id": "yangqijue", "name": "养气诀", "type": "neigong", "attr": "ding", "cap": 40,
-     "desc": "静心斋内功。定力长, 少受打断。"},
+     "desc": "静心斋内功。气息绵长, 心神不散。",
+     "use": "抗乱神; 挨打后不易被破招。"},
     {"id": "taxuegong", "name": "踏雪功", "type": "neigong", "attr": "shen", "cap": 40,
-     "desc": "风雪阁内功。身法长, 反应快。"},
+     "desc": "风雪阁内功。落雪不陷, 一身轻。",
+     "use": "闪避与先手加成; 赶路快。"},
     {"id": "tongmingjue", "name": "通明诀", "type": "neigong", "attr": "wu", "cap": 40,
-     "desc": "灵犀谷内功。悟性长。"},
+     "desc": "灵犀谷内功。心如明镜, 照见对手招式来路。",
+     "use": "识破破绽, 提高命中。"},
     {"id": "woyungong", "name": "卧云功", "type": "neigong", "attr": "gen", "cap": 40,
-     "desc": "听松府内功。根骨长, 气血厚。"},
-    # 绝招 (perform) —— 成功率 / 定身 / 反噬
+     "desc": "听松府内功。气血厚, 躺云上一样能撑。",
+     "use": "气血上限与恢复加成。"},
+    # ── 绝招 (通用)
     {"id": "yizhenjianxue", "name": "一针见血", "type": "perform", "attr": "wu",
-     "cost": 8, "rate": 60, "busy": 3, "fail": 1,
-     "desc": "精准点出一句关键。定身短, 反噬轻 —— 性价比最高的一招。"},
-    {"id": "miaoyujieyi", "name": "妙语解颐", "type": "perform", "attr": "wu",
-     "cost": 20, "rate": 45, "busy": 2, "fail": 2,
-     "desc": "把难懂的一段讲得透。费内力, 但讲完能安静一阵子。"},
-    {"id": "yinjingjudian", "name": "引经据典", "type": "perform", "attr": "wu",
-     "cost": 15, "rate": 40, "busy": 2, "fail": 2,
-     "desc": "拿别处的道理来佐证。悟性越高越稳。"},
-    {"id": "wenguzhixinpfm", "name": "旧知引新", "type": "perform", "attr": "gen",
-     "cost": 18, "rate": 30, "busy": 2, "fail": 3,
-     "desc": "把旧段落和新的一处连起来。成了很妙, 败了很伤。"},
-    {"id": "pangzhengboyin", "name": "旁征博引", "type": "perform", "attr": "shen",
-     "cost": 12, "rate": 50, "busy": 3, "fail": 1,
-     "desc": "举别处的例子类比。轻巧, 定身也久。"},
-    {"id": "huihaopomo", "name": "挥毫泼墨", "type": "perform", "attr": "li",
-     "cost": 10, "rate": 55, "busy": 4, "fail": 1,
-     "desc": "一口气记下大段。笔力越足越顺手。"},
-    # 门派绝招
-    {"id": "yiqihcheng", "name": "一气呵成", "type": "perform", "attr": "li",
-     "cost": 12, "rate": 58, "busy": 4, "fail": 1,
-     "desc": "墨池剑庐绝招。长句不断, 落笔如飞。"},
+     "cost": 8, "rate": 62, "busy": 2, "fail": 1, "effect": "damage",
+     "desc": "指上找破绽, 一点就透。耗得少、准头高。",
+     "use": "低耗快招, 专门戳破绽。"},
+    {"id": "dianxuejiemai", "name": "点穴截脉", "type": "perform", "attr": "shen",
+     "cost": 14, "rate": 46, "busy": 4, "fail": 2, "effect": "control",
+     "desc": "点中穴道, 对手一时动不了。成败全看身法准不准。",
+     "use": "控住对手 4 回合 —— 打不过时用来脱身。"},
+    {"id": "tieqiaolianjiang", "name": "铁桥拦江", "type": "perform", "attr": "ding",
+     "cost": 10, "rate": 66, "busy": 2, "fail": 1, "effect": "defend",
+     "desc": "横身一挡, 硬吃一击也不退。",
+     "use": "守势: 这一回合减伤, 撑住等援手。"},
+    {"id": "huifengfuliu", "name": "回风拂柳", "type": "perform", "attr": "shen",
+     "cost": 12, "rate": 56, "busy": 2, "fail": 1, "effect": "evade",
+     "desc": "侧身让过来势, 顺手还一下。",
+     "use": "闪身避开, 同时回敬一记。"},
+    {"id": "bafangfengyu", "name": "八方风雨", "type": "perform", "attr": "li",
+     "cost": 18, "rate": 50, "busy": 2, "fail": 2, "effect": "damage",
+     "desc": "一口气连打数下, 四面八方都是招。",
+     "use": "被围住时开道; 消耗大, 一次定胜负。"},
+    {"id": "lipihuashan", "name": "力劈华山", "type": "perform", "attr": "li",
+     "cost": 16, "rate": 42, "busy": 3, "fail": 3, "effect": "damage",
+     "desc": "全身之力压在一击上。中了就结束, 不中就空门大开。",
+     "use": "拼命的一击: 高伤害, 反噬也重。"},
+    # ── 绝招 (门派)
+    {"id": "yiqihcheng", "name": "一气呵成", "type": "perform", "attr": "shen",
+     "cost": 12, "rate": 58, "busy": 3, "fail": 1, "effect": "damage",
+     "desc": "墨池剑庐剑招。七剑连成一线, 中间不留缝。",
+     "use": "快剑连击, 让对方喘不上气。"},
     {"id": "tiehuayingou", "name": "铁画银钩", "type": "perform", "attr": "li",
-     "cost": 16, "rate": 50, "busy": 3, "fail": 2,
-     "desc": "铁砚堂绝招。字字见骨, 费劲但扎实。"},
+     "cost": 16, "rate": 52, "busy": 3, "fail": 2, "effect": "damage",
+     "desc": "铁砚堂刀招。一横一竖, 断人兵刃。",
+     "use": "重刀硬劈, 常能震脱对手兵器。"},
     {"id": "budongrushan", "name": "不动如山", "type": "perform", "attr": "ding",
-     "cost": 14, "rate": 55, "busy": 5, "fail": 1,
-     "desc": "静心斋绝招。你读多久它都不催。"},
+     "cost": 12, "rate": 62, "busy": 3, "fail": 1, "effect": "defend",
+     "desc": "静心斋守招。往那一站, 谁也推不动。",
+     "use": "守到底: 减伤并把对手逼退半步。"},
     {"id": "taxuewuchen", "name": "踏雪无痕", "type": "perform", "attr": "shen",
-     "cost": 10, "rate": 60, "busy": 3, "fail": 1,
-     "desc": "风雪阁绝招。旧段落召之即来。"},
-    {"id": "lingxizhetong", "name": "灵犀一点通", "type": "perform", "attr": "wu",
-     "cost": 15, "rate": 52, "busy": 3, "fail": 2,
-     "desc": "灵犀谷绝招。接话总能接上你想说的。"},
-    {"id": "songfengchangxiao", "name": "松风长啸", "type": "perform", "attr": "gen",
-     "cost": 18, "rate": 48, "busy": 4, "fail": 2,
-     "desc": "听松府绝招。气沉丹田, 一次能陪你很久。"},
+     "cost": 10, "rate": 60, "busy": 3, "fail": 1, "effect": "evade",
+     "desc": "风雪阁身法。一步出去, 雪上不留印。",
+     "use": "抽身、绕后、抢身位, 也能干脆走掉。"},
+    {"id": "lingxizhetong", "name": "灵犀一指", "type": "perform", "attr": "wu",
+     "cost": 15, "rate": 50, "busy": 4, "fail": 2, "effect": "control",
+     "desc": "灵犀谷指招。看准一处, 一指点下去。",
+     "use": "认穴极准, 控住对手的招。"},
+    {"id": "songfengchangxiao", "name": "松风长吟", "type": "perform", "attr": "gen",
+     "cost": 18, "rate": 48, "busy": 4, "fail": 2, "effect": "control",
+     "desc": "听松府拳掌。掌风里带着内息, 打得人胸口发闷。",
+     "use": "以内力压人, 让对手一两回合用不上内力。"},
+    # ── 杂学
+    {"id": "yishu", "name": "医术", "type": "art", "attr": "wu", "cap": 25,
+     "desc": "接骨、止血、认药。江湖上走远路得会一点。",
+     "use": "交手之后疗伤, 多回一点气血; 也认得出毒。"},
+    {"id": "guanqi", "name": "观气", "type": "art", "attr": "wu", "cap": 25,
+     "desc": "看人下盘、听人呼吸, 就知道他下一步往哪走。",
+     "use": "交手前看破对手虚实: 提高命中、少挨打。"},
+    {"id": "zhuizong", "name": "追踪", "type": "art", "attr": "shen", "cap": 25,
+     "desc": "看脚印、看草倒的方向、看灰落在哪。",
+     "use": "追人、找人、不被甩掉。"},
 ]
 
 SKILL_BY_ID = {s["id"]: s for s in SKILLS}
+
+# 老存档里的旧技能 id (读书路数) → 新体系。只保留能对上的, 其余直接退休。
+# 为什么不一并删掉: 用户那只书宠的「读书悟道」已经陪读养到 10 级,
+# 那是它靠时间攒下来的东西, 不能因为改名就清零。
+LEGACY_SKILL_MAP: dict[str, str] = {
+    "dushuwudao": "jibenneigong",   # 读书悟道 (陪读主路) → 吐纳的底子
+    "jingzuo": "jibenneigong",
+    "tuna": "jibenneigong",
+    "ningshen": "jibenneigong",
+    "yanli": "guanqi",
+    "erli": "guanqi",
+    "jingxinli": "jibenzhaojia",
+    "shouji": "jibenzhaojia",
+    "chaojing": "jibenzhaojia",
+    "pianzhuodianjing": "guanqi",
+    "zhuiqinsuyuan": "zhuizong",
+    "huifushidian": "zhuizong",
+    "miaoyujieyi": "yizhenjianxue",
+    "yinjingjudian": "yizhenjianxue",
+    "wenguzhixinpfm": "huifengfuliu",
+    "pangzhengboyin": "huifengfuliu",
+    "huihaopomo": "bafangfengyu",
+}
 
 # 经脉十层 (侠客行有十二正经 + 奇经八脉; 这里取前十层, 名字沿用)
 VEINS: list[dict[str, Any]] = [
@@ -357,6 +463,17 @@ def load_char() -> dict[str, Any]:
     ch["attrs"] = {a["key"]: int(attrs.get(a["key"], a["init"])) for a in ATTRS}
     if not isinstance(ch.get("skills"), dict):
         ch["skills"] = {}
+    # 老存档里的"读书路数"技能迁到新体系 (见 LEGACY_SKILL_MAP);
+    # 对不上的直接退休 —— 它们本来就不属于这个江湖。
+    if any(str(k) in LEGACY_SKILL_MAP for k in ch["skills"]):
+        moved: dict[str, int] = {}
+        for sid, lv in ch["skills"].items():
+            sid = str(sid)
+            tgt = sid if sid in SKILL_BY_ID else LEGACY_SKILL_MAP.get(sid)
+            if not tgt:
+                continue
+            moved[tgt] = max(int(moved.get(tgt, 0)), int(lv or 0))
+        ch["skills"] = moved
     if not isinstance(ch.get("traits"), list):
         ch["traits"] = []
     if not isinstance(ch.get("born"), dict):
@@ -386,6 +503,16 @@ def load_char() -> dict[str, Any]:
     same = min(credited, actual)
     ch["credited_minutes"] = same
     ch["minutes"] = same
+    # 有门派却没有本门兵器 (老存档入门时没发) → 补一级, 与"入门即得"同口径
+    _sch = SCHOOL_BY_ID.get(str(ch.get("school") or ""))
+    if _sch:
+        for _sid in (_sch.get("weapon"), *(_sch.get("extras") or [])):
+            if _sid in SKILL_BY_ID:
+                ch["skills"].setdefault(str(_sid), 1)
+    # 气血 / 内力 / 精神 / 精力 夹到上限 (老存档里的 100 可能超过上限)
+    r = resources(ch)
+    for key in ("hp", "neili", "spirit", "jingli"):
+        ch[key] = r[key]["cur"]
     return ch
 
 
@@ -443,15 +570,17 @@ def _base_attrs(ch: dict[str, Any]) -> dict[str, int]:
 
 
 def effective_attrs(ch: dict[str, Any]) -> dict[str, int]:
-    """六项根骨的**实际值** = 基础 + 先天 + 门派加成 (每项封顶 30)。"""
+    """六项根骨的**实际值** = 基础 + 先天 + 门派加成 + 禀赋加成 (每项封顶 30)。"""
     base = _base_attrs(ch)
     born = ch.get("born") or {}
     school = SCHOOL_BY_ID.get(ch.get("school") or "")
     bonus = (school.get("bonus") or {}) if school else {}
+    tattr = (trait_mods(ch).get("attr") or {})
     out: dict[str, int] = {}
     for a in ATTRS:
         k = a["key"]
-        v = base.get(k, a["init"]) + int(born.get(k, 0)) + int(bonus.get(k, 0))
+        v = (base.get(k, a["init"]) + int(born.get(k, 0)) + int(bonus.get(k, 0))
+             + int(tattr.get(k, 0)))
         out[k] = max(0, min(a["cap"], v))
     return out
 
@@ -466,6 +595,96 @@ def _neigong_level(ch: dict[str, Any]) -> int:
     return best
 
 
+# 交手时算"主修"的几类技能 (兵器 / 拳脚)。轻功与内功单独加成。
+COMBAT_TYPES = ("weapon", "fist")
+
+#: 一回合 (故事内一天) 打坐能回的气血 / 内力比例 —— 上限封在 100%
+REST_HP_PCT = 0.18
+REST_NEILI_PCT = 0.45
+
+
+def trait_mods(ch: dict[str, Any]) -> dict[str, Any]:
+    """禀赋带来的数值加成 (派生, 不入库)。
+
+    禀赋不是好看的形容词: ``mods`` 里的每一项都真的进 ``derive()["combat"]``
+    或上限公式。这里是唯一的汇总点 —— 别在别处再各算一遍。
+    """
+    out: dict[str, Any] = {
+        "attr": {}, "hit": 0, "dodge": 0, "speed": 0, "parry": 0,
+        "damage": 0, "crit": 0, "take_pct": 0, "neili_pct": 0, "hp_pct": 0,
+        "skill_cap_pct": 0, "fail": 0, "low_hp_damage": 0,
+    }
+    for tid in (ch.get("traits") or []):
+        t = TRAIT_BY_ID.get(str(tid))
+        if not t:
+            continue
+        for k, v in (t.get("mods") or {}).items():
+            if k == "attr":
+                for ak, av in (v or {}).items():
+                    out["attr"][ak] = int(out["attr"].get(ak, 0)) + int(av)
+            elif k in out:
+                out[k] = int(out[k]) + int(v)
+    return out
+
+
+def skill_level(ch: dict[str, Any], sid: str) -> int:
+    return int((ch.get("skills") or {}).get(sid) or 0)
+
+
+def main_skill(ch: dict[str, Any]) -> dict[str, Any] | None:
+    """主修的那一路 —— 等级最高的兵器 / 拳脚。交手时用它判定命中与伤害。"""
+    best: dict[str, Any] | None = None
+    for sid, lv in (ch.get("skills") or {}).items():
+        sk = SKILL_BY_ID.get(str(sid))
+        if not sk or sk.get("type") not in COMBAT_TYPES:
+            continue
+        if best is None or int(lv) > int(best["level"]):
+            best = {"id": str(sid), "name": sk["name"], "type": sk["type"],
+                    "level": int(lv), "attr": sk.get("attr") or "li"}
+    return best
+
+
+def cap_for(ch: dict[str, Any], sk: dict[str, Any]) -> int:
+    """某门功夫的等级上限 —— 修为/悟性决定基础值, 禀赋再加减百分比。"""
+    base = skill_cap(int(ch.get("exp") or 0),
+                     int(effective_attrs(ch).get(sk.get("attr") or "wu", 10)))
+    pct = int(trait_mods(ch).get("skill_cap_pct") or 0)
+    if pct:
+        base = int(round(base * (100 + pct) / 100.0))
+    if sk.get("cap"):
+        base = min(base, int(sk["cap"]))
+    return max(1, base)
+
+
+def resources(ch: dict[str, Any]) -> dict[str, dict[str, int]]:
+    """气血 / 内力 / 精神 / 精力 的当前与上限。
+
+    **当前值会被交手吃掉**, 所以存在存档里; 上限永远实时算。
+    存档里没有这一栏 (老存档 / 新人物) → 当作满值。
+    """
+    d = derive(ch)
+    out: dict[str, dict[str, int]] = {}
+    for key, mx in (("hp", d["hp_max"]), ("neili", d["neili_max"]),
+                    ("spirit", d["spirit_max"]), ("jingli", d["jingli_max"])):
+        raw = ch.get(key)
+        cur = mx if raw is None else int(raw)
+        out[key] = {"cur": max(0, min(int(mx), cur)), "max": int(mx)}
+    return out
+
+
+def restore(ch: dict[str, Any], days: float = 1.0, *, hp_pct: float = REST_HP_PCT,
+            neili_pct: float = REST_NEILI_PCT) -> dict[str, int]:
+    """打坐 / 过夜 —— 按比例回气血与内力 (就地改 ``ch`` 的当前值)。"""
+    r = resources(ch)
+    hp_max, neili_max = r["hp"]["max"], r["neili"]["max"]
+    hp = min(hp_max, r["hp"]["cur"] + int(round(hp_max * hp_pct * max(0.0, days))))
+    neili = min(neili_max, r["neili"]["cur"] + int(round(neili_max * neili_pct * max(0.0, days))))
+    ch["hp"], ch["neili"] = hp, neili
+    ch.setdefault("spirit", r["spirit"]["cur"])
+    ch.setdefault("jingli", r["jingli"]["cur"])
+    return {"hp": hp - r["hp"]["cur"], "neili": neili - r["neili"]["cur"]}
+
+
 def derive(ch: dict[str, Any]) -> dict[str, Any]:
     """派生值 —— 全部实时算, 不入库。"""
     a = effective_attrs(ch)
@@ -475,10 +694,31 @@ def derive(ch: dict[str, Any]) -> dict[str, Any]:
     vein = int(ch.get("vein") or 0)
     vein_bonus = sum(1 for v in VEINS[:vein] if v["idx"] == 3)  # 第 3 层加六项
 
+    tm = trait_mods(ch)
     hp_max = 20 + a["gen"] * 3 + level * 2 + ng + vein_bonus * 2
     spirit_max = 20 + a["ding"] * 3 + a["wu"] * 2
     jingli_max = a["gen"] * 5 + a["na"] * 5
     neili_max = ng * 10 + a["gen"] * 2
+    if tm.get("hp_pct"):
+        hp_max = hp_max * (100 + int(tm["hp_pct"])) / 100.0
+    if tm.get("neili_pct"):
+        neili_max = neili_max * (100 + int(tm["neili_pct"])) / 100.0
+
+    # ── 交手数值 (故事里的"遭遇"读的就是这几个数)
+    main = main_skill(ch)
+    main_lv = int(main["level"]) if main else 0
+    qg_lv = skill_level(ch, "qinggong") + skill_level(ch, "jibenshenfa")
+    hard_lv = skill_level(ch, "jibenyinggong")
+    parry_lv = skill_level(ch, "jibenzhaojia") + skill_level(ch, "jibenneigong")
+    guanqi_lv = skill_level(ch, "guanqi")
+    hit = 40 + a["shen"] * 1.2 + main_lv * 1.6 + guanqi_lv * 0.8 + tm.get("hit", 0)
+    dodge = 30 + a["shen"] * 1.2 + qg_lv * 1.1 + tm.get("dodge", 0)
+    parry = 20 + a["gen"] * 1.0 + parry_lv * 1.2 + tm.get("parry", 0)
+    damage = 8 + a["li"] * 1.2 + main_lv * 2.0 + tm.get("damage", 0)
+    defense = 4 + a["gen"] * 0.8 + hard_lv * 1.2
+    speed = a["shen"] * 1.0 + qg_lv * 0.5 + tm.get("speed", 0)
+    crit = 5 + a["shen"] * 0.25 + tm.get("crit", 0)
+    take_pct = max(-40, min(40, int(tm.get("take_pct", 0))))
 
     # 经脉的五行亲和 (通一层 +1, 顺次轮转)
     wuxing = {w: 0 for w in WUXING}
@@ -490,10 +730,20 @@ def derive(ch: dict[str, Any]) -> dict[str, Any]:
     bonus = dict(school.get("bonus") or {}) if school else {}
 
     return {
-        "hp_max": hp_max,
-        "spirit_max": spirit_max,
-        "jingli_max": jingli_max,
-        "neili_max": neili_max,
+        "hp_max": int(round(hp_max)),
+        "spirit_max": int(round(spirit_max)),
+        "jingli_max": int(round(jingli_max)),
+        "neili_max": int(round(neili_max)),
+        "combat": {
+            "hit": int(round(hit)), "dodge": int(round(dodge)),
+            "parry": int(round(parry)), "damage": int(round(damage)),
+            "defense": int(round(defense)), "speed": int(round(speed)),
+            "crit": int(round(crit)), "take_pct": take_pct,
+            "low_hp_damage": int(tm.get("low_hp_damage") or 0),
+            "main": dict(main) if main else None,
+            "qinggong": skill_level(ch, "qinggong"),
+            "neigong": ng,
+        },
         "neigong_level": ng,
         "wuxing": wuxing,
         "school_bonus": bonus,
@@ -520,6 +770,11 @@ def perform_rate(ch: dict[str, Any], sk: dict[str, Any], skill_lv: int) -> int:
     if int(ch.get("vein") or 0) >= 7:
         v += 3
     return max(0, min(95, v))
+
+
+def perform_fail(ch: dict[str, Any], sk: dict[str, Any]) -> int:
+    """绝招失败时的反噬级数 (禀赋可以让它轻一级, 最少 0)。"""
+    return max(0, int(sk.get("fail") or 0) + int(trait_mods(ch).get("fail") or 0))
 
 
 def traits_info(ch: dict[str, Any]) -> dict[str, Any]:
@@ -588,9 +843,10 @@ def choose_school(ch: dict[str, Any], school_id: str) -> tuple[int, dict]:
         ch["fame"] = 0
         ch["loyalty"] = 0
     ch["school"] = school_id
-    # 门派内功与绝招入门即得 1 级
+    # 门派内功 / 本门兵器 / 绝招 入门即得 1 级
     skills = ch.get("skills") or {}
-    for sid in (school.get("neigong"), school.get("perform")):
+    for sid in (school.get("neigong"), school.get("weapon"), school.get("perform"),
+                *(school.get("extras") or [])):
         if sid and sid in SKILL_BY_ID:
             skills.setdefault(sid, 1)
     ch["skills"] = skills
@@ -644,6 +900,7 @@ def set_name(ch: dict[str, Any], name: str) -> tuple[int, dict]:
 def view(ch: dict[str, Any]) -> dict[str, Any]:
     """给前端 / 阅读器用的完整人物面板。"""
     d = derive(ch)
+    res = resources(ch)
     eff = effective_attrs(ch)
     base = _base_attrs(ch)
     school = SCHOOL_BY_ID.get(ch.get("school") or "")
@@ -687,21 +944,22 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
             "level": lv,
             "desc": sk.get("desc", ""),
         }
+        row["use"] = sk.get("use", "")
         if sk["type"] == "perform":
             row.update({
                 "cost": sk.get("cost", 0),
                 "rate": perform_rate(ch, sk, lv),
                 "base_rate": sk.get("rate", 0),
                 "busy": sk.get("busy", 0) + (1 if int(ch.get("vein") or 0) >= 10 else 0),
-                "fail": sk.get("fail", 0),
+                "fail": perform_fail(ch, sk),
+                "effect": sk.get("effect", "damage"),
             })
         else:
-            row["cap"] = min(sk.get("cap", 30),
-                             skill_cap(int(ch.get("exp") or 0),
-                                       int(eff_attrs.get(sk.get("attr", "wu"), 10))))
+            row["cap"] = cap_for(ch, sk)
         skills.append(row)
-    skills.sort(key=lambda r: ({"basic": 0, "kungfu": 1, "neigong": 2, "perform": 3}.get(r["type"], 9),
-                               -r["level"], r["name"]))
+    order = {"basic": 0, "weapon": 1, "fist": 2, "qinggong": 3,
+             "neigong": 4, "perform": 5, "art": 6}
+    skills.sort(key=lambda r: (order.get(r["type"], 9), -r["level"], r["name"]))
 
     trait_rows = []
     for t in TRAITS:
@@ -738,21 +996,23 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
         "exp_needed": d["exp_needed"],
         "pot": int(ch.get("pot") or 0),
         "rank": rank["name"],
-        "school": {"id": school["id"], "name": school["name"], "sect": school["sect"],
-                   "desc": school["desc"], "attrs": school["attrs"]} if school else None,
+        "school": {
+            "id": school["id"], "name": school["name"], "sect": school["sect"],
+            "desc": school["desc"], "attrs": school["attrs"],
+            # 本门给的三样东西 (入门即得 1 级) —— 门派卡上要看得见
+            "neigong": (SKILL_BY_ID.get(school.get("neigong") or "") or {}).get("name", ""),
+            "weapon": (SKILL_BY_ID.get(school.get("weapon") or "") or {}).get("name", ""),
+            "perform": (SKILL_BY_ID.get(school.get("perform") or "") or {}).get("name", ""),
+        } if school else None,
         "attrs": attr_rows,
         "attrs_total": d["attrs_total"],
         "attrs_cap_total": d["attrs_cap_total"],
         "stats": {
-            "hp": {"label": STAT_LABELS["hp"][1], "mud": STAT_LABELS["hp"][0],
-                   "cur": int(ch.get("hp") or 0), "max": d["hp_max"]},
-            "spirit": {"label": STAT_LABELS["spirit"][1], "mud": STAT_LABELS["spirit"][0],
-                       "cur": int(ch.get("spirit") or 0), "max": d["spirit_max"]},
-            "neili": {"label": STAT_LABELS["neili"][1], "mud": STAT_LABELS["neili"][0],
-                      "cur": int(ch.get("neili") or 0), "max": d["neili_max"]},
-            "jingli": {"label": STAT_LABELS["jingli"][1], "mud": STAT_LABELS["jingli"][0],
-                       "cur": int(ch.get("jingli") or 0), "max": d["jingli_max"]},
+            key: {"label": STAT_LABELS[key][1], "mud": STAT_LABELS[key][0],
+                  "cur": res[key]["cur"], "max": res[key]["max"]}
+            for key in ("hp", "spirit", "neili", "jingli")
         },
+        "combat": d["combat"],
         "fame": int(ch.get("fame") or 0),
         "fame_needed": d["fame_needed"],
         "morality": int(ch.get("morality") or 0),
@@ -781,7 +1041,10 @@ def schema() -> dict[str, Any]:
         "attrs": ATTRS,
         "trait_colors": TRAIT_COLORS,
         "traits": TRAITS,
-        "schools": SCHOOLS,
+        "schools": [dict(x, neigong_name=(SKILL_BY_ID.get(x.get("neigong") or "") or {}).get("name", ""),
+                         weapon_name=(SKILL_BY_ID.get(x.get("weapon") or "") or {}).get("name", ""),
+                         perform_name=(SKILL_BY_ID.get(x.get("perform") or "") or {}).get("name", ""))
+                    for x in SCHOOLS],
         "skills": SKILLS,
         "veins": VEINS,
         "ranks": RANKS,
@@ -792,8 +1055,23 @@ def schema() -> dict[str, Any]:
             "潜能点来自升级与陪读, 自由分配到六项根骨。",
             "技能上限 = (修为×10)^(1/3)+1, 按对应根骨与 30 的比例打折 (悟性 30 = 原值)。",
             "内力上限 = 最高内功等级 × 10 + 根骨 × 2 —— 内功练不上去, 内力就上不去。",
-            "绝招三要素: 成功率 / 定身 (busy) / 反噬 (失败惩罚), 另加内力消耗。",
-            "性情最多 6 条, 总分 ≤ 100; 四色点数 黄 40 / 红 30 / 蓝 20 / 绿 10。",
+            "绝招三要素: 成功率 / 定身 (busy) / 反噬 (fail), 另加内力消耗。",
+            "交手的命中 / 闪避 / 伤害 / 减伤, 都由根骨 + 对应技能 + 禀赋实时算出。",
+            "气血与内力会在交手里被吃掉, 打坐 (每故事日) 回一部分。",
+            "门派入门给本门内功、本门兵器与一路绝招各 1 级。",
+            "禀赋 (性情) 最多 6 条, 总分 ≤ 100; 四色点数 黄 40 / 红 30 / 蓝 20 / 绿 10。",
             "经脉十层, 通脉给五行亲和与属性加成。",
         ],
+        "skill_types": {
+            "basic": "基本功", "weapon": "兵器", "fist": "拳脚",
+            "qinggong": "轻功", "neigong": "内功", "perform": "绝招", "art": "杂学",
+        },
+        "perform_effects": {
+            "damage": "伤害", "control": "控住", "defend": "守势",
+            "evade": "身法", "heal": "疗伤", "buff": "涨己",
+        },
+        "combat_labels": {
+            "hit": "命中", "dodge": "闪避", "parry": "招架", "damage": "伤害",
+            "defense": "防御", "speed": "先手", "crit": "暴击", "take_pct": "减伤",
+        },
     }

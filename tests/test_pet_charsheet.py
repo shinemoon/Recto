@@ -117,21 +117,24 @@ ok(cs.skill_cap(0, 30) == 1, "修为 0 → 上限 1")
 
 # 内力上限 = 最高内功等级 × 10 + 根骨 × 2
 ch = cs.new_char()
-ch["skills"] = {"jingzuo": 20}
+ch["skills"] = {"guanhai": 20}
 d = cs.derive(ch)
 ok(d["neigong_level"] == 20, "最高内功等级 = 20")
 ok(d["neili_max"] == 20 * 10 + 10 * 2, f"内力上限 = 内功×10 + 根骨×2 got {d['neili_max']}")
-ch["skills"] = {"jingzuo": 20, "tuna": 30}
+ch["skills"] = {"guanhai": 20, "woyungong": 30}
 ok(cs.derive(ch)["neigong_level"] == 30, "取最高的内功等级")
 
 # 绝招成功率 = 基础 + 根骨 + 等级×2, 封顶 95
 sk = cs.SKILL_BY_ID["yizhenjianxue"]
 ch = cs.new_char()
 rate = cs.perform_rate(ch, sk, 1)
-ok(rate == 60 + 10 + 2, f"绝招成功率 = 基础+根骨+等级×2 got {rate}")
-ch["attrs"]["wu"] = 30
+ok(rate == int(sk["rate"]) + 10 + 2,
+   f"绝招成功率 = 基础+根骨+等级×2 got {rate}")
+sk_lo = cs.SKILL_BY_ID["lipihuashan"]        # 基础成功率最低的一招, 不会被 95 顶掉
+ch["attrs"][sk_lo["attr"]] = 30              # 它看的是臂力
 ch["vein"] = 7
-ok(cs.perform_rate(ch, sk, 1) == 60 + 30 + 2 + 3, "第 7 层经脉 → 成功率 +3")
+ok(cs.perform_rate(ch, sk_lo, 1) == int(sk_lo["rate"]) + 30 + 2 + 3,
+   "第 7 层经脉 → 成功率 +3")
 ok(cs.perform_rate(ch, sk, 99) == 95, "成功率封顶 95%")
 
 # ── 门派加成的进出 (派生值, 不叠) ─────────────────────
@@ -202,22 +205,22 @@ ok(code == 400, "未知门派 → 400")
 
 # ── 性情 ───────────────────────────────────────────────
 ch = cs.new_char()
-code, r = cs.grant_trait(ch, "guowubuwang")
+code, r = cs.grant_trait(ch, "gugqingqi")
 ok(code == 200 and r["char"]["traits_info"]["spent"] == 40, "上品 40 分")
-code, r = cs.grant_trait(ch, "tiaoshi")
+code, r = cs.grant_trait(ch, "dandaxixin")
 ok(code == 200 and r["char"]["traits_info"]["spent"] == 50, "下品 10 分")
-ch["traits"] = ["guowubuwang", "yuchujingren", "butubukuai", "yanjianyihe"]
-ch["traits"] = ["guowubuwang"] * 6
+ch["traits"] = ["gugqingqi", "tianshengshenli", "tieguqingpi", "xinruzhishui"]
+ch["traits"] = ["gugqingqi"] * 6
 info = cs.traits_info(ch)
 ok(info["left_count"] == 0, "最多 6 条")
 ch2 = cs.new_char()
-ch2["traits"] = ["guowubuwang", "yuchujingren", "butubukuai"]   # 40+30+30 = 100 分
-code, r = cs.grant_trait(ch2, "guowubuwang")
+ch2["traits"] = ["gugqingqi", "tianshengshenli", "tieguqingpi"]   # 40+30+30 = 100 分
+code, r = cs.grant_trait(ch2, "gugqingqi")
 ok(code == 200, "重复觉醒同一条 → 幂等 200")
-code, r = cs.grant_trait(ch2, "tiaoshi")
+code, r = cs.grant_trait(ch2, "dandaxixin")
 ok(code == 400 and "总分" in r.get("error", ""), "总分已满 100 → 拒绝觉醒")
 ch3 = cs.new_char()
-code, r = cs.grant_trait(ch3, "tiaoshi")
+code, r = cs.grant_trait(ch3, "dandaxixin")
 ok(code == 200 and r["char"]["traits_info"]["spent"] == 10, "还有额度 → 觉醒成功")
 
 # ── 存档 ───────────────────────────────────────────────
@@ -281,9 +284,9 @@ st, raw, _ = req("/pet/api/char/school", "POST", {"school": "jingxin"}, COOKIE)
 d = json.loads(raw)
 ok(st == 200 and d["char"]["school"]["id"] == "jingxin", "POST /pet/api/char/school 200")
 
-st, raw, _ = req("/pet/api/char/trait", "POST", {"trait": "jianweizhizhu"}, COOKIE)
+st, raw, _ = req("/pet/api/char/trait", "POST", {"trait": "yanjishoukuai"}, COOKIE)
 d = json.loads(raw)
-ok(st == 200 and "jianweizhizhu" in d["char"]["traits_info"]["owned"], "POST /pet/api/char/trait 200")
+ok(st == 200 and "yanjishoukuai" in d["char"]["traits_info"]["owned"], "POST /pet/api/char/trait 200")
 st, raw, _ = req("/pet/api/char/trait", "POST", {"trait": "不存在"}, COOKIE)
 ok(st == 400, "未知性情 → 400")
 
