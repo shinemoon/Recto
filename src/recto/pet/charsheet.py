@@ -598,7 +598,7 @@ def _neigong_level(ch: dict[str, Any]) -> int:
 # 交手时算"主修"的几类技能 (兵器 / 拳脚)。轻功与内功单独加成。
 COMBAT_TYPES = ("weapon", "fist")
 
-#: 一回合 (故事内一天) 打坐能回的气血 / 内力比例 —— 上限封在 100%
+#: 一回合 (约十来个故事日) 打坐能回的气血 / 内力比例 —— 上限封在 100%
 REST_HP_PCT = 0.18
 REST_NEILI_PCT = 0.45
 

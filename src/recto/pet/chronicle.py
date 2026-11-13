@@ -49,8 +49,9 @@ DEFAULT_CFG: dict[str, Any] = {
     "search": True,             # 建卡时是否联网检索
     "keep_adventures": 200,     # 游历保留条数
     "max_exp_per_minute": 6,    # 修为上限 = 分钟 × 这个系数 (兜底)
-    "max_exp_per_day": 320,     # 修为上限 = 故事内天数 × 这个数 (一回合的主口径)
-    "days_per_adventure": 1,    # 攒够几个故事内天才走一趟 (一小时阅读 = 一天)
+    "max_exp_per_day": 32,      # 修为上限 = 故事内天数 × 这个数 (一回合的主口径)
+                                # 32/天 ÷ 10 天每小时 ≈ 原来 320/天 的现实节奏
+    "days_per_adventure": 10,   # 攒够几个故事内天才走一趟 (十天 ≈ 一小时阅读)
 }
 
 STATE_NAME = "chronicle.json"
@@ -547,7 +548,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     minutes = int(ev["total_minutes"] or 0)
     has_terms = bool(ev["encounters"].get("terms"))
 
-    # 时序: 这一回合攒够了几个"故事内的一天" (一小时阅读 = 一天)
+    # 时序: 这一回合攒够了几个"故事内的一天" (一小时阅读 = 十天)
     ch = cs.load_char()
     # 故事时钟由"累计陪读分钟"除出来 —— 而分钟归陪读心跳记账。推演自己也可能
     # 先跑 (心跳还没折算过), 所以这里补一次幂等折算 (只记分钟, 不给修为),
@@ -585,14 +586,14 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                 "window": ev["window"], "days": ev["days"],
                 "reading": len(ev["reading"])}
 
-    # 故事节奏闸门: 一天一天走。不足一天就连故事都不写 —— 否则"读十分钟走一回"
-    # 会让故事世界比现实跑得还快, 80 岁退隐这件事永远等不到。
+    # 故事节奏闸门: 攒够 days_per_adventure 个故事日才走一趟。不足就连故事都不写 ——
+    # 否则"读两分钟走一回"会让故事世界比现实跑得还快。
     need_days = max(1, int(c.get("days_per_adventure") or 1))
     if not force and ev["days"] < need_days:
         st["last_check_at"] = clock.fmt_sec(now, "%Y-%m-%dT%H:%M:%S")
         st["next_at"] = clock.fmt_sec(now + int(c["interval_min"]) * 60,
                                       "%Y-%m-%dT%H:%M:%S")
-        st["waiting_note"] = (f"还差 {life.minutes_to_next_day(ch)} 分钟到下一日")
+        st["waiting_note"] = (f"还差 {life.minutes_to_next_day(ch)} 分钟再走一天")
         save_state(st)
         if anchor_moved:
             cs.save_char(ch)
@@ -739,8 +740,10 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
             heir = story.get("heir") or life.propose_default(ch)
             life.mark_retired(ch, heir=heir, story_no=adv_no, title=story["title"])
     # 打完这一场, 回去上药歇半日 —— 气血内力回一截 (受伤的痕迹仍写着)
+    # 按**这一回合现实读了多久**折算: 一小时阅读 ≈ 一天份的打坐 (回 18%)。
+    # 别用故事日 —— 时间流速一改就会放大十倍, 打完立刻满血, 遭遇的代价就没了。
     try:
-        cs.restore(ch, 0.5 + 0.5 * int(ev.get("days") or 0))
+        cs.restore(ch, 0.5 + 0.5 * (float(ev.get("total_minutes") or 0) / 60.0))
     except Exception as e:  # noqa: BLE001
         log.warning("推演 · 调息失败: %s", e)
 

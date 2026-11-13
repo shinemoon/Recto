@@ -108,16 +108,16 @@ g.award_minutes(ch3, 300)   # 累计 630 → 第三层 (540)
 ok(ch3["vein"] == 3, f"630 分钟 → 通 3 层 got {ch3['vein']}")
 
 # ── 技能限速: 每 SKILL_DAYS_PER_LEVEL 个故事日 += 1 ─────────
-ok(g.SKILL_DAYS_PER_LEVEL == 8, "技能 8 个故事日一级")
+ok(g.SKILL_DAYS_PER_LEVEL == 80, "技能 80 个故事日一级 (现实约 8 小时)")
 cg = cs.new_char()
-cg["minutes"] = 60 * 3            # 故事内第 3 天
+cg["minutes"] = 6 * 3             # 故事内第 3 天 (6 分钟一天)
 aw_g1 = g.award_judged(cg, {"exp": 100, "skills": {"jibenneigong": 1}}, max_exp=200)
 ok(not aw_g1["skills"], f"第 3 天不该长技能 got {aw_g1['skills']}")
 ok(aw_g1["skill_gate"]["blocked"] is True, "闸门关着")
-cg["minutes"] = 60 * 9            # 第 9 天
+cg["minutes"] = 6 * 90            # 第 90 天 (闸门 80 天)
 aw_g2 = g.award_judged(cg, {"exp": 100, "skills": {"jibenneigong": 1}}, max_exp=200)
-ok(aw_g2["skills"] == {"jibenneigong": 1}, f"第 9 天长一级 got {aw_g2['skills']}")
-ok(int(cg["last_skill_day"]) == 9, "记住这次长技能的故事日")
+ok(aw_g2["skills"] == {"jibenneigong": 1}, f"第 90 天长一级 got {aw_g2['skills']}")
+ok(int(cg["last_skill_day"]) == 90, "记住这次长技能的故事日")
 aw_g3 = g.award_judged(cg, {"exp": 100, "skills": {"jibenneigong": 1}}, max_exp=200)
 ok(not aw_g3["skills"], "同一天内不会连涨")
 

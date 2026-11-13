@@ -43,12 +43,14 @@ FAME_PER_LEVEL = 5
 #: 选「基本内功」而不是某路兵器: 坐着读书长的是内力底子, 不是剑法 ——
 #: 兵刃与绝招要靠真出门、真交手, 由判定那一步给 (见 chronicle.md)。
 AUTO_SKILL = "jibenneigong"
-#: AUTO_SKILL 每多少分钟长 1 级。
-#: 一小时阅读 = 故事内一天 ⇒ 300 分钟 = 五天一级 —— 慢到"翻半个月书才长一层"。
+#: AUTO_SKILL 每多少分钟长 1 级 (现实分钟, 与故事日无关)。
+#: 300 分钟 = 五小时一级 —— 慢到"翻好几天书才长一层"。
 AUTO_SKILL_MINUTES_PER_LEVEL = 300
 #: 判定口径的技能限速: 每 N 个**故事内**天, 最多由判定长 1 级
 #: (自动「读书悟道」不占这条, 它自己按 300 分钟一级走)
-SKILL_DAYS_PER_LEVEL = 8
+#: 80 个故事日 ÷ 10 (天/小时) ≈ 8 小时阅读一级 —— 2026-11-13 时间流速
+#: ×10 时按现实口径折算过, 不是随手放大。
+SKILL_DAYS_PER_LEVEL = 80
 
 #: 先天属性: 每升 N 级 +1。
 #: 为什么要有这一条: 光靠潜能点, 属性永远不动 —— 故事里也就写不出"人变了"。
@@ -70,7 +72,7 @@ GROWTH_RULES: dict[str, Any] = {
     "max_minutes_per_call": MAX_MINUTES_PER_CALL,
     "one_way": True,
     "time": {
-        "minutes_per_story_day": None,   # 由 pet.life 填 (60 分钟 = 故事内一天)
+        "minutes_per_story_day": None,   # 由 pet.life 填 (默认 6 分钟 = 故事内一天)
         "start_age": None,               # 12 岁出江湖
         "retire_age": None,              # 80 岁退隐 → 等读者确认传承
     },
@@ -310,7 +312,7 @@ MAX_EXP_PER_CYCLE = 3000
 MAX_POT_PER_CYCLE = 3
 MAX_FAME_PER_CYCLE = 20
 #: 一回合最多长几门功夫 (每次每门 +1 级)
-#: 一回合 (≈ 一小时阅读 ≈ 故事内一天) 只许长一门 —— 慢成长的关键闸门之一
+#: 一回合 (≈ 一小时阅读 ≈ 故事内十天) 只许长一门 —— 慢成长的关键闸门之一
 MAX_SKILLS_PER_CYCLE = 1
 
 
@@ -363,7 +365,7 @@ def award_judged(ch: dict[str, Any], j: dict[str, Any], *,
     ch["morality"] = max(-100, min(100, before["morality"] + add_mor))
 
     # 技能 (最多 MAX_SKILLS_PER_CYCLE 门, 每门 +1) —— 且受"每 N 个故事日一级"限速。
-    # 限速为什么必要: 一回合 ≈ 故事内一天, 没有这道闸门, 模型每回合都会挑一门给 +1,
+    # 限速为什么必要: 一回合 ≈ 故事内十天, 没有这道闸门, 模型每回合都会挑一门给 +1,
     # 一个月就把技能堆到上限 —— 招式等级一高, 故事里"长本事"这件事就不值钱了。
     gained: dict[str, int] = {}
     gate: dict[str, Any] = {}

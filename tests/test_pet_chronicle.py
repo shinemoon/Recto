@@ -185,9 +185,9 @@ ok(aw2["exp"] == 100 and aw2["clamped"]["exp"] is True, "超上限被夹且标�
 # 造一段陪读时长 (今天的 40 分钟) 与进度推进
 today = clock.fmt_sec(time.time(), "%Y-%m-%d")
 rc = rs.conn()
-# 70 分钟 = 故事内一天多一点 (一小时阅读 = 一天) —— 攒够一天才出门
+# 60 分钟 = 故事内十天 (一小时阅读 = 十天) —— 攒够一站 (默认 10 天) 才出门
 rc.execute("INSERT OR REPLACE INTO rtime (book, day, bitmap, minutes, first_at, updated_at)"
-           " VALUES (?,?,?,?,?,?)", (BOOK, today, "0", 70, clock.iso_local(),
+           " VALUES (?,?,?,?,?,?)", (BOOK, today, "0", 60, clock.iso_local(),
                                      clock.iso_local()))
 rc.execute("INSERT OR REPLACE INTO rprogress (book, chapter, offset, percent, position,"
            " complete, updated_at, sid) VALUES (?,?,?,?,?,?,?,?)",
@@ -196,10 +196,10 @@ rc.commit()
 
 out = ch.run(trigger="manual")
 ok(out["status"] == "ok", f"回合成功 got {out.get('status')} {out.get('error', '')}")
-ok(out["minutes"] == 70, f"窗口内新增 70 分钟 got {out['minutes']}")
-ok(out["days"] == 1, f"故事内走过 1 天 got {out.get('days')}")
-ok(out["growth"]["exp"] == 320, f"修为按故事日夹到 320 got {out['growth']['exp']}")
-ok(out["life"]["day"] >= 1 and out["life"]["age"] == 12,
+ok(out["minutes"] == 60, f"窗口内新增 60 分钟 got {out['minutes']}")
+ok(out["days"] == 10, f"故事内走过 10 天 got {out.get('days')}")
+ok(out["growth"]["exp"] == 320, f"修为按故事日夹到 10×32=320 got {out['growth']['exp']}")
+ok(out["life"]["day"] >= 10 and out["life"]["age"] == 12,
    f"故事时钟前进了 got {out.get('life')}")
 ok(out["adventure"] and "青石巷" in out["adventure"]["title"], f"游历故事已写 got {out.get('adventure')}")
 advs = ch.adventures(limit=5)
@@ -212,14 +212,14 @@ ok(ch.load_state()["cycle"] == 1, "idle 不写 cycle 行")
 ok(len(ch.adventures(limit=9)) == 1, "idle 不产生新故事")
 
 
-# ── 6b. 故事节奏: 不足一天 → waiting (一小时阅读 = 一天) ─────────
+# ── 6b. 故事节奏: 攒不够一站 → waiting (一小时 = 十天) ─────────
 st_before = int(ch.load_state().get("story_day") or 0)
 rc = rs.conn()
-rc.execute("UPDATE rtime SET minutes=90 WHERE book=? AND day=?", (BOOK, today))
+rc.execute("UPDATE rtime SET minutes=64 WHERE book=? AND day=?", (BOOK, today))
 rc.commit()
 w = ch.run(trigger="manual")
 ok(w["status"] == "waiting",
-   f"才读 20 分钟 (不足一天) → 不出门 got {w.get('status')}")
+   f"才多读 4 分钟 (不足一站) → 不出门 got {w.get('status')}")
 ok(w.get("minutes_to_next_day", 0) > 0, "告诉人还差多少分钟到下一日")
 ok(int(ch.load_state().get("story_day") or 0) == st_before, "故事日没有虚涨")
 
@@ -230,9 +230,9 @@ def broken_chat(system, user, **kw):
 
 
 lore.chat = broken_chat
-# 造新的阅读时长 (再加 60 分钟 = 又一天) 让回合有活动
+# 造新的阅读时长 (再加 59 分钟 = 又够一站) 让回合有活动
 rc = rs.conn()
-rc.execute("UPDATE rtime SET minutes=130 WHERE book=? AND day=?", (BOOK, today))
+rc.execute("UPDATE rtime SET minutes=120 WHERE book=? AND day=?", (BOOK, today))
 rc.commit()
 out2 = ch.run(trigger="manual")
 ok(out2["status"] == "ok" and out2["fallback"] is True, "模型不可用时走保底")
@@ -244,7 +244,7 @@ lore.chat = fake_chat
 
 # ── 8. dry: 只看不落地 ───────────────────────────────
 rc = rs.conn()
-rc.execute("UPDATE rtime SET minutes=190 WHERE book=? AND day=?", (BOOK, today))
+rc.execute("UPDATE rtime SET minutes=180 WHERE book=? AND day=?", (BOOK, today))
 rc.commit()
 before = cs.load_char()
 d = ch.run(trigger="manual", dry=True)

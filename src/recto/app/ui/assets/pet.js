@@ -823,7 +823,7 @@ function renderChronicle(v) {
     }
     if (st.waiting_note) bits.push(st.waiting_note);
     bits.push('已走 ' + (st.adventure_no || 0) + ' 回');
-    bits.push('一小时阅读 = 一天');
+    bits.push('一小时阅读 = 十天');
     metaBox.innerHTML = bits.map(function (x) {
       return '<span class="story-bit">' + esc(String(x)) + '</span>';
     }).join('');
@@ -965,7 +965,7 @@ function renderRunResult(r) {
   if (r.status === 'waiting') {
     const n = windowNote(r);
     box.innerHTML = '<div class="adv-run">还不到下一日 —— 再读 ' +
-      (r.minutes_to_next_day || 0) + ' 分钟 (一小时 = 故事里一天)。' +
+      (r.minutes_to_next_day || 0) + ' 分钟 (一小时 = 故事里十天)。' +
       (n ? '<div class="adv-run-line">' + esc(n) + '</div>' : '') + '</div>';
     return;
   }

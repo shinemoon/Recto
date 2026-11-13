@@ -3,7 +3,7 @@
 跑法: cd <仓库根> && python3 tests/test_pet_life.py
 
 验的事:
-  * 一小时阅读 = 故事内一天; 年岁是除出来的, 不是另记的数
+  * 每 60 分钟阅读 = 故事内 10 天; 年岁是除出来的, 不是另记的数
   * 到八十岁 → 这一回合写的是"退隐 + 传承", 之后停在 retiring 不再长大
   * 传承必须读者点头 (confirm), 且只在退隐/到岁数后允许
   * 新人从 12 岁起: 家学三成 / 门派按类型 / 上一代存档留档 / lineage 记账
@@ -61,32 +61,32 @@ def near(a, b, eps=1e-6):
     return abs(float(a) - float(b)) <= eps
 
 
-# ── 1. 时序换算: 一小时 = 一天 ────────────────────────────
+# ── 1. 时序换算: 一小时 = 十天 (6 分钟一天) ───────────────
 ch0 = cs.new_char()
 v0 = life.view(ch0)
 ok(v0["day"] == 0 and v0["day_no"] == 1, f"刚出门 → 第 1 日 got {v0['day_no']}")
 ok(v0["age"] == 12 and v0["stage"] == "growing", f"12 岁 growing got {v0}")
-ok(v0["minutes_to_next_day"] == 60, f"还差 60 分钟到第一日 got {v0['minutes_to_next_day']}")
+ok(v0["minutes_to_next_day"] == 6, f"还差 6 分钟到第一日 got {v0['minutes_to_next_day']}")
 ok(v0["days_to_retire"] == (80 - 12) * 365, f"距退隐 68 年 got {v0['days_to_retire']}")
 
-ch0["minutes"] = 60
-ok(life.story_day(ch0) == 1, "60 分钟 → 故事内第 1 天")
+ch0["minutes"] = 6
+ok(life.story_day(ch0) == 1, "6 分钟 → 故事内第 1 天")
 ok(life.age_label(ch0).startswith("12 岁"), f"还是一天, 不到一岁 got {life.age_label(ch0)}")
-ch0["minutes"] = 60 * 365
+ch0["minutes"] = 6 * 365          # 一小时 = 十天 ⇒ 一年 365 天 = 36.5 小时
 ok(life.age_years(ch0) == 13, f"一年 365 天 → 13 岁 got {life.age_years(ch0)}")
-ok(life.story_day(ch0) == 365 and life.minutes_to_next_day(ch0) == 60,
-   "刚好整日时下一日还差整一小时的量")
+ok(life.story_day(ch0) == 365 and life.minutes_to_next_day(ch0) == 6,
+   "刚好整日时下一日还差一天的量 (6 分钟)")
 
 # 配置可调 (测试实例用 30 分钟一天)
 os.environ["RECTO_PET_MINUTES_PER_DAY"] = "30"
 ok(life.cfg()["minutes_per_day"] == 30, "环境变量可调一天的长度")
 ok(life.story_day({"minutes": 60}) == 2, "30 分钟一天 → 60 分钟两天")
 os.environ.pop("RECTO_PET_MINUTES_PER_DAY", None)
-ok(life.cfg()["minutes_per_day"] == 60, "去掉环境变量回到 60")
+ok(life.cfg()["minutes_per_day"] == 6, "去掉环境变量回到 6 (一小时 = 十天)")
 
 # ── 2. 退隐判定 ──────────────────────────────────────
 ch1 = cs.new_char()
-ch1["minutes"] = (life.cfg()["retire_age"] - 12) * 365 * 60 - 1
+ch1["minutes"] = (life.cfg()["retire_age"] - 12) * 365 * life.cfg()["minutes_per_day"] - 1
 ok(life.age_years(ch1) == 79 and not life.ready_to_retire(ch1), "少一分钟还在 79 岁")
 ch1["minutes"] += 1
 ok(life.age_years(ch1) == 80 and life.ready_to_retire(ch1), "满八十 → 该退隐了")
@@ -103,7 +103,7 @@ old["school"] = "moshi"
 old["skills"] = {"jianfa": 20, "daofa": 9}
 old["fame"] = 200
 old["morality"] = 40
-old["minutes"] = (80 - 12) * 365 * 60
+old["minutes"] = (80 - 12) * 365 * life.cfg()["minutes_per_day"]
 old["life"] = {"stage": "retiring", "heir": {"type": "disciple", "name": "小砚",
                                              "reason": "门里最小那个一直跟着"}}
 res = life.inherit(old, "disciple")
@@ -165,7 +165,7 @@ def legacy_chat(system, user, **kw):
 
 lore.chat = legacy_chat
 elder = cs.new_char("小墨")
-elder["minutes"] = (80 - 12) * 365 * 60
+elder["minutes"] = (80 - 12) * 365 * life.cfg()["minutes_per_day"]
 elder["credited_minutes"] = elder["minutes"]   # 存档里两个锚点必须一致
 elder["life"] = {"stage": "growing"}
 cs.save_char(elder)
@@ -263,10 +263,10 @@ ok(html.count("<div") == html.count("</div>"), "div 标签配对")
 js = _petapp._UI_DIR.joinpath("pet.js").read_text("utf-8")
 ok("renderLife" in js and "/api/char/inherit" in js, "前端接了传承")
 ok("本回所显" in js, "故事卡展示成长的痕迹")
-ok("一小时阅读" in html, "页面写明节奏 (一小时 = 一天)")
+ok("一小时阅读" in html and "十天" in html, "页面写明节奏 (一小时 = 十天)")
 
 rules = __import__("recto.pet.growth", fromlist=["rules"]).rules()
-ok(rules["time"]["minutes_per_story_day"] == 60 and rules["time"]["retire_age"] == 80,
+ok(rules["time"]["minutes_per_story_day"] == 6 and rules["time"]["retire_age"] == 80,
    f"schema 里带时序口径 got {rules['time']}")
 ok(rules["skill_days_per_level"] >= 5, f"技能限速写进规则 got {rules['skill_days_per_level']}")
 
