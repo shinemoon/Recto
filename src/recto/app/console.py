@@ -472,6 +472,14 @@ class Handler(BaseHTTPRequestHandler):
 
             self._json(200, {"files": cb.local_files(), "dl_dir": cb.dl_dir()})
             return
+        if path == "/api/cloud/ident":
+            from recto.services import cloudlink
+
+            try:
+                self._json(200, cloudlink.summary(refresh=True))
+            except Exception as e:  # noqa: BLE001 — 云端不可达不该让面板 500
+                self._json(502, {"error": f"{type(e).__name__}: {e}"})
+            return
         if path == "/api/cloud/jobs":
             from recto.services import acquisition as cb
 
@@ -518,6 +526,25 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 self._json(200, cb.delete_cloud(list(body.get("keys") or [])))
+            except Exception as e:  # noqa: BLE001
+                self._json(400, {"ok": False, "error": f"{type(e).__name__}: {e}"})
+            return
+        if path == "/api/cloud/ident/attach":
+            from recto.services import cloudlink
+
+            try:
+                if body.get("all"):
+                    self._json(200, cloudlink.attach_all())
+                else:
+                    self._json(200, cloudlink.attach(str(body.get("key") or "")))
+            except Exception as e:  # noqa: BLE001
+                self._json(400, {"ok": False, "error": f"{type(e).__name__}: {e}"})
+            return
+        if path == "/api/cloud/ident/detach":
+            from recto.services import cloudlink
+
+            try:
+                self._json(200, cloudlink.detach(str(body.get("key") or "")))
             except Exception as e:  # noqa: BLE001
                 self._json(400, {"ok": False, "error": f"{type(e).__name__}: {e}"})
             return
@@ -883,6 +910,63 @@ async function loadCloud(refresh) {
   });
 }
 
+// ---- 本地书 · 云端同步 -----------------------------------------------------
+// 没进云书架的书, 掌阅 App 是按「文件内容指纹」记账的 —— 补上那份身份就能互通。
+async function loadIdent(refresh) {
+  const s = await api("/api/cloud/ident");
+  const body = $("ident-body");
+  if (!body) return;
+  if (s.error) {
+    setPill("ident-pill", "读取失败", false);
+    body.innerHTML = `<tr><td colspan="5" class="empty">${esc(s.error)}</td></tr>`;
+    return;
+  }
+  const rows = s.items || [];
+  const up = s.upload || {};
+  setPill("ident-pill", (s.attached || 0) + " / " + (s.total || 0) + " 已接入", (s.attached || 0) > 0);
+  const note = $("ident-note");
+  if (note) {
+    note.innerHTML = "掌阅 App 对本地导入的书按「文件内容指纹(MD5)」记账。接入后进度、划线、批注、时长双向同步"
+      + " —— 前提是手机上打开的是<strong>同一份文件</strong>。"
+      + (up.available ? "" : `<br><span class="pill err">上传文件不可用</span> ${esc(up.reason || "")}；${esc(up.hint || "")}`);
+  }
+  const allBtn = $("ident-all");
+  if (allBtn) allBtn.hidden = !(s.total - s.attached);
+  body.innerHTML = rows.length ? rows.map((r) => `<tr>
+      <td class="cell-book">${esc(r.title)}<div class="meta">${esc(r.author || "")}</div></td>
+      <td class="nowrap"><code>${esc((r.md5 || "").slice(0, 12))}…</code>
+        ${r.in_shelf ? '<span class="pill ok">云书架有</span>' : ""}</td>
+      <td class="num nowrap">${(r.pct * 100).toFixed(1)}%</td>
+      <td class="nowrap">${r.attached ? '<span class="pill ok">已接入</span>' : '<span class="pill">未接入</span>'}</td>
+      <td class="nowrap"><button class="small" data-ident="${r.attached ? "detach" : "attach"}"
+        data-key="${esc(r.key)}">${r.attached ? "取消接入" : "接入同步"}</button></td>
+    </tr>`).join("") : `<tr><td colspan="5" class="empty">书库里没有本地书</td></tr>`;
+}
+
+async function identAct(key, action) {
+  const path = action === "attach" ? "/api/cloud/ident/attach" : "/api/cloud/ident/detach";
+  const r = await api(path, {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({key})});
+  if (!r.ok) { toast("操作失败：" + (r.error || "未知错误"), true); return; }
+  if (action === "detach") { toast("已取消接入"); }
+  else {
+    const pull = r.pull || {};
+    const moved = pull && pull.state && pull.state.cloud_pct;
+    toast(moved != null ? `已接入 · 云端 ${(moved * 100).toFixed(1)}%`
+      : (r.in_shelf ? "已接入（云书架有同一份文件）" : "已接入 · 等手机上打开同一份文件后开始互通"));
+    loadState();
+  }
+  await loadIdent(true);
+}
+
+async function identAll() {
+  const r = await api("/api/cloud/ident/attach", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify({all: true})});
+  if (!r.ok) { toast("接入失败：" + (r.error || "未知错误"), true); return; }
+  toast("已接入 " + (r.attached || 0) + " 本" + ((r.failed || []).length ? "，" + r.failed.length + " 本失败" : ""));
+  loadState(); await loadIdent(true);
+}
+
 async function pollJob(jid) {
   if (!jid) return;
   for (let i = 0; i < 600; i++) {
@@ -1246,6 +1330,13 @@ document.addEventListener("click", (e) => {
   else if (id === "log-refresh") loadLog();
   else if (id === "link-refresh") probeCloud();
   else if (id === "cloud-refresh") loadCloud(true);
+  else if (id === "ident-refresh") loadIdent(true);
+  else if (id === "ident-all") identAll();
+  const ib = e.target && e.target.closest ? e.target.closest("button[data-ident]") : null;
+  if (ib && !ib.disabled) {
+    ib.disabled = true;
+    identAct(ib.dataset.key, ib.dataset.ident).finally(() => { ib.disabled = false; });
+  }
 });
 // 用 document 委托, 不依赖"脚本执行时元素已在 DOM 里" (defer 顺序靠不住)
 document.addEventListener("input", (e) => {
@@ -1282,7 +1373,7 @@ document.addEventListener("click", async (e) => {
 });
 setShelfSort(SORT, false);
 document.addEventListener("DOMContentLoaded", () => setShelfSort(SORT, false));
-loadState(); loadCloud(); loadAuth(); loadLog();
+loadState(); loadCloud(); loadIdent(); loadAuth(); loadLog();
 """
 
 
@@ -1385,6 +1476,20 @@ def _page_html(user: str | None) -> str:
       <div class="table-wrap"><table class="bordered">
         <thead><tr><th>书名</th><th class="num">大小</th><th>状态</th><th></th></tr></thead>
         <tbody id="cloud-body"><tr><td colspan="4" class="empty">加载中…</td></tr></tbody>
+      </table></div>
+    </div>
+  </details>
+
+  <details class="sec" id="sec-ident">
+    <summary>本地书籍 · 云端同步 <span class="pill" id="ident-pill">…</span></summary>
+    <div class="sec-body">
+      <p class="meta" id="ident-note">加载中…</p>
+      <div class="row"><button id="ident-refresh" class="ghost">刷新</button>
+        <button id="ident-all" class="ghost" hidden>全部接入</button></div>
+      <div class="table-wrap"><table class="bordered">
+        <thead><tr><th>书名</th><th>云端指纹</th><th class="num">本地</th>
+          <th>状态</th><th></th></tr></thead>
+        <tbody id="ident-body"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
       </table></div>
     </div>
   </details>
