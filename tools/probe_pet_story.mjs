@@ -36,18 +36,21 @@ await page.waitForTimeout(900);
 // ── 1. 故事置顶 ───────────────────────────────────
 const ids = await page.$$eval('.rc-pet .card', (cs) => cs.map((c) => c.id));
 ok(ids[0] === 'card-chronicle', `第一张卡是故事 (${ids[0]})`);
-ok(ids.indexOf('card-hero') === 1, `人物第二 (${ids.indexOf('card-hero')})`);
+// 传承卡平时 hidden, 但它一直在 DOM 里 —— 数"看得见的第二张"才对
+const visIds = await page.$$eval('.rc-pet .card',
+  (cs) => cs.filter((c) => !c.hidden).map((c) => c.id));
+ok(visIds.indexOf('card-hero') === 1, `人物第二 (${visIds.indexOf('card-hero')})`);
 ok(ids.includes('card-legacy'), '页面里有传承卡');
 
 const title = await page.$eval('#card-chronicle h2', (e) => e.textContent.trim());
-ok(title.includes('故事'), `故事卡标题: ${title}`);
+ok(/故事|走的路/.test(title), `故事卡标题: ${title}`);
 
 // ── 2. 故事时钟 + 故事概览 ─────────────────────────
 const clock = await page.$eval('#story-clock', (e) => e.textContent.trim());
 ok(/岁/.test(clock), `故事时钟显示年岁: ${clock}`);
 const meta = await page.$eval('#story-meta', (e) => e.textContent.trim());
 ok(meta.includes('故事里第'), `故事概览有"故事里第 N 日": ${meta.slice(0, 40)}`);
-ok(meta.includes('一小时阅读'), '概览写明节奏');
+ok(meta.includes('六分钟阅读'), '概览写明节奏');
 
 // 最新一回 (若已有故事, 要能看到"本回所显")
 const adv = await page.$('#adventure-latest .adv-card');
@@ -68,7 +71,9 @@ if (adv) {
   ok(true, '还没有故事 — 跳过字号');
 }
 
-// ── 3. 技能折叠 ───────────────────────────────────
+// ── 3. 技能折叠 (在「人物」分区里, 先切过去 —— 分区没切时整块 display:none) ──
+await page.click('.pg-tab[data-pg="hero"]');
+await page.waitForTimeout(220);
 const fold = await page.$('#card-skills .cs-fold');
 ok(!!fold, '技能表在折叠块里');
 const openAttr = fold ? await fold.getAttribute('open') : 'n/a';
@@ -80,7 +85,7 @@ ok(/共 \d+ 项/.test(sum), `摘要含项数: ${sum}`);
 const box = await page.$eval('#card-skills .cs-fold', (d) => ({
   open: d.open,
   self: d.getBoundingClientRect().height,
-  inner: d.querySelector('.models-wrap').getBoundingClientRect().height,
+  inner: (d.querySelector('.cs-fold-body') || d.lastElementChild || d).scrollHeight,
 }));
 ok(!box.open && box.self < box.inner - 20,
   `折叠时内容被裁掉 (${Math.round(box.self)} < ${Math.round(box.inner)})`);
@@ -89,6 +94,8 @@ await page.waitForTimeout(120);
 const box2 = await page.$eval('#card-skills .cs-fold', (d) => d.getBoundingClientRect().height);
 ok(box2 > box.self + 20, `点开后展开 (${Math.round(box.self)} → ${Math.round(box2)})`);
 await page.$eval('#card-skills .cs-fold', (d) => { d.open = false; });
+await page.click('.pg-tab[data-pg="story"]');
+await page.waitForTimeout(160);
 
 // ── 4. 传承卡: 平时隐藏 ────────────────────────────
 const legacyHidden = await page.$eval('#card-legacy', (e) => e.hidden);

@@ -26,6 +26,7 @@ from typing import Any
 
 from recto.pet import charsheet as cs
 from recto.pet import d20 as D
+from recto.pet import flavor as F
 
 #: 最多打几拍 (再久就不是"遇上", 是决战了)
 MAX_ROUNDS = 12
@@ -39,12 +40,12 @@ RESULT_CN = {"win": "胜", "lose": "负", "draw": "平"}
 
 #: 没有语料时给对手起的名字 (江湖上最常见的那种人)
 FOE_POOL = [
-    {"name": "一个背刀的汉子", "garb": "短打", "why": "拦在路上要过路钱"},
-    {"name": "一个脸色发青的瘦子", "garb": "青布长衫", "why": "说你踩了他的脚"},
-    {"name": "一个腰间挂鞭的镖师", "garb": "皮甲", "why": "认错了人, 非要动手"},
-    {"name": "一个带斗笠的刀客", "garb": "斗笠压着半张脸", "why": "开口就要你的行囊"},
-    {"name": "一个酒气未散的汉子", "garb": "赤着半边膀子", "why": "被你碰翻了酒碗"},
-    {"name": "一个少年模样的剑客", "garb": "白衣白靴", "why": "要拿你试他的新招"},
+    {"name": "一个背刀的汉子", "garb": "短打", "why": "拦在路上要过路钱", "weapon": "daofa"},
+    {"name": "一个脸色发青的瘦子", "garb": "青布长衫", "why": "说你踩了他的脚", "weapon": "zhifa"},
+    {"name": "一个腰间挂鞭的镖师", "garb": "皮甲", "why": "认错了人, 非要动手", "weapon": "gunfa"},
+    {"name": "一个带斗笠的刀客", "garb": "斗笠压着半张脸", "why": "开口就要你的行囊", "weapon": "daofa"},
+    {"name": "一个酒气未散的汉子", "garb": "赤着半边膀子", "why": "被你碰翻了酒碗", "weapon": "quanfa"},
+    {"name": "一个少年模样的剑客", "garb": "白衣白靴", "why": "要拿你试他的新招", "weapon": "jianfa"},
 ]
 
 PLACE_POOL = ["荒村口", "石桥下", "渡口", "山神庙前", "林间小路", "集市尽头",
@@ -99,6 +100,7 @@ def make_foe(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
     things = [x for x in (w.get("things") or []) if str(x.get("name") or "")]
 
     # 语料里"人"这类多 → 这一趟更可能撞上人; 否则多半是路人甲
+    foe_weapon_hint = ""
     if persons and notables and rng.random() < 0.65:
         who = notables[rng.randrange(len(notables))]
         name = str(who.get("name"))
@@ -108,6 +110,8 @@ def make_foe(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
     else:
         pick = rng.choice(FOE_POOL)
         name, why = pick["name"], pick["why"]
+        # 名号里写着"刀客"的不能使拳 —— 文辞与兵刃得对得上
+        foe_weapon_hint = str(pick.get("weapon") or "")
     if regions and (places or rng.random() < 0.5):
         arena = str(regions[rng.randrange(len(regions))].get("name"))
     else:
@@ -121,8 +125,9 @@ def make_foe(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
     for k in attr:
         attr[k] = int(_clamp(attr[k], 5, 30))
 
-    foe_weapons = ["daofa", "jianfa", "quanfa", "gunfa", "zhangfa", "tuifa"]
-    weapon = rng.choice(foe_weapons)
+    foe_weapons = ["daofa", "jianfa", "quanfa", "gunfa", "zhangfa", "zhifa", "tuifa"]
+    weapon = (foe_weapon_hint if foe_weapon_hint in foe_weapons
+              else rng.choice(foe_weapons))
     skills = {
         weapon: max(1, lv),
         "jibenquanjiao": max(1, lv // 2),
@@ -230,6 +235,17 @@ def _atk_word(fight: dict[str, Any]) -> str:
     return ATK_WORD.get(str((fight.get("damage") or {}).get("weapon") or ""), "一下")
 
 
+def _weapon(fight: dict[str, Any]) -> str:
+    """这一位用的哪一路兵刃 —— 主修的 skill id (``jianfa``), 退而求其次用中文名。
+
+    文辞按它挑词, 所以"刀客不能使拳"这件事就落在这里。
+    """
+    main = fight.get("main") or {}
+    if main.get("id"):
+        return str(main["id"])
+    return str((fight.get("damage") or {}).get("weapon") or "")
+
+
 def _fighter(name: str, stats: dict[str, Any], *, hp: int, hp_max: int,
              neili: int, neili_max: int, pfms: list[dict[str, Any]],
              side: str) -> dict[str, Any]:
@@ -240,6 +256,7 @@ def _fighter(name: str, stats: dict[str, Any], *, hp: int, hp_max: int,
         "ac": int(stats["ac"]), "ac_parts": list(stats.get("ac_parts") or []),
         "attack": int(stats["attack"]), "attack_parts": list(stats.get("attack_parts") or []),
         "damage": dict(stats["damage"]),
+        "main": dict(stats.get("main") or {}),
         "pierce": int(stats.get("pierce") or 0),
         "init": dict(stats.get("init") or {"total": 0, "parts": []}),
         "saves": dict(stats.get("saves") or {}),
@@ -342,7 +359,7 @@ def _log(log: list[dict[str, Any]], rnd: int, side: str, kind: str, text: str, *
 
 
 def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
-          log: list[dict[str, Any]], rnd: int) -> None:
+          log: list[dict[str, Any]], rnd: int, voice: Any) -> None:
     """一次出手: 解定身 → 选招 → 运功 → 攻击检定 → 伤害/效果。就地改两人。"""
     side = str(atk["side"])
 
@@ -351,8 +368,9 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
         atk["stun"] -= 1
         save = _save_check(rng, atk, label="定身豁免", dc=12)
         _log(log, rnd, side, "stun",
-             (f"{atk['name']} 一时动弹不得 (豁免 {save['total']}/{save['dc']} "
-              f"{'脱身' if save['success'] else '仍被定住'})"),
+             (F.stunned(voice, who=atk["name"]) + " —— "
+              + (f"这一挣挣开了 (豁免 {save['total']}/{save['dc']})" if save["success"]
+                 else f"挣了一下没挣开 (豁免 {save['total']}/{save['dc']})")),
              atk=atk, dfd=dfd, rolls=[save])
         if save["success"]:
             atk["stun"] = 0
@@ -385,12 +403,14 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
                 back = 2 + int(pfm["fail"]) * (2 + int(atk["damage"]["flat"]) // 12)
                 atk["hp"] = max(0, atk["hp"] - back)
                 _log(log, rnd, side, "fail",
-                     f"{atk['name']} 一招「{move}」走偏, 内息倒冲, 自伤 {back}",
+                     (F.backfire(voice, who=atk["name"], move=move,
+                                 weapon=_weapon(atk)).rstrip("。")
+                      + f", 自伤 {back}。"),
                      atk=atk, dfd=dfd, move=move, self_dmg=back, effect=effect,
                      rolls=rolls)
                 return
             _log(log, rnd, side, "miss",
-                 f"{atk['name']} 运「{move}」没跟上内息, 花样散了, 只好照常递出一招",
+                 F.pfm_lost(voice, who=atk["name"], move=move),
                  atk=atk, dfd=dfd, move="", rolls=rolls)
             pfm = None
             move, effect = "", "damage"
@@ -402,23 +422,24 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
             heal = max(1, int(flat * 0.8))
             atk["hp"] = min(atk["hp_max"], atk["hp"] + heal)
             _log(log, rnd, side, "heal",
-                 f"{atk['name']} 用「{move}」调息, 回气 {heal}", atk=atk, dfd=dfd,
-                 move=move, effect=effect, rolls=rolls)
+                 F.effect(voice, who=atk["name"], move=move, kind="heal",
+                          amount=heal),
+                 atk=atk, dfd=dfd, move=move, effect=effect, rolls=rolls)
         elif effect == "defend":
             atk["guard"] = 0.30
             _log(log, rnd, side, "defend",
-                 f"{atk['name']} 摆出「{move}」, 稳住门户 (卸力三成)", atk=atk, dfd=dfd,
-                 move=move, effect=effect, rolls=rolls)
+                 F.effect(voice, who=atk["name"], move=move, kind="defend"),
+                 atk=atk, dfd=dfd, move=move, effect=effect, rolls=rolls)
         elif effect == "evade":
             atk["ac_buff"] = 3
             _log(log, rnd, side, "evade",
-                 f"{atk['name']} 依「{move}」游走, 身影散开 (护体 +3)", atk=atk, dfd=dfd,
-                 move=move, effect=effect, rolls=rolls)
+                 F.effect(voice, who=atk["name"], move=move, kind="evade"),
+                 atk=atk, dfd=dfd, move=move, effect=effect, rolls=rolls)
         else:
             atk["atk_buff"] = 2
             _log(log, rnd, side, "buff",
-                 f"{atk['name']} 运「{move}」通身, 下一拍更沉 (命中 +2)", atk=atk, dfd=dfd,
-                 move=move, effect=effect, rolls=rolls)
+                 F.effect(voice, who=atk["name"], move=move, kind="buff"),
+                 atk=atk, dfd=dfd, move=move, effect=effect, rolls=rolls)
         return
 
     extra = []
@@ -433,37 +454,36 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
             back = 1 + int(atk["damage"]["flat"]) // 12
             atk["hp"] = max(0, atk["hp"] - back)
             _log(log, rnd, side, "fail",
-                 f"{atk['name']} 力用过了, 招式散掉, 反伤 {back}",
+                 (F.fumble(voice, who=atk["name"], weapon=_weapon(atk),
+                           move=move).rstrip("。")
+                  + f", 反伤 {back}。"),
                  atk=atk, dfd=dfd, move=move, self_dmg=back, rolls=rolls)
             return
         _log(log, rnd, side, "miss",
-             (f"{atk['name']} 一招「{move}」出手, 被 {dfd['name']} 让开了" if move
-              else f"{atk['name']} {_atk_word(atk)}递过去, 被 {dfd['name']} 让开了"),
+             F.miss(voice, who=atk["name"], whom=dfd["name"],
+                    weapon=_weapon(atk), move=move),
              atk=atk, dfd=dfd, move=move, rolls=rolls)
         return
 
     hit = _damage_roll(rng, atk, dfd, bool(atk_check["crit"]))
     dfd["hp"] = max(0, dfd["hp"] - hit["taken"])
-    extra_txt = ""
-    if atk_check["crit"]:
-        extra_txt += ", 正中要害"
-    if hit["guard"]:
-        extra_txt += f", 被卸去 {int(hit['guard'] * 100)}%"
 
+    stunned = 0
+    note = ""
     if pfm and effect == "control":
         dc = 8 + D.skill_mod(pfm["level"]) + int(pfm["bonus"] // 2)
         save = _save_check(rng, dfd, label="定身豁免", dc=dc)
         rolls.append(save)
         if save["success"]:
-            extra_txt += ", 对方挣脱了"
+            note = "这一记本该定人, 劲到穴上却被他挣脱了"
         else:
             dfd["stun"] = max(dfd["stun"], int(pfm["busy"]))
-            extra_txt += f", 定住对方 {pfm['busy']} 拍"
+            stunned = int(pfm["busy"])
 
-    hit_txt = (f"{atk['name']} 用「{move}」命中 {dfd['name']}" if move
-               else f"{atk['name']} {_atk_word(atk)}打中 {dfd['name']}")
     _log(log, rnd, side, "hit",
-         f"{hit_txt}, 伤 {hit['taken']}{extra_txt}",
+         F.hit(voice, who=atk["name"], whom=dfd["name"], weapon=_weapon(atk),
+               move=move, crit=bool(atk_check["crit"]), dmg=hit["taken"],
+               guard=float(hit["guard"] or 0), stun=stunned, note=note),
          atk=atk, dfd=dfd, move=move, dmg=hit["taken"],
          effect=(effect if pfm else ""), rolls=rolls, dice=hit["dice"])
 
@@ -494,6 +514,7 @@ def resolve(ch: dict[str, Any], foe: dict[str, Any] | None = None, *,
     order = [me, him] if init_me["total"] >= init_him["total"] else [him, me]
 
     log: list[dict[str, Any]] = []
+    voice = F.new_voice(rng)      # 一场一张嘴: 同一句不连着说第二遍
     result = "draw"
     for rnd in range(1, MAX_ROUNDS + 1):
         if me["hp"] <= 0 or him["hp"] <= 0:
@@ -502,7 +523,7 @@ def resolve(ch: dict[str, Any], foe: dict[str, Any] | None = None, *,
             other = him if who is me else me
             if me["hp"] <= 0 or him["hp"] <= 0:
                 break
-            _turn(who, other, rng, log, rnd)
+            _turn(who, other, rng, log, rnd, voice)
 
         if me["hp"] <= 0 or him["hp"] <= 0:
             result = "lose" if me["hp"] <= 0 else "win"

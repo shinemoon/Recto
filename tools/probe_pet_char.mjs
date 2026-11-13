@@ -61,6 +61,9 @@ page.on('pageerror', (e) => pageErrors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error') pageErrors.push(m.text()); });
 
 await page.goto(`${URL}/pet/`, { waitUntil: 'domcontentloaded' });
+// 人物面板在「人物」分区里 (默认落在「故事」); 分区没切时整块 display:none, 等不到可见元素
+await page.waitForSelector('.pg-tab[data-pg="hero"]', { timeout: 15000 });
+await page.click('.pg-tab[data-pg="hero"]');
 await page.waitForSelector('#attr-rows tr', { timeout: 15000 });
 
 // ── 段落都在 ──────────────────────────────────────────
@@ -212,6 +215,8 @@ ok(overflowDesktop <= 0, `桌面无横向溢出 (${overflowDesktop}px)`);
 const mob = await ctx.newPage();
 await mob.setViewportSize({ width: 390, height: 780 });
 await mob.goto(`${URL}/pet/`, { waitUntil: 'domcontentloaded' });
+await mob.waitForSelector('.pg-tab[data-pg="hero"]', { timeout: 15000 });
+await mob.click('.pg-tab[data-pg="hero"]');
 await mob.waitForSelector('#attr-rows tr', { timeout: 15000 });
 const overflowMobile = await mob.evaluate(() =>
   document.documentElement.scrollWidth - document.documentElement.clientWidth);

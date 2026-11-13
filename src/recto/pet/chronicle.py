@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import zlib
@@ -49,12 +50,13 @@ DEFAULT_CFG: dict[str, Any] = {
     "search": True,             # 建卡时是否联网检索
     "keep_adventures": 200,     # 游历保留条数
     "max_exp_per_minute": 6,    # 修为上限 = 分钟 × 这个系数 (兜底)
-    "max_exp_per_day": 32,      # 修为上限 = 故事内天数 × 这个数 (一回合的主口径)
-                                # 32/天 ÷ 10 天每小时 ≈ 原来 320/天 的现实节奏
-    "days_per_adventure": 1,    # 攒够几个故事内天才走一趟 (一天 ≈ 6 分钟阅读)
-                                # 2026-11-13 从 10 收到 1: 十天才走一趟 = 读一小时才见一次变化,
-                                # 读者眼里就是"推演没动"。世界可以慢, 反馈不能慢。
-    "max_days_per_cycle": 30,   # 一回合最多走过几个故事日 (时钟对不上时的闸)
+    "max_exp_per_day": 3.2,     # 修为上限 = 故事内天数 × 这个数 (一回合的主口径)
+                                # 3.2/天 × 每天 10 天每小时 = 32/小时 ≈ 5.3/现实分钟
+                                # (2026-11-13 时间流速再 ×10 时按现实口径折算过)
+    "days_per_adventure": 10,   # 攒够几个故事内天才走一趟 (一天 ≈ 0.6 分钟阅读)
+                                # 10 天 ≈ 6 分钟阅读一次回执 —— 世界可以快, 反馈不能挤
+    "max_days_per_cycle": 300,  # 一回合最多走过几个故事日 (时钟对不上时的闸)
+                                # 300 天 ≈ 30 分钟阅读 —— 比一个推演间隔能攒下的多
 }
 
 STATE_NAME = "chronicle.json"
@@ -291,9 +293,9 @@ def clamp(j: dict[str, Any], ev: dict[str, Any]) -> dict[str, Any]:
     minutes = int(ev.get("total_minutes") or 0)
     days = int(ev.get("days") or 0)
     c = cfg()
-    per_day = int(c.get("max_exp_per_day") or 320)
+    per_day = float(c.get("max_exp_per_day") or 3.2)
     if days > 0:
-        cap = min(growth.MAX_EXP_PER_CYCLE, days * per_day)
+        cap = min(growth.MAX_EXP_PER_CYCLE, int(round(days * per_day)))
     else:
         cap = min(growth.MAX_EXP_PER_CYCLE, minutes * int(c.get("max_exp_per_minute") or 6))
     if minutes <= 0:
@@ -757,12 +759,16 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
         st["last_check_at"] = clock.fmt_sec(now, "%Y-%m-%dT%H:%M:%S")
         st["next_at"] = clock.fmt_sec(now + int(c["interval_min"]) * 60,
                                       "%Y-%m-%dT%H:%M:%S")
-        st["waiting_note"] = (f"还差 {life.minutes_to_next_day(ch)} 分钟再走一天")
+        short_days = max(1, need_days - int(ev["days"]))
+        short_min = max(1, int(math.ceil(
+            short_days * float(life.cfg()["minutes_per_day"]))))
+        st["waiting_note"] = f"还差 {short_days} 个故事日 (约 {short_min} 分钟阅读)"
         save_state(st)
         if anchor_moved:
             cs.save_char(ch)
         return {**ctx, "status": "waiting", "minutes": minutes, "days": ev["days"],
-                "need_days": need_days,
+                "need_days": need_days, "short_days": short_days,
+                "minutes_to_next_adventure": short_min,
                 "minutes_to_next_day": life.minutes_to_next_day(ch),
                 "window": ev["window"], "reading": len(ev["reading"])}
     st.pop("waiting_note", None)

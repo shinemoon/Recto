@@ -898,7 +898,7 @@ function duelBlock(d) {
   if (!d || !d.foe) return '';
   const rounds = d.rounds || [];
   const res = d.result === 'win' ? 'ok' : (d.result === 'lose' ? 'err' : 'warn');
-  const hd = rounds.slice(0, 3);
+  const hd = rounds.slice(0, 2);
   return '<div class="adv-duel">' +
     '<div class="adv-duel-h"><span class="pill ' + res + '">' +
       esc(d.result_cn || '') + '</span>' +
@@ -985,7 +985,7 @@ function renderChronicle(v) {
     }
     if (st.waiting_note) bits.push(st.waiting_note);
     bits.push('已走 ' + (st.adventure_no || 0) + ' 回');
-    bits.push('一小时阅读 = 十天');
+    bits.push('六分钟阅读 = 故事里十天');
     metaBox.innerHTML = bits.map(function (x) {
       return '<span class="story-bit">' + esc(String(x)) + '</span>';
     }).join('');
@@ -1139,8 +1139,10 @@ function renderRunResult(r) {
   if (r.status === 'busy') { box.textContent = '上一次推演还没结束。'; return; }
   if (r.status === 'waiting') {
     const n = windowNote(r);
-    box.innerHTML = '<div class="adv-run">还不到下一日 —— 再读 ' +
-      (r.minutes_to_next_day || 0) + ' 分钟 (一小时 = 故事里十天)。' +
+    box.innerHTML = '<div class="adv-run">还不到下一站 —— 还差 ' +
+      (r.short_days || 1) + ' 个故事日, 再读约 ' +
+      (r.minutes_to_next_adventure || r.minutes_to_next_day || 0) +
+      ' 分钟 (六分钟 = 故事里十天)。' +
       (n ? '<div class="adv-run-line">' + esc(n) + '</div>' : '') + '</div>';
     return;
   }
@@ -1568,7 +1570,7 @@ function pgRebornHint() {
       pill.textContent = cap > 0 ? ('可继承 ' + cap + ' 分钟') : '还没有阅历';
     }
   }
-  const mpd = (state.char && state.char.life && state.char.life.minutes_per_day) || 6;
+  const mpd = (state.char && state.char.life && state.char.life.minutes_per_day) || 0.6;
   const take = Math.max(0, Math.min(cap, Number(inp.value) || 0));
   if (lab) lab.textContent = take + ' 分钟';
   if (hint) {

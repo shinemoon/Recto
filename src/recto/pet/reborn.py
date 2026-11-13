@@ -54,7 +54,7 @@ def _levels_for(exp: int) -> tuple[int, int]:
 
 def _backstory(minutes: int, prev: dict[str, Any], world: dict[str, Any]) -> str:
     """这一世的来历 (一段话)。模型不可用时给一句规则拼的话。"""
-    days = minutes // max(1, life.cfg()["minutes_per_day"])
+    days = int(minutes / max(0.1, float(life.cfg()["minutes_per_day"])))
     if minutes <= 0:
         return "初入江湖, 什么都没带来。"
     fallback = (f"它带着大约 {days} 天的旧日阅历重来。那些事它说不清, "

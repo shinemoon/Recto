@@ -5,10 +5,10 @@
 为什么单独一支: 这三条都是"看起来在跑, 其实不动"的病根, 而且都不是算错,
 是**门槛/状态**错 —— 单测模型写法抓不到, 只能钉死默认值与自愈行为:
 
-  * 门槛: 一回合走一趟 = 1 个故事日 (≈ 6 分钟阅读), 心跳 10 分钟一次。
-    原来是 10 天 + 30 分钟 —— 读一小时才见一次变化, 读者眼里就是"推演没动"。
+  * 门槛: 一回合走一趟 = 10 个故事日 (≈ 6 分钟阅读), 心跳 10 分钟一次。
+    时间流速是 0.6 分钟一天 (六分钟 = 十天), 所以"走一趟"的现实代价没变。
   * 时钟闸: 存档被还原 / 时长表被清理后, 故事日会一次跳几百天 →
-    一回合最多走 ``max_days_per_cycle`` (30) 天, 并校准到当前值。
+    一回合最多走 ``max_days_per_cycle`` (300) 天, 并校准到当前值。
   * 基线自愈: ``reading_baseline`` 高过数据源总分钟时, 读多少都不会再长一分。
     这是"复位之后再也不动"的真凶之一, 必须自己校准回来。
 
@@ -77,11 +77,11 @@ lore.chat = fake_chat
 # ── 1. 默认节奏 ────────────────────────────────────────
 cfg = ch.cfg()
 ok(int(cfg["interval_min"]) == 10, f"心跳 10 分钟一次 got {cfg['interval_min']}")
-ok(int(cfg["days_per_adventure"]) == 1, f"走一趟的门槛 = 1 个故事日 got {cfg['days_per_adventure']}")
-ok(int(cfg["max_days_per_cycle"]) == 30, f"时钟闸 30 天 got {cfg['max_days_per_cycle']}")
+ok(int(cfg["days_per_adventure"]) == 10, f"走一趟的门槛 = 10 个故事日 got {cfg['days_per_adventure']}")
+ok(int(cfg["max_days_per_cycle"]) == 300, f"时钟闸 300 天 got {cfg['max_days_per_cycle']}")
 ok(int(cfg["interval_min"]) >= 5, "心跳不短于 5 分钟 (别把模型烧穿)")
 lc = life.cfg()
-ok(int(lc["minutes_per_day"]) == 6, f"6 分钟 = 故事里一天 got {lc['minutes_per_day']}")
+ok(abs(float(lc["minutes_per_day"]) - 0.6) < 1e-9, f"0.6 分钟 = 故事里一天 got {lc['minutes_per_day']}")
 
 
 # ── 2. 基线自愈 (复位之后"再也不动"的真凶) ──────────────
@@ -95,7 +95,7 @@ ok(fix.get("baseline_fixed") == 656, f"报告改了多少 got {fix.get('baseline
 gain = g.credit_reading_minutes(ch_, 106)   # 之后读 6 分钟
 ok(gain["minutes"] == 6, f"基线修好后阅读能折算 got {gain['minutes']}")
 ok(int(ch_["minutes"]) == 6, f"累计分钟跟着长 got {ch_['minutes']}")
-ok(life.story_day(ch_) == 1, f"6 分钟 = 故事里 1 天 got {life.story_day(ch_)}")
+ok(life.story_day(ch_) == 10, f"6 分钟 = 故事里 10 天 got {life.story_day(ch_)}")
 
 ch2 = cs.new_char("小石")
 ch2["reading_baseline"] = 50
@@ -122,7 +122,7 @@ rc.execute("INSERT OR REPLACE INTO rprogress (book, chapter, offset, percent, po
 rc.commit()
 
 ch3 = cs.new_char("小墨")
-ch3["minutes"] = 3000          # 故事日 500
+ch3["minutes"] = 3000          # 0.6 分钟一天 ⇒ 故事日 5000
 ch3["credited_minutes"] = 3000
 ch3["reading_baseline"] = 0
 cs.save_char(ch3)
@@ -132,21 +132,21 @@ ch.save_state(st)
 
 out = ch.run(trigger="manual")
 ok(out["status"] == "ok", f"回合跑成功 got {out.get('status')} {out.get('error', '')}")
-ok(out["days"] == 30, f"一次最多走 30 天 got {out.get('days')}")
+ok(out["days"] == 300, f"一次最多走 300 天 got {out.get('days')}")
 ok(out.get("cycle") == 1, "回合数 +1")
-ok(int(ch.load_state()["story_day"]) == 500,
+ok(int(ch.load_state()["story_day"]) == 5000,
    f"时钟校准到当前值 got {ch.load_state().get('story_day')}")
-ok(int(out["growth"]["exp"]) <= 30 * 32, f"修为按 30 天封顶 got {out['growth']['exp']}")
+ok(int(out["growth"]["exp"]) <= 300 * 3.2, f"修为按 300 天封顶 got {out['growth']['exp']}")
 
 rep = ch.run(trigger="manual")
 ok(rep["status"] == "idle", f"同一段阅读不重复结算 got {rep.get('status')}")
 
-# ── 4. 走一趟真的只要一个故事日 ────────────────────────
+# ── 4. 走一趟真的只要 10 个故事日 ────────────────────────
 rc.execute("UPDATE rtime SET minutes=3006 WHERE book=? AND day=?", (BOOK, today))
 rc.commit()
 out2 = ch.run(trigger="manual")
 ok(out2["status"] == "ok", f"再过 6 分钟就能走一趟 got {out2.get('status')} {out2.get('error','')}")
-ok(out2["days"] == 1, f"走一天 got {out2.get('days')}")
+ok(out2["days"] == 10, f"走十天 got {out2.get('days')}")
 ok(int(ch.load_state()["adventure_no"]) == 2, f"第二回已落 got {ch.load_state().get('adventure_no')}")
 
 

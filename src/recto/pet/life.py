@@ -5,7 +5,7 @@
 
 **故事内时间怎么走** (2026-11 定的口径):
 
-  · 每 60 分钟陪读 = 故事里 10 天 (``minutes_per_day`` 默认 6, 即 6 分钟一天)
+  · 每 6 分钟陪读 = 故事里 10 天 (``minutes_per_day`` 默认 0.6, 即 0.6 分钟一天)
   · 故事内的日子不单独计数 —— 它就是**累计陪读分钟**除出来的,
     所以删书、清空时长表也不会让时间倒流 (只增不减)
   · 12 岁出江湖, 80 岁前后退隐 —— 一天一天走, 不跳年
@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -32,10 +33,11 @@ START_AGE = 12
 RETIRE_AGE = 80
 #: 故事内一年多少天 (不闰)
 DAYS_PER_YEAR = 365
-#: 现实里陪读多少分钟 → 故事内一天。
-#: 6 分钟 = 一天 ⇒ 一小时阅读走过十天。2026-11-13 从 60 调到这里:
-#: 原来一小时只走一天, 六十八年才到八十岁 (要读四百多小时), 故事推不动。
-MINUTES_PER_STORY_DAY = 6
+#: 现实里陪读多少分钟 → 故事内一天 (可以是小数)。
+#: 0.6 分钟 = 一天 ⇒ 六分钟阅读走过十天, 一小时走过一百天。
+#: 2026-11-13 两跳: 60 (一小时一天, 走不到八十岁) → 6 (一小时十天) → 0.6 (六分钟十天)。
+#: 再快就要考虑"一天"塞不下一次遭遇了 —— 见 chronicle 的 days_per_adventure。
+MINUTES_PER_STORY_DAY = 0.6
 #: 传承时保留的最高技能比例 (30%, 最少 1 级)
 HEIR_SKILL_SHARE = 0.3
 #: 传承时新人的起步潜能
@@ -71,17 +73,18 @@ def cfg() -> dict[str, Any]:
         raw = (petcfg.load_config() or {}).get("life") or {}
         if isinstance(raw, dict):
             for k in ("minutes_per_day", "retire_age", "start_age"):
-                if isinstance(raw.get(k), (int, float)) and int(raw[k]) > 0:
-                    out[k] = int(raw[k])
+                if isinstance(raw.get(k), (int, float)) and float(raw[k]) > 0:
+                    out[k] = float(raw[k]) if k == "minutes_per_day" else int(raw[k])
     except Exception:  # noqa: BLE001 — 读不到配置就用默认
         pass
     env = os.environ.get("RECTO_PET_MINUTES_PER_DAY")
     if env:
         try:
-            out["minutes_per_day"] = max(1, int(float(env)))
+            out["minutes_per_day"] = float(env)
         except ValueError:
             pass
-    out["minutes_per_day"] = max(1, out["minutes_per_day"])
+    # 一天最快也就是 0.1 分钟 (六秒) —— 再快 "一天" 就短于一次翻页了
+    out["minutes_per_day"] = max(0.1, round(float(out["minutes_per_day"]), 3))
     out["retire_age"] = max(out["start_age"] + 1, out["retire_age"])
     c.update({"at": time.time(), "env": env_now, "val": dict(out)})
     return out
@@ -91,7 +94,8 @@ def cfg() -> dict[str, Any]:
 
 def story_day(ch: dict[str, Any]) -> int:
     """故事内走过的天数 (0 = 出江湖那天)。由累计陪读分钟除出来, 不单独记。"""
-    return max(0, int(ch.get("minutes") or 0)) // int(cfg()["minutes_per_day"])
+    mpd = float(cfg()["minutes_per_day"])
+    return max(0, int(int(ch.get("minutes") or 0) / max(0.1, mpd)))
 
 
 def age_years(ch: dict[str, Any]) -> int:
@@ -119,9 +123,12 @@ def ready_to_retire(ch: dict[str, Any]) -> bool:
 
 
 def minutes_to_next_day(ch: dict[str, Any]) -> int:
+    """还差几分钟到下一个故事日 (向上取整 —— "还差 0 分钟" 读起来像坏了)。"""
     c = cfg()
+    mpd = float(c["minutes_per_day"])
     m = max(0, int(ch.get("minutes") or 0))
-    return int(c["minutes_per_day"]) - (m % int(c["minutes_per_day"]))
+    d = int(m / max(0.1, mpd))
+    return max(0, int(math.ceil((d + 1) * mpd - m)))
 
 
 def days_to_retire(ch: dict[str, Any]) -> int:
@@ -144,7 +151,7 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
         "stage": stage(ch),
         "start_age": int(c["start_age"]),
         "retire_age": int(c["retire_age"]),
-        "minutes_per_day": int(c["minutes_per_day"]),
+        "minutes_per_day": round(float(c["minutes_per_day"]), 2),
         "minutes_to_next_day": minutes_to_next_day(ch),
         "days_to_retire": days_to_retire(ch),
         "ready_to_retire": ready_to_retire(ch),

@@ -197,8 +197,8 @@ rc.commit()
 out = ch.run(trigger="manual")
 ok(out["status"] == "ok", f"回合成功 got {out.get('status')} {out.get('error', '')}")
 ok(out["minutes"] == 60, f"窗口内新增 60 分钟 got {out['minutes']}")
-ok(out["days"] == 10, f"故事内走过 10 天 got {out.get('days')}")
-ok(out["growth"]["exp"] == 320, f"修为按故事日夹到 10×32=320 got {out['growth']['exp']}")
+ok(out["days"] == 100, f"故事内走过 100 天 got {out.get('days')}")
+ok(out["growth"]["exp"] == 320, f"修为按故事日夹到 100×3.2=320 got {out['growth']['exp']}")
 ok(out["life"]["day"] >= 10 and out["life"]["age"] == 12,
    f"故事时钟前进了 got {out.get('life')}")
 ok(out["adventure"] and "青石巷" in out["adventure"]["title"], f"游历故事已写 got {out.get('adventure')}")
@@ -255,8 +255,8 @@ before = cs.load_char()
 d = ch.run(trigger="manual", dry=True)
 after = cs.load_char()
 ok(d["status"] == "dry", f"dry 状态 got {d.get('status')}")
-# 上一回欠着的那趟也算在 days 里 → 上限按 days × 32 (不是按单窗分钟)
-ok(d["judgement"]["growth"]["exp"] == int(d["days"]) * 32,
+# 上一回欠着的那趟也算在 days 里 → 上限按 days × 3.2 (不是按单窗分钟)
+ok(d["judgement"]["growth"]["exp"] == int(round(int(d["days"]) * 3.2)),
    f"dry 判数按故事日上限 (days={d.get('days')}) got {d['judgement']['growth']}")
 ok(int(after["exp"]) == int(before["exp"]) and int(after["level"]) == int(before["level"]),
    "dry 没有改动存档")

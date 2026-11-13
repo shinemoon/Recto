@@ -47,10 +47,10 @@ AUTO_SKILL = "jibenneigong"
 #: 300 分钟 = 五小时一级 —— 慢到"翻好几天书才长一层"。
 AUTO_SKILL_MINUTES_PER_LEVEL = 300
 #: 判定口径的技能限速: 每 N 个**故事内**天, 最多由判定长 1 级
-#: (自动「读书悟道」不占这条, 它自己按 300 分钟一级走)
-#: 80 个故事日 ÷ 10 (天/小时) ≈ 8 小时阅读一级 —— 2026-11-13 时间流速
-#: ×10 时按现实口径折算过, 不是随手放大。
-SKILL_DAYS_PER_LEVEL = 80
+#: (自动「基本内功」不占这条, 它自己按 300 分钟一级走)
+#: 800 个故事日 × 0.6 分钟/天 = 480 分钟 ≈ 8 小时阅读一级 —— 时间流速每变一次
+#: 都按现实口径折算过, 不是随手放大。
+SKILL_DAYS_PER_LEVEL = 800
 
 #: 先天属性: 每升 N 级 +1。
 #: 为什么要有这一条: 光靠潜能点, 属性永远不动 —— 故事里也就写不出"人变了"。
@@ -72,7 +72,7 @@ GROWTH_RULES: dict[str, Any] = {
     "max_minutes_per_call": MAX_MINUTES_PER_CALL,
     "one_way": True,
     "time": {
-        "minutes_per_story_day": None,   # 由 pet.life 填 (默认 6 分钟 = 故事内一天)
+        "minutes_per_story_day": None,   # 由 pet.life 填 (默认 0.6 分钟 = 故事内一天)
         "start_age": None,               # 12 岁出江湖
         "retire_age": None,              # 80 岁退隐 → 等读者确认传承
     },
@@ -102,7 +102,7 @@ def rules() -> dict[str, Any]:
         from recto.pet import life
 
         c = life.cfg()
-        out["time"].update({"minutes_per_story_day": int(c["minutes_per_day"]),
+        out["time"].update({"minutes_per_story_day": round(float(c["minutes_per_day"]), 2),
                             "start_age": int(c["start_age"]),
                             "retire_age": int(c["retire_age"])})
     except Exception:  # noqa: BLE001
