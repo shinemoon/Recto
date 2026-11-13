@@ -42,6 +42,7 @@ from urllib.parse import quote
 
 from recto.core import bookstyle
 from recto.core import geometry
+from recto.core import notes
 
 EPUB_SUFFIXES = {".epub"}
 TXT_SUFFIXES = {".txt"}
@@ -144,15 +145,37 @@ def _img_html(tag: str, *, doc_path: str, key: str,
 
 
 def _clean_inline(raw: str, *, doc_path: str, key: str,
-                  styles: "bookstyle.BookStyles | None" = None) -> str:
+                  styles: "bookstyle.BookStyles | None" = None,
+                  layer: "notes.NoteLayer | None" = None) -> str:
     """清洗一段块级元素的内部 HTML：保留行内语义、去掉一切危险/无关属性。
 
     `<img>` 的尺寸从本书样式表 + 行内 style + width/height 属性里取
     （见 `core/bookstyle.py`）—— 这是图文混排的关键：epub 常把脚注标记图标
     写成 `<img class="w10">`，`.w10 { width: .85em }` 一丢，图片就按原始像素
     （动辄 500px）铺满整行。
+
+    `layer` 不为空时，注释引用（`<a epub:type="noteref">`）会被换成
+    `<sup class="rv-fn" data-note="N">N</sup>`，注释正文交给前端按形态呈现；
+    段落内部嵌着的注释容器也在这里剔掉（正文不该读到注释全文）。
     """
     raw = _COMMENT.sub("", raw or "")
+    if layer is not None:
+        raw = notes.strip_inline_bodies(raw)
+
+    # 注释引用锚点先换成占位符 —— 必须在 <img> 之前，否则锚点里的标记图标会
+    # 先被当图片还原，然后整块 `<a>` 被通用过滤器丢掉只剩一个光秃秃的图标。
+    marks: list[tuple[str, str]] = []
+
+    def _mark(m: re.Match) -> str:
+        if layer is None:
+            return m.group(0)
+        ok, hint, href = notes.extract_marker_anchor(_attrs_of(m.group(1)), m.group(2))
+        if not ok:
+            return m.group(0)
+        marks.append((hint, href))
+        return f"\x00FN{len(marks) - 1}\x00"
+
+    raw = notes._ANCHOR_RE.sub(_mark, raw)
 
     imgs: list[str] = []
 
@@ -178,11 +201,36 @@ def _clean_inline(raw: str, *, doc_path: str, key: str,
     out.append(raw[pos:])
     txt = "".join(out)
     txt = re.sub(r"\x00IMG(\d+)\x00", lambda m: imgs[int(m.group(1))], txt)
+    # 原来的写法是 `<sup><a …><img></a></sup>`（sup 里包着标记图标）。
+    # 图标已被换成标记，外面那层 sup 就成了"sup 套 sup"——字被缩两次、抬两次。
+    # 只剥**紧贴着标记**的那层 sup，别碰书里别处的上标。
+    txt = re.sub(r"<sup>\s*(\x00FN\d+\x00)\s*</sup>", r"\1", txt)
+
+    def _mk(m2: re.Match) -> str:
+        idx = int(m2.group(1))
+        hint, href = marks[idx] if idx < len(marks) else ("", "")
+        if layer is None:
+            return ""
+        return notes.NoteLayer.marker_html(layer.resolve(hint, href))
+
+    txt = re.sub(r"\x00FN(\d+)\x00", _mk, txt)
     # 块里残留的换行压成空格（pre 由 CSS white-space 处理）
     txt = re.sub(r"[ \t\r\n]+", " ", txt).strip()
     # 字节切片可能把结尾标签切成半截（`</body`），别把它当正文显示出来
     txt = re.sub(r"</?[A-Za-z][\w:.-]*$", "", txt).strip()
     return txt
+
+
+def _attrs_of(attr_str: str) -> dict[str, str]:
+    return {(m.group(1) or "").lower(): (m.group(2) or m.group(3) or m.group(4) or "")
+            for m in _ATTR.finditer(attr_str or "")}
+
+
+def _block_text(inner_html: str) -> str:
+    # 注释标记（`<sup class="rv-fn">3</sup>`）不算正文文字 —— 否则它会混进
+    # 段落文本、影响中文占比判断和语料遭遇统计
+    s = re.sub(r'<sup class="rv-fn[^"]*"[^>]*>.*?</sup>', "", inner_html or "", flags=re.S)
+    return strip_tags(s).strip()
 
 
 def _resolve_href(doc_path: str, href: str) -> str:
@@ -194,8 +242,6 @@ def _resolve_href(doc_path: str, href: str) -> str:
     return p.lstrip("/")
 
 
-def _block_text(inner_html: str) -> str:
-    return strip_tags(inner_html).strip()
 
 
 @dataclass
@@ -239,6 +285,7 @@ class BookDoc:
         self.styles = bookstyle.BookStyles.empty()
         self._geo: geometry.BookGeometry | None = None
         self._blocks: dict[int, list[Block]] = {}
+        self._notes: dict[int, list[dict]] = {}
         self._zip: zipfile.ZipFile | None = None
         self._txt: str = ""
         self._txt_raw: bytes = b""
@@ -351,10 +398,17 @@ class BookDoc:
         raw = self._chapter_raw(idx)
         if self.kind == "txt":
             out = self._txt_blocks(raw)
+            self._notes[idx] = []
         else:
-            out = self._epub_blocks(raw, self.chapters[idx].href)
+            out, layer = self._epub_blocks(raw, self.chapters[idx].href)
+            self._notes[idx] = layer.payload() if layer is not None else []
         self._blocks[idx] = out
         return out
+
+    def notes(self, idx: int) -> list[dict]:
+        """本章的注释（序号 / 正文 / 是否孤立）。正文里没有注释的书返回空表。"""
+        self.blocks(idx)                 # 注释是清洗正文章节时顺带采集的
+        return self._notes.get(idx) or []
 
     def _txt_blocks(self, raw: bytes) -> list[Block]:
         text = raw.decode("utf-8", "replace")
@@ -381,11 +435,12 @@ class BookDoc:
                                      html=_html.escape(body), text=body))
         return out
 
-    def _epub_blocks(self, raw: bytes, href: str) -> list[Block]:
+    def _epub_blocks(self, raw: bytes, href: str) -> tuple[list[Block], object]:
         roots = geometry._scan_elements(raw)
         body = geometry._find_body(roots)
         if body is None:
-            return []
+            return [], None
+        layer = notes.harvest(raw)
         out: list[Block] = []
         key = self.key
         styles = self.styles
@@ -407,7 +462,8 @@ class BookDoc:
             tail = inner[lt:] if lt >= 0 else ""
             if tail.lower().startswith("</" + node.name.lower()):
                 inner = inner[:lt]
-            cleaned = _clean_inline(inner, doc_path=href, key=key, styles=styles)
+            cleaned = _clean_inline(inner, doc_path=href, key=key, styles=styles,
+                                    layer=layer)
             text = _block_text(cleaned)
             if not text and "<img" not in cleaned:
                 return
@@ -436,6 +492,10 @@ class BookDoc:
 
         def walk(node) -> None:
             for ch in node.children:
+                # 注释容器（aside/section/ol…）整块剔掉：它的正文由 `notes()` 单独
+                # 下发，前端按形态呈现。留在正文流里就是"注释全文插在段落之间"。
+                if layer is not None and layer.skips(ch.start):
+                    continue
                 name = ch.name.lower()
                 # 图片元素自己就是一个块: <img class="top"> 这类章首题图/整幅插图
                 # 常常是 div 的直接子节点 (与 h2/p 平级), 原来既不进 BLOCK_TAGS
@@ -451,8 +511,23 @@ class BookDoc:
                     continue
                 if name in SKIP_TAGS:
                     continue
-                nested_block = any(c.name.lower() in BLOCK_TAGS for c in ch.children)
-                direct_text = bool(strip_tags(raw[ch.start:ch.end].decode("utf-8", "replace")).strip())
+                # 注释容器虽然语义上算块，但**不是**正文里的排版块：把它当"内含块"
+                # 会让外层 `<p>` 走 walk() 分支，段首段尾的正文直接丢掉（实测踩过，
+                # 段落里塞 aside 的书写法下整段只剩一个标记）。
+                def _body_block(c) -> bool:
+                    if c.name.lower() not in BLOCK_TAGS:
+                        return False
+                    return not (layer is not None and layer.skips(c.start))
+
+                nested_block = any(_body_block(c) for c in ch.children)
+                seg_text = raw[ch.start:ch.end].decode("utf-8", "replace")
+                if layer is not None:
+                    # 直接文字里也不要把注释正文算进去
+                    for sk, se in layer.skip_list():
+                        if ch.start <= sk < ch.end:
+                            seg_text = seg_text.replace(
+                                raw[sk:se].decode("utf-8", "replace"), " ", 1)
+                direct_text = bool(strip_tags(seg_text).strip())
                 if name in BLOCK_TAGS:
                     if nested_block:
                         walk(ch)
@@ -467,11 +542,14 @@ class BookDoc:
         walk(body)
         if not out:
             slice_ = raw[body.start:body.end].decode("utf-8", "replace")
-            cleaned = _clean_inline(slice_, doc_path=href, key=key, styles=styles)
+            cleaned = _clean_inline(slice_, doc_path=href, key=key, styles=styles,
+                                    layer=layer)
             text = _block_text(cleaned)
             if text:
                 out.append(Block(off=body.start, tag="p", html=cleaned, text=text))
-        return out
+        if layer is not None:
+            layer.finish()               # 没被引用的注释也编号（侧栏/章末可见）
+        return out, layer
 
     # ---- 坐标 -----------------------------------------------------------
     def _prefix(self, idx: int) -> int:

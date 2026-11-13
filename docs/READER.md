@@ -584,6 +584,45 @@ node tools/probe_settings_mark.mjs          # 15 项：设置页保存 / 绑定 
 node tools/probe_settings_layout.mjs        # 40 项：两张宽卡排版 / 输入框 / 色板 / 手机
 ```
 
+## 6.5 注释层（脚注 / 尾注 / 边注）
+
+带注释的精排书，源文件里的注释有十几种写法。旧实现把它们**当正文块**照读 ——
+表现为"一整段书目标注插在段落之间"，且段内的标记只剩一个 11px 小图标。现在分两层：
+
+```
+core/notes.py  harvest(raw)          → 注释正文池 + 要从正文流里剔掉的字节区间
+               NoteLayer.resolve()   → 标记按"内容优先, id 兜底"绑到注释
+               marker_html()         → <sup class="rv-fn" data-note="N">N</sup>
+reader.py     章节接口多下发 notes[]  → 前端按用户选的形态呈现
+reader.js     popover / panel / endnotes 三种形态（排版面板里可切，逐设备记）
+```
+
+| 关心的事 | 做法 |
+|---|---|
+| 换书不改代码 | 只认语义（`epub:type` / `role` / class 词干），不认任何具体 class 名 |
+| 覆盖率 | 多看式（`aside` + `ol/li` 内嵌）、epub3 尾注（章末 `section` + `ol/li`）、纯 class（`footnotes`/`footnote-ref`）、容器嵌在段落内部，四种都过测试 |
+| 绑定可靠性 | **内容优先**：同一章 541 条注释里有 52 个 `href` 被重复使用、指向的根本不是引用处那条；正文写在标记图片的 `alt`/`zy-footnote` 里 ⇒ 先按内容匹配，再按 id，最后用标记自带内容建条 |
+| 不影响分页 | 标记 `line-height:0` + 相对位移（不用 `vertical-align`），不撑高行；弹出/侧栏是固定浮层，**不参与排版**；章末形态参与排版，页数由 `scrollWidth` 现量 ⇒ 自动多出页 |
+| 号与章 | 注释号按**标记出现顺序**在本章内从 1 编；章末条目 id = `rv-note-<章>-<号>`（跨章不冲突） |
+| 孤立注释 | 正文没有引用的注释仍编号并标 `orphan`，只在侧栏/章末出现（标注"正文里没有标注引用"） |
+| 无注释的书 | `harvest()` 返回 `None`，走原来的零开销路径（正文块一个字节都不变） |
+| 文字洁净 | 标记不进 `block.text`（否则混进中文占比判断、语料遭遇计数、导出摘录） |
+
+三种形态（排版面板 →「注释呈现」）：
+
+- **弹出**（默认）：点标记就地出卡片；手机上从底部升起；点别处 / Esc / 翻页收起
+- **侧栏**：右侧浮层清单，只覆盖不改版面（分页模式下也安全）；点条目回到正文标记
+- **章末**：章末出现「注释」区块，点标记跳到对应条目（分页模式按页跳）
+
+实测（库里带 541 条注释的那本）：541 条全部绑上（0 孤立 / 0 无正文），
+每章标记号与注释号一一对应，三种形态在 1280 宽与 390 宽下都通过。
+
+自检：
+```bash
+python3 tests/test_notes.py            # 37 项：四类写法 / 绑定优先级 / 孤立 / 段内容器 / 真书抽样
+node tools/probe_reader_notes.mjs      # 28 项：标记不撑行 / 三种形态 / 分页 / 手机 / 0 报错
+```
+
 ## 7. 已知边界
 
 - **画面级定位**：位置粒度 = 段落。同一段很长时重新打开会回到段首（可接受；
@@ -596,6 +635,9 @@ node tools/probe_settings_layout.mjs        # 40 项：两张宽卡排版 / 输�
 - **不支持 PDF**（书库里的 .pdf 不参与扫描）。
 - 掌阅 `downloadDataV2` 长期只回 status 无 `res`，所以云端划线的正文是**从原书字节切**出来的；
   批注（remark）云端拿不到，本地写的照推。
+- **注释只做"读"**：不生成注释、不改注释正文、不改源文件。注释正文是纯文本
+  （书里的斜体/链接在注释体内被压平），需要富文本时再放宽。
+- **注释形态是逐设备的**（`localStorage['recto.note']`），跟字号/行距一样按设备记。
 
 ## 7.1 实测（2026-11-03，生产 5015）
 
@@ -619,11 +661,13 @@ node tools/probe_settings_layout.mjs        # 40 项：两张宽卡排版 / 输�
 ## 8. 运维
 
 ```bash
-python3 tests/test_reader.py        # 147 项：坐标一致性 / 块切分 / 状态库 / 时长位图 / 翻页页号口径
+python3 tests/test_reader.py        # 154 项：坐标一致性 / 块切分 / 状态库 / 时长位图 / 翻页页号口径
+python3 tests/test_notes.py         # 37 项：注释层 (四类写法 / 绑定 / 孤立 / 段内容器 / 真书抽样)
 python3 tests/test_reading_mark.py  # 38 项：阅读高亮 (语料 -> 词表 -> 配置)
 python3 tests/test_sync_notes.py    # 边车 / 进度判定 / 笔记位置 / 时长队列
 
 node tools/probe_reader_pagehint.mjs   # 12 项：翻页页号提示 + 刷新落点 (真浏览器)
+node tools/probe_reader_notes.mjs      # 28 项：注释标记 / 弹出 / 侧栏 / 章末 / 分页 / 手机
 ```
 
 清空阅读状态（进度/书签/划线/时长）只需删 `data/reader.sqlite`；书目录会在下次

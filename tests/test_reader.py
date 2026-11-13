@@ -425,8 +425,13 @@ check("翻页模式进度按页顶那一段记",
 check("面板内的滚轮/滑动不收起面板",
       "function scrollInsidePanel" in _js
       and "if (!scrollInsidePanel(ev)) hideTypo();" in _js)
+# 面板里的那次点击不能顺带把顶栏切了。判据用**时间戳**而不是布尔量:
+# 布尔量在面板被程序化关闭时没人复位, 会把下一次正文点击也吞掉 (2026-11-13 踩过)。
 check("从面板里按下的点击不算'点正文'",
-      "downInTypo" in _js and "if (downInTypo) return;" in _js)
+      "downInTypoAt" in _js and "if (fromTypo) return;" in _js)
+check("这个标记会自己过期 (不会卡住下一次点击)",
+      "var fromTypo = downInTypoAt && (Date.now() - downInTypoAt) < 1200;" in _js
+      and "document.addEventListener('click', function () { downInTypoAt = 0; }, false);" in _js)
 
 # --------------------------------------------------------------------------
 # 翻页效果 (滑动 / 无 / 淡入 / 水波纹 / 翻卷)
