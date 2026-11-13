@@ -248,6 +248,7 @@ def gather(st: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
             "from_ts": from_ts, "from_day": from_day,
             "prev_at": st.get("last_at") or "", "already_today": already,
             "last_duel": st.get("last_duel") or {},
+            "last_checks": st.get("last_checks") or [],
             "encounters": encounters.recent(days=max(2, int(window["hours"] // 24) + 2),
                                             limit=40)}
 
@@ -338,6 +339,8 @@ def judge(ev: dict[str, Any], ch: dict[str, Any]) -> dict[str, Any]:
                        "cats": ev["encounters"].get("cats", {})},
         "last_growth": ev.get("last_growth") or {},
         "last_duel": ev.get("last_duel") or {},
+        # 上一回路上没过的那几道坎 —— "该练什么"的第一手依据之一
+        "last_checks": ev.get("last_checks") or [],
         # 能长哪几门功夫 —— 给 id 让模型从里面挑, 不许自己发明招式名
         "skill_menu": [{"id": x["id"], "name": x["name"], "type": x["type"]}
                        for x in cs.SKILLS],
@@ -415,6 +418,57 @@ def _change_brief(before: dict[str, Any], after: dict[str, Any]) -> dict[str, An
     return out
 
 
+def _duel_brief(duel: dict[str, Any] | None) -> dict[str, Any] | None:
+    """给故事看的战报 -- 去掉掷骰明细。
+
+    为什么不给点数: 模型看见 ``d20 13 +5 vs 15`` 就会在正文里复述桌面词,
+    故事立刻变成跑团记录。它只需要知道**哪一拍中了 / 哪一拍被让开了 / 结果如何**;
+    掷骰明细留在页面上的战报里给读者看。
+    """
+    if not duel:
+        return None
+    keep_foe = ("name", "why", "arena", "weapon_cn", "weapon_term", "level",
+                "hp", "hp_max")
+    rounds = []
+    for e in duel.get("rounds") or []:
+        rounds.append({
+            "r": e.get("r"), "side": e.get("side"), "move": e.get("move") or "",
+            "kind": e.get("kind"), "text": e.get("text") or "",
+            "dmg": e.get("dmg") or 0, "self": e.get("self") or 0,
+            "effect": e.get("effect") or "", "hp": e.get("hp") or {},
+        })
+    return {
+        "foe": {k: (duel.get("foe") or {}).get(k) for k in keep_foe},
+        "result": duel.get("result"), "result_cn": duel.get("result_cn"),
+        "summary": duel.get("summary"),
+        "moves": list(duel.get("moves") or []),
+        "foe_moves": list(duel.get("foe_moves") or []),
+        "hp": duel.get("hp"), "neili": duel.get("neili"),
+        "rounds": rounds,
+        "initiative": {"order": (duel.get("initiative") or {}).get("order") or []},
+    }
+
+
+def _checks_brief(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """给故事看的判定清单 -- 只留"落在什么上 / 过了没有 / 什么下场"。
+
+    模型不该看到原始点数 (它会开始复述数字); 掷骰明细留给页面上的战报。
+    """
+    out = []
+    for c in checks or []:
+        out.append({
+            "label": c.get("label"),
+            "target": c.get("target"),
+            "dc": c.get("dc"),
+            "dc_label": c.get("dc_label"),
+            "white": bool(c.get("white")),
+            "success": bool(c.get("success")),
+            "degree": c.get("degree_cn"),
+            "outcome": c.get("outcome"),
+        })
+    return out
+
+
 def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
                        gain: dict[str, Any], prev: dict[str, Any] | None,
                        change: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -431,7 +485,8 @@ def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
              for t in ev["encounters"].get("terms", [])[:20]]
     return {
         "char": _char_brief(ch),
-        "duel": (gain.get("duel") or None),
+        "duel": _duel_brief(gain.get("duel") or None),
+        "checks": _checks_brief(gain.get("checks") or []),
         "growth": {"exp": gain.get("exp"), "fame": gain.get("fame"),
                    "levels": gain.get("levels"), "pot": gain.get("pot"),
                    "vein": (change or {}).get("vein"),
@@ -491,6 +546,7 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         "verdict": jsonout.as_str(data.get("verdict"), 40),
         "growth_shown": jsonout.as_list(data.get("growth_shown"), 5, 24),
         "duel_shown": bool(data.get("duel_shown")),
+        "checks_shown": bool(data.get("checks_shown")),
         "days": jsonout.as_int(data.get("days"), 1, 1, 5),
     }
     if guide == "legacy":
@@ -642,9 +698,19 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                 preview = _duel.resolve(json.loads(json.dumps(ch)), terms=terms, seed=seed)
             except Exception as e:  # noqa: BLE001
                 log.warning("推演 · 预演遭遇失败: %s", e)
+        preview_checks: list[dict[str, Any]] = []
+        if not life.ready_to_retire(ch):
+            try:
+                from recto.pet import checks as _checks
+
+                preview_checks = _checks.resolve(
+                    json.loads(json.dumps(ch)), terms,
+                    seed=seed, memory=st.get("check_memory") or {})["checks"]
+            except Exception as e:  # noqa: BLE001
+                log.warning("推演 · 预演判定失败: %s", e)
         return {**ctx, "status": "dry", "window": ev["window"], "minutes": minutes,
                 "days": ev["days"], "reading": ev["reading"], "judgement": j,
-                "duel": preview,
+                "duel": preview, "checks": preview_checks,
                 "fallback": bool(j.get("_fallback")),
                 "fallback_why": str(j.get("_fallback_why") or ""),
                 "skill_version": guidance.version("chronicle"),
@@ -669,23 +735,39 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     # ── 遭遇: 这一趟路上会撞上谁、打不打得过 —— 由 duel 算, 故事只负责照写。
     #    种子取 (名字|故事日|这段时间见过的词), 同一天重跑结果一致 (可复现)。
     retiring = life.ready_to_retire(ch)
+    terms_all = ev["encounters"].get("terms") or []
+    tag = "|".join(sorted(str(t.get("term") or "") for t in terms_all[:12]))
+    seed = zlib.crc32(
+        f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
+    ) & 0x7FFFFFFF
     duel_out: dict[str, Any] | None = None
     if not retiring:
         try:
             from recto.pet import duel as _duel
 
-            terms = ev["encounters"].get("terms") or []
-            tag = "|".join(sorted(str(t.get("term") or "") for t in terms[:12]))
-            seed = zlib.crc32(
-                f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
-            ) & 0x7FFFFFFF
-            duel_out = _duel.resolve(ch, terms=terms, seed=seed)
+            duel_out = _duel.resolve(ch, terms=terms_all, seed=seed)
             applied["duel"] = duel_out
             log.info("推演 · 遭遇 %s · %s · 气血 %s/%s",
                      (duel_out.get("foe") or {}).get("name"), duel_out.get("result_cn"),
                      duel_out["hp"]["to"], duel_out["hp"]["max"])
         except Exception as e:  # noqa: BLE001 — 打不起来不该拖垮这一回
             log.warning("推演 · 遭遇结算失败 (这一回只写游历): %s", e)
+
+    # -- 路上的坎: 不打斗的那些判定 (白检定可再试 / 红检定一次定生死)。
+    #    技能与禀赋在非战斗场面也真被掷到, 不只在打人的时候才算数。
+    checks_out: list[dict[str, Any]] = []
+    if not retiring:
+        try:
+            from recto.pet import checks as _checks
+
+            got = _checks.resolve(ch, terms_all, seed=seed,
+                                  memory=st.get("check_memory") or {})
+            checks_out = got["checks"]
+            st["check_memory"] = got["memory"]      # 白检定的"再试"账
+            applied["checks"] = checks_out
+            log.info("推演 · 路上的坎 %s", _checks.brief(checks_out))
+        except Exception as e:  # noqa: BLE001
+            log.warning("推演 · 路上的判定失败 (这一回只写打斗): %s", e)
 
     # ── 走一趟 (到岁数了这一趟就是"退隐 + 传承")
     prev_row = _last_adventure()
@@ -729,7 +811,9 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                          "attrs": change.get("attrs") or [],
                          "vein": change.get("vein"),
                          "growth_shown": story.get("growth_shown") or [],
+                         "checks_shown": bool(story.get("checks_shown")),
                          "duel": duel_out,
+                         "checks": checks_out,
                          "days": int(ev.get("days") or 0),
                          "story_day": life.story_day(ch),
                          "age": life.age_years(ch),
@@ -780,6 +864,9 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                                "levels": applied.get("levels"),
                                "days": int(ev.get("days") or 0)},
                "last_summary": (j.get("assessment") or {}).get("one_line") or "",
+               "last_checks": [{"label": c.get("label"), "dc": c.get("dc"),
+                                "total": c.get("total"), "ok": bool(c.get("success"))}
+                               for c in checks_out],
                "last_duel": (None if not duel_out else {
                    "foe": (duel_out.get("foe") or {}).get("name"),
                    "result": duel_out.get("result_cn"),
@@ -804,7 +891,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
             "change": change, "retiring": retiring,
             "fallback": bool(j.get("_fallback")),
             "fallback_why": str(j.get("_fallback_why") or ""),
-            "adventure": story, "duel": duel_out,
+            "adventure": story, "duel": duel_out, "checks": checks_out,
             "skill_version": guidance.version("chronicle"),
             "life": life.view(ch), "char": cs.view(ch)}
 

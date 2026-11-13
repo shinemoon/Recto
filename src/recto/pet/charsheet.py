@@ -598,6 +598,15 @@ def _neigong_level(ch: dict[str, Any]) -> int:
 # 交手时算"主修"的几类技能 (兵器 / 拳脚)。轻功与内功单独加成。
 COMBAT_TYPES = ("weapon", "fist")
 
+#: 各门兵器 / 拳脚使的伤害骰 —— 剑快、刀重、指轻、棍沉。
+#: 这是 d20 那一层的口径 (交手时真掷), 与 ``combat["damage"]`` 那个旧数并存:
+#: 旧数是给人看的"份量", 这一张是掷骰用的。
+WEAPON_DICE: dict[str, tuple[int, int]] = {
+    "jianfa": (1, 8), "daofa": (1, 10), "gunfa": (1, 10),
+    "quanfa": (1, 6), "zhangfa": (1, 6), "zhifa": (1, 4), "tuifa": (1, 8),
+}
+DEFAULT_DICE = (1, 6)
+
 #: 一回合 (约十来个故事日) 打坐能回的气血 / 内力比例 —— 上限封在 100%
 REST_HP_PCT = 0.18
 REST_NEILI_PCT = 0.45
@@ -642,6 +651,96 @@ def main_skill(ch: dict[str, Any]) -> dict[str, Any] | None:
             best = {"id": str(sid), "name": sk["name"], "type": sk["type"],
                     "level": int(lv), "attr": sk.get("attr") or "li"}
     return best
+
+
+def _attr_name(key: str) -> str:
+    return str((ATTR_BY_KEY.get(key) or {}).get("name") or key)
+
+
+def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
+    """交手用的 d20 数值 —— 护体 / 命中加值 / 伤害骰 / 先攻 / 豁免 / 绝招加值。
+
+    **全部实时算, 不入库。** 每一项都带拆账 (名字 + 分值 + 来源), 战报与页面
+    都照它展示 —— 这样"为什么这一下中了"能追溯到根骨与技能。
+
+    口径 (与 ``derive()`` 那套数并存, 各管各的):
+      · 护体 AC = 10 + 根骨加值 + 基本招架 + 轻功的一小截 + 禀赋招架
+      · 命中加值 = 主修对应根骨的加值 + 主修技能加值 + 禀赋命中
+      · 伤害 = 兵刃骰 + 臂力加值×2 + 主修技能加值×2 + 8; 卸力 = 防御 // 3
+      · 先攻 = 身法加值 + 轻功的一半 + 禀赋先手
+      · 豁免 = 根骨 / 定力 / 身法 (各带对应基本功)
+      · 绝招加值 = 绝招对应根骨的加值 + 招式等级 + 内力档次 (最多 +3)
+    """
+    from recto.pet import d20
+
+    a = effective_attrs(ch)
+    tm = trait_mods(ch)
+    main = main_skill(ch)
+    derived = derive(ch)
+    combat = derived["combat"]
+
+    zhaojia = skill_level(ch, "jibenzhaojia")
+    qg = skill_level(ch, "qinggong") + skill_level(ch, "jibenshenfa")
+    parry_mod = d20.attr_mod(a["gen"]) + d20.skill_mod(zhaojia) + int(tm.get("parry") or 0) // 4
+    ac = 10 + parry_mod + d20.skill_mod(qg) // 3
+    ac_parts = d20.mods_of(
+        ("根骨 " + str(a["gen"]), d20.attr_mod(a["gen"]), "attr"),
+        ("基本招架 " + str(zhaojia) + " 级", d20.skill_mod(zhaojia), "skill"),
+        ("禀赋招架", int(tm.get("parry") or 0) // 4, "trait"),
+        ("轻功 " + str(qg) + " 级", d20.skill_mod(qg) // 3, "skill"),
+    )
+
+    main_lv = int(main["level"]) if main else 0
+    main_attr = str(main.get("attr") or "li") if main else "li"
+    attack_parts = d20.mods_of(
+        (_attr_name(main_attr) + " " + str(a[main_attr]), d20.attr_mod(a[main_attr]), "attr"),
+        ((main["name"] + " " + str(main_lv) + " 级") if main else "主修 无",
+         d20.skill_mod(main_lv), "skill"),
+        ("禀赋命中", int(tm.get("hit") or 0) // 3, "trait"),
+    )
+    attack = sum(int(m["value"]) for m in attack_parts)
+
+    dice = WEAPON_DICE.get(str(main["id"]) if main else "", DEFAULT_DICE)
+    flat = (8 + d20.attr_mod(a["li"]) * 2 + d20.skill_mod(main_lv) * 2
+            + int(tm.get("damage") or 0) // 2)
+    pierce = int(combat.get("defense") or 0) // 3
+
+    init_parts = d20.mods_of(
+        ("身法 " + str(a["shen"]), d20.attr_mod(a["shen"]), "attr"),
+        ("轻功 " + str(qg) + " 级", d20.skill_mod(qg) // 2, "skill"),
+        ("禀赋先手", int(tm.get("speed") or 0) // 4, "trait"),
+    )
+    neili_tier = min(3, int(derived["neili_max"]) // 40)
+
+    def save(attr_key: str, sid: str) -> dict[str, Any]:
+        lv = skill_level(ch, sid)
+        sname = str((SKILL_BY_ID.get(sid) or {}).get("name") or sid)
+        parts = d20.mods_of(
+            (_attr_name(attr_key) + " " + str(a[attr_key]), d20.attr_mod(a[attr_key]), "attr"),
+            (sname + " " + str(lv) + " 级", d20.skill_mod(lv) // 2, "skill"),
+        )
+        return {"total": sum(int(m["value"]) for m in parts), "parts": parts}
+
+    return {
+        "ac": int(ac),
+        "ac_parts": ac_parts,
+        "attack": int(attack),
+        "attack_parts": attack_parts,
+        "damage": {"count": int(dice[0]), "sides": int(dice[1]), "flat": int(flat),
+                   "text": str(dice[0]) + "d" + str(dice[1]) + "+" + str(flat),
+                   "weapon": (main["name"] if main else "空手")},
+        "pierce": int(pierce),
+        "init": {"total": sum(int(m["value"]) for m in init_parts), "parts": init_parts},
+        "saves": {
+            "gen": save("gen", "jibenneigong"),
+            "ding": save("ding", "jibenzhaojia"),
+            "shen": save("shen", "jibenshenfa"),
+        },
+        "perform": {"neili_tier": int(neili_tier),
+                    "note": "绝招加值 = 招式对应根骨 + 招式等级 + 内力档次"},
+        "crit_range": int(20 - min(3, int(combat.get("crit") or 0) // 5)),
+        "main": dict(main) if main else None,
+    }
 
 
 def cap_for(ch: dict[str, Any], sk: dict[str, Any]) -> int:
@@ -1013,6 +1112,7 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
             for key in ("hp", "spirit", "neili", "jingli")
         },
         "combat": d["combat"],
+        "d20": d20_stats(ch),
         "fame": int(ch.get("fame") or 0),
         "fame_needed": d["fame_needed"],
         "morality": int(ch.get("morality") or 0),
@@ -1070,6 +1170,8 @@ def schema() -> dict[str, Any]:
             "damage": "伤害", "control": "控住", "defend": "守势",
             "evade": "身法", "heal": "疗伤", "buff": "涨己",
         },
+        "dc_tiers": __import__("recto.pet.d20", fromlist=["x"]).dc_table(),
+        "d20_rules": __import__("recto.pet.d20", fromlist=["x"]).rulebook(),
         "combat_labels": {
             "hit": "命中", "dodge": "闪避", "parry": "招架", "damage": "伤害",
             "defense": "防御", "speed": "先手", "crit": "暴击", "take_pct": "减伤",

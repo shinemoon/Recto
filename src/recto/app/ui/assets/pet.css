@@ -474,3 +474,148 @@
   font-size: .86rem; line-height: 1.6; opacity: .86;
 }
 .adv-duel-f { margin-top: 8px; font-size: .82rem; }
+
+/* ── 掷骰战报 (d20) ─────────────────────────────────────────── */
+.rc-pet .d20-rolls {
+  display: flex; flex-direction: column; gap: 3px; margin: 5px 0 2px;
+}
+.rc-pet .d20-row {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) 30px minmax(0, 1fr) auto auto;
+  gap: 8px; align-items: center;
+  font-size: .79rem; line-height: 1.45;
+  padding: 3px 6px;
+  border-left: 2px solid var(--rc-outline-variant);
+  background: color-mix(in oklab, var(--rc-on-surface, #1a1a1a) 3%, transparent);
+}
+.rc-pet .d20-row.ok { border-left-color: var(--rc-ok, #2e7d32); }
+.rc-pet .d20-row.err { border-left-color: var(--rc-danger, #b3261e); }
+.rc-pet .d20-row.crit {
+  border-left-color: var(--rc-primary, #6750a4);
+  background: color-mix(in oklab, var(--rc-primary, #6750a4) 11%, transparent);
+}
+.rc-pet .d20-row.fumble {
+  border-left-color: var(--rc-danger, #b3261e);
+  background: color-mix(in oklab, var(--rc-danger, #b3261e) 11%, transparent);
+}
+.rc-pet .d20-k {
+  color: var(--rc-mute); font-size: .76rem; white-space: nowrap;
+}
+.rc-pet .d20-face {
+  font-variant-numeric: tabular-nums; font-weight: 700; font-size: .9rem;
+  text-align: center; min-width: 26px; padding: 0 4px;
+  border: 1px solid var(--rc-outline-variant);
+  border-radius: var(--rc-radius-chip, 6px);
+  background: var(--rc-surface, #fff);
+}
+.rc-pet .d20-row.crit .d20-face { border-color: var(--rc-primary, #6750a4); }
+.rc-pet .d20-row.fumble .d20-face { border-color: var(--rc-danger, #b3261e); }
+.rc-pet .d20-mods { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.rc-pet .d20-mod {
+  font-size: .73rem; color: var(--rc-mute);
+  background: color-mix(in oklab, var(--rc-on-surface, #1a1a1a) 6%, transparent);
+  padding: 1px 5px; border-radius: var(--rc-radius-chip, 6px);
+  white-space: nowrap;
+}
+.rc-pet .d20-mod b { color: var(--rc-ink); font-weight: 600; }
+.rc-pet .d20-mod[data-src="trait"] {
+  background: color-mix(in oklab, var(--rc-primary, #6750a4) 12%, transparent);
+}
+.rc-pet .d20-tot {
+  font-variant-numeric: tabular-nums; color: var(--rc-mute);
+  white-space: nowrap; font-size: .78rem;
+}
+.rc-pet .d20-tot i { font-style: normal; opacity: .78; }
+.rc-pet .d20-v { font-weight: 600; font-size: .78rem; white-space: nowrap; }
+.rc-pet .d20-row.ok .d20-v { color: var(--rc-ok, #2e7d32); }
+.rc-pet .d20-row.err .d20-v { color: var(--rc-danger, #b3261e); }
+.rc-pet .d20-dice { font-size: .75rem; color: var(--rc-mute); padding-left: 2px; }
+
+/* 完整战报 —— 可展开 */
+.rc-pet .duel-log { margin-top: 8px; }
+.rc-pet .duel-log > summary {
+  cursor: pointer; font-size: .82rem;
+  color: var(--rc-primary, #6750a4); padding: 3px 0;
+}
+.rc-pet .duel-rounds {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.rc-pet .duel-round {
+  display: grid; grid-template-columns: 18px 20px minmax(0, 1fr);
+  gap: 6px; align-items: start; font-size: .83rem;
+}
+.rc-pet .duel-r {
+  color: var(--rc-mute); font-size: .73rem; font-variant-numeric: tabular-nums;
+  padding-top: 2px;
+}
+.rc-pet .duel-side-tag {
+  font-size: .72rem; text-align: center; padding-top: 1px;
+  color: var(--rc-mute);
+  border: 1px solid var(--rc-outline-variant);
+  border-radius: var(--rc-radius-chip, 6px);
+}
+.rc-pet .duel-round[data-kind="hit"] .duel-side-tag { color: var(--rc-ok, #2e7d32); }
+.rc-pet .duel-round[data-kind="fail"] .duel-side-tag { color: var(--rc-danger, #b3261e); }
+.rc-pet .duel-text { line-height: 1.6; }
+.rc-pet .duel-move { color: var(--rc-primary, #6750a4); margin-right: 4px; }
+
+/* 交手数据 */
+.rc-pet .duel-stats { margin-top: 8px; }
+.rc-pet .duel-stats > summary {
+  cursor: pointer; font-size: .8rem; color: var(--rc-mute);
+}
+.rc-pet .duel-sides { display: grid; gap: 4px; margin: 6px 0; }
+.rc-pet .duel-side {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline;
+  font-size: .79rem; color: var(--rc-mute);
+}
+.rc-pet .duel-side b { color: var(--rc-ink); font-weight: 600; }
+
+/* 路上的坎 */
+.rc-pet .adv-checks {
+  margin: 12px 0 4px; padding: 12px 14px;
+  background: color-mix(in oklab, var(--rc-on-surface, #1a1a1a) 4%, transparent);
+  border-left: 3px solid var(--rc-outline, rgba(0,0,0,.28));
+}
+.rc-pet .adv-checks-h {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline;
+  margin-bottom: 8px; font-size: .92rem;
+}
+.rc-pet .adv-check-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.rc-pet .adv-check {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+  font-size: .85rem;
+}
+.rc-pet .adv-check-out { color: var(--rc-mute); font-size: .81rem; }
+.rc-pet .adv-check .d20-row { flex: 1 1 100%; }
+.rc-pet .adv-chip.warn {
+  background: color-mix(in oklab, var(--rc-danger, #b3261e) 14%, transparent);
+  color: var(--rc-danger, #b3261e);
+}
+
+/* 人物卡: 交手数据 (d20) */
+.rc-pet .cs-d20 { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 8px; }
+.rc-pet .cs-d20-row {
+  display: grid; grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px; align-items: baseline; font-size: .82rem;
+}
+.rc-pet .cs-d20-l { color: var(--rc-mute); font-size: .78rem; }
+.rc-pet .cs-d20-v { display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline; }
+.rc-pet .cs-d20-v .d20-mod { font-size: .72rem; }
+
+@media (max-width: 620px) {
+  .rc-pet .d20-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    grid-template-areas: "face mods v" "tot tot tot";
+    row-gap: 2px;
+  }
+  .rc-pet .d20-k { display: none; }
+  .rc-pet .d20-face { grid-area: face; }
+  .rc-pet .d20-mods { grid-area: mods; }
+  .rc-pet .d20-v { grid-area: v; }
+  .rc-pet .d20-tot { grid-area: tot; padding-left: 34px; }
+}

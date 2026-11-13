@@ -1,19 +1,22 @@
-"""遭遇结算 —— 书宠在江湖上真打一场。
+"""遭遇结算 —— 书宠在江湖上真打一场 (**d20 桌游口径**)。
 
-**为什么要有这一层**: 属性、技能、绝招如果只写在面板上, 故事里就只能靠模型
-随口编"它一刀劈开了"。有了这一层, 每一回游历的"转"是**算出来的**:
-命中看身法与主修、伤害看臂力与兵刃、内力被绝招吃掉、失手会反噬、打输了就伤。
-故事只负责把这一场照实写出来, 不许自己判胜负。
+**为什么要有这一层**: 属性、技能、禀赋如果只写在面板上, 故事里就只能靠模型
+随口编"它一刀劈开了"。有了这一层, 每一回游历的"转"是**掷骰掷出来的**:
+先攻看身法, 出手是 d20 + 命中加值 对护体, 伤害是兵刃骰 + 臂力, 绝招要先运功,
+走偏会反噬, 被控要掷豁免, 打输了就带伤。故事只负责把这一场**照实**写出来。
 
-**口径 (都来自 charsheet, 不另立一套)**
-  · 出手顺序 = ``speed`` + 一点抖动 (身法 + 轻功 + 禀赋)
-  · 命中率   = 55 + (我方 hit − 对方 dodge) × 0.5, 夹在 15~92
-  · 招架     = 命中之后还有 ``parry × 0.3``% 的机会卸掉四成力
-  · 伤害     = 基础伤害 × 0.85~1.15 − 对方 defense × 0.5, 暴击 ×1.7
-  · 绝招     = 内力够才用; 成功率 ``charsheet.perform_rate``; 失败按 ``fail`` 级反噬
-  · 结果     = 一方气血归零 (倒下), 或 12 回合后比气血比例 (平手)
+**规矩 (d20, 见 ``d20`` 模块)**
+  · 先攻      d20 + 身法加值 + 轻功 (每场掷一次, 高者先出手)
+  · 攻击检定  d20 + 命中加值 (根骨 / 主修 / 禀赋拆开记) vs 对方护体
+  · 大成功    d20 = 20 必中, 伤害骰掷两遍; 骰点进暴击区间也算 (禀赋会放宽)
+  · 大失败    d20 = 1 必不中, 自己脱力受伤, 门户大开 (对方下一拍 +2)
+  · 运功检定  d20 + 绝招加值 vs 招式难度 (由招式成功率折算); 不过则走偏反噬
+  · 豁免检定  带"控住"的绝招命中后, 对方掷根骨豁免 vs 8 + 我方绝招加值
+  · 伤害      兵刃骰 + 臂力加值×2 + 主修加值×2 + 8, 再减对方卸力
+  · 结果      一方气血归零 (倒下), 或打满十二拍比气血比例 (半成以内算平手)
 
-**只做一件事**: 把结果与消耗写回存档, 并返回一份可读的战报。
+**只做一件事**: 把结果与消耗写回存档, 并返回一份**可展开的战报** ——
+每一拍带 ``rolls`` (逐条掷骰明细), 页面点开就能看见"为什么这一下中了"。
 """
 from __future__ import annotations
 
@@ -22,8 +25,9 @@ import zlib
 from typing import Any
 
 from recto.pet import charsheet as cs
+from recto.pet import d20 as D
 
-#: 最多打几回合 (再久就不是"遇上", 是决战了)
+#: 最多打几拍 (再久就不是"遇上", 是决战了)
 MAX_ROUNDS = 12
 
 EFFECT_CN = {
@@ -59,6 +63,8 @@ def _terms_of(cat: str, terms: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [t for t in (terms or []) if str(t.get("cat") or "") == cat and t.get("term")]
 
 
+# ------------------------------------------------------------------ 对手
+
 def make_foe(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
              seed: int | None = None) -> dict[str, Any]:
     """按书宠当前的份量, 造一个挡路的人。
@@ -76,7 +82,7 @@ def make_foe(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
     objects = _terms_of("object", terms)
 
     if persons:
-        name = f"一个自称「{str(persons[0]['term'])[:8]}」的人"
+        name = "一个自称「" + str(persons[0]["term"])[:8] + "」的人"
         why = "在道上堵住了这条路"
     else:
         pick = rng.choice(FOE_POOL)
@@ -110,7 +116,7 @@ def make_foe(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
     pseudo = {"level": lv, "exp": lv * lv * 50, "attrs": attr, "skills": skills,
               "traits": [], "school": "", "vein": 0}
     d = cs.derive(pseudo)
-    d = _normalize_foe(ch, d, rng)
+    stats = _normalize_foe_stats(ch, cs.d20_stats(pseudo), rng)
 
     return {
         "name": name,
@@ -123,124 +129,173 @@ def make_foe(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
         "attrs": attr,
         "skills": skills,
         "combat": d["combat"],
-        "hp": d["hp_max"], "hp_max": d["hp_max"],
+        "d20": stats,
+        "hp": int(stats["hp"]), "hp_max": int(stats["hp"]),
         "neili": d["neili_max"], "neili_max": d["neili_max"],
         "stun": 0,
         "trait_mods": {},
     }
 
 
-def _normalize_foe(ch: dict[str, Any], d: dict[str, Any],
-                   rng: random.Random) -> dict[str, Any]:
-    """把对手的数值拉到书宠自己的量级上。
+def _normalize_foe_stats(ch: dict[str, Any], stats: dict[str, Any],
+                         rng: random.Random) -> dict[str, Any]:
+    """把对手的 d20 数值拉到书宠自己的量级上。
 
-    为什么不让等级差决定强弱: 书宠的成长很慢 (五天一级), 偶尔遇到"比我高三级"
-    的人就会变成必输, 故事里就成了"每回都挨打"。江湖上的遭遇应该**互有胜负**,
-    所以按对方当前战力做归一: 伤害 / 命中 / 闪避 / 气血 都在我方 ±20% 内浮动。
+    为什么不让等级差决定强弱: 书宠的成长很慢, 偶尔遇到"比我高三级"的人
+    就会变成必输, 故事里就成了"每回都挨打"。江湖上的遭遇应该**互有胜负**,
+    所以护体 / 命中 / 气血 都在我方附近浮动 (±2 点 / 七到九成半)。
     """
     mine = cs.derive(ch)
-    mc, fc = mine["combat"], d["combat"]
-    k = rng.uniform(0.82, 1.12)
+    my = cs.d20_stats(ch)
 
-    def ratio(a: int, b: int, lo: float, hi: float) -> float:
-        return _clamp((a / max(1, b)) * k, lo, hi)
+    stats = dict(stats)
+    stats["ac"] = int(_clamp(my["ac"] + rng.randint(-2, 2), 8, 24))
+    stats["attack"] = int(_clamp(my["attack"] + rng.randint(-2, 2), -2, 16))
+    stats["init"] = {"total": int(_clamp(my["init"]["total"] + rng.randint(-2, 2), -3, 16)),
+                     "parts": stats["init"]["parts"]}
+    hp = max(20, int(round(mine["hp_max"] * rng.uniform(0.72, 0.96))))
+    stats["hp"] = hp
+    # 伤害平值也归一: 比我重的一拳不该一掌打掉我半条命
+    flat = int(stats["damage"]["flat"])
+    myflat = int(my["damage"]["flat"])
+    stats["damage"] = dict(stats["damage"],
+                           flat=int(_clamp(round(flat * 0.6 + myflat * 0.4), 4, 60)))
+    return stats
 
-    fc["damage"] = max(4, int(round(fc["damage"] * ratio(mc["damage"], fc["damage"], 0.65, 1.0))))
-    fc["hit"] = int(round(fc["hit"] + rng.uniform(-6, 6) + (mc["hit"] - fc["hit"]) * 0.6))
-    fc["dodge"] = int(round(fc["dodge"] + rng.uniform(-6, 6) + (mc["dodge"] - fc["dodge"]) * 0.6))
-    fc["parry"] = int(round(fc["parry"] + (mc["parry"] - fc["parry"]) * 0.6))
-    fc["defense"] = int(round(fc["defense"] * ratio(mc["defense"], fc["defense"], 0.7, 1.25)))
-    fc["speed"] = int(round(fc["speed"] + (mc["speed"] - fc["speed"]) * 0.6))
-    d["hp_max"] = max(30, int(round(mine["hp_max"] * rng.uniform(0.7, 0.95))))
-    d["neili_max"] = max(20, int(round(mine["neili_max"] * rng.uniform(0.8, 1.2))))
-    return d
 
+# ------------------------------------------------------------------ 出场的两个人
 
-def _my_fighter(ch: dict[str, Any]) -> dict[str, Any]:
-    """把书宠包成一个"打架用的"结构 (气血/内力从存档里取当前值)。"""
-    d = cs.derive(ch)
-    res = cs.resources(ch)
-    pfms = []
+def _pfms_from(ch: dict[str, Any], *, is_foe: bool = False) -> list[dict[str, Any]]:
+    """把绝招整理成"掷骰要用"的样子 (难度由成功率折算成 d20 的 DC)。"""
+    out = []
     for sid, lv in (ch.get("skills") or {}).items():
         sk = cs.SKILL_BY_ID.get(str(sid))
         if not sk or sk.get("type") != "perform" or int(lv) <= 0:
             continue
-        pfms.append({
-            "id": str(sid), "name": sk["name"], "level": int(lv),
-            "cost": int(sk.get("cost") or 0),
-            "rate": cs.perform_rate(ch, sk, int(lv)),
-            "busy": int(sk.get("busy") or 0) + (1 if int(ch.get("vein") or 0) >= 10 else 0),
-            "fail": cs.perform_fail(ch, sk),
-            "effect": str(sk.get("effect") or "damage"),
-        })
-    pfms.sort(key=lambda p: -p["rate"])
-    return {
-        "name": ch.get("name") or "书宠",
-        "combat": d["combat"],
-        "hp": res["hp"]["cur"], "hp_max": res["hp"]["max"],
-        "neili": res["neili"]["cur"], "neili_max": res["neili"]["max"],
-        "pfms": pfms,
-        "stun": 0,
-        "guard": 0.0,
-        "dodge_buff": 0,
-        "dmg_buff": 0.0,
-        "low_hp_damage": int(d["combat"].get("low_hp_damage") or 0),
-    }
-
-
-def _foe_pfms(foe: dict[str, Any]) -> list[dict[str, Any]]:
-    out = []
-    for sid, lv in (foe.get("skills") or {}).items():
-        sk = cs.SKILL_BY_ID.get(str(sid))
-        if not sk or sk.get("type") != "perform":
-            continue
+        lv = int(lv)
+        if is_foe:
+            attr_v = int((ch.get("attrs") or {}).get(sk.get("attr") or "wu", 10))
+            rate = int(_clamp(int(sk.get("rate") or 40) + lv * 2, 5, 92))
+            bonus = D.attr_mod(attr_v) + D.skill_mod(lv) + 1
+        else:
+            rate = cs.perform_rate(ch, sk, lv)
+            attr_v = int(cs.effective_attrs(ch).get(sk.get("attr") or "wu", 10))
+            bonus = D.attr_mod(attr_v) + D.skill_mod(lv)
         out.append({
-            "id": str(sid), "name": sk["name"], "level": int(lv),
+            "id": str(sid), "name": str(sk["name"]), "level": lv,
             "cost": int(sk.get("cost") or 0),
-            "rate": int(_clamp(int(sk.get("rate") or 40) + int(lv) * 2, 5, 90)),
+            "rate": int(rate),
+            "dc": int(_clamp(21 - round(rate / 5), 6, 18)),
+            "bonus": int(bonus),
             "busy": int(sk.get("busy") or 0),
             "fail": int(sk.get("fail") or 0),
             "effect": str(sk.get("effect") or "damage"),
+            "attr": str(sk.get("attr") or "wu"),
         })
     out.sort(key=lambda p: -p["rate"])
     return out
 
 
-def _hit_chance(atk: dict[str, Any], dfd: dict[str, Any]) -> float:
-    extra = dfd.get("dodge_buff") or 0
-    return _clamp(55 + (atk["combat"]["hit"] - (dfd["combat"]["dodge"] + extra)) * 0.5, 15, 92)
+ATK_WORD = {"剑法": "一剑", "刀法": "一刀", "棍法": "一棍", "拳法": "一拳",
+            "掌法": "一掌", "指法": "一指", "腿法": "一腿"}
 
 
-def _damage(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
-            mult: float = 1.0) -> tuple[int, bool, str]:
-    base = atk["combat"]["damage"] * mult
-    # 残血拼命 (禀赋「死缠烂打」)
-    if atk.get("low_hp_damage") and atk["hp"] <= atk["hp_max"] * 0.3:
-        base *= 1 + atk["low_hp_damage"] / 100.0
-    base *= rng.uniform(0.85, 1.15)
-    base -= dfd["combat"]["defense"] * 0.5
-    crit = rng.random() * 100 < atk["combat"].get("crit", 0)
-    if crit:
-        base *= 1.6
-    # 守势 / 门派守招
-    base *= (1 - (dfd.get("guard") or 0.0))
-    # 招架
-    parried = rng.random() * 100 < _clamp(dfd["combat"]["parry"] * 0.3, 0, 30)
-    if parried:
-        base *= 0.6
-    # 禀赋减伤
-    take = int(dfd["combat"].get("take_pct") or 0)
-    if take:
-        base *= (100 + take) / 100.0
-    dmg = max(1, int(round(base)))
-    return dmg, crit, ("招架" if parried else ("暴击" if crit else ""))
+def _atk_word(fight: dict[str, Any]) -> str:
+    """空手/兵器的称呼 —— 故事与战报里都要对得上 ("一剑" 不是 "一拳")。"""
+    return ATK_WORD.get(str((fight.get("damage") or {}).get("weapon") or ""), "一下")
 
+
+def _fighter(name: str, stats: dict[str, Any], *, hp: int, hp_max: int,
+             neili: int, neili_max: int, pfms: list[dict[str, Any]],
+             side: str) -> dict[str, Any]:
+    return {
+        "name": name, "side": side,
+        "hp": int(hp), "hp_max": int(hp_max),
+        "neili": int(neili), "neili_max": int(neili_max),
+        "ac": int(stats["ac"]), "ac_parts": list(stats.get("ac_parts") or []),
+        "attack": int(stats["attack"]), "attack_parts": list(stats.get("attack_parts") or []),
+        "damage": dict(stats["damage"]),
+        "pierce": int(stats.get("pierce") or 0),
+        "init": dict(stats.get("init") or {"total": 0, "parts": []}),
+        "saves": dict(stats.get("saves") or {}),
+        "crit_range": int(stats.get("crit_range") or 20),
+        "perform": dict(stats.get("perform") or {}),
+        "pfms": pfms,
+        "stun": 0,
+        "guard": 0.0,
+        "ac_buff": 0,
+        "atk_buff": 0,
+        "exposed": 0,
+    }
+
+
+def _my_fighter(ch: dict[str, Any]) -> dict[str, Any]:
+    """把书宠包成一个"交手用的"结构 (气血/内力从存档里取当前值)。"""
+    res = cs.resources(ch)
+    return _fighter(ch.get("name") or "书宠", cs.d20_stats(ch),
+                    hp=res["hp"]["cur"], hp_max=res["hp"]["max"],
+                    neili=res["neili"]["cur"], neili_max=res["neili"]["max"],
+                    pfms=_pfms_from(ch), side="me")
+
+
+def _foe_fighter(foe: dict[str, Any]) -> dict[str, Any]:
+    stats = dict(foe.get("d20") or {})
+    if not stats:
+        pseudo = {"level": foe.get("level") or 1, "exp": 100,
+                  "attrs": foe.get("attrs") or {},
+                  "skills": foe.get("skills") or {}, "traits": [], "school": "", "vein": 0}
+        stats = cs.d20_stats(pseudo)
+    hp = int(foe.get("hp") or stats.get("hp") or 30)
+    return _fighter(foe.get("name") or "对手", stats, hp=hp,
+                    hp_max=int(foe.get("hp_max") or hp),
+                    neili=int(foe.get("neili") or 0),
+                    neili_max=int(foe.get("neili_max") or 1),
+                    pfms=_pfms_from(foe, is_foe=True), side="foe")
+
+
+# ------------------------------------------------------------------ 掷骰
+
+def _attack_check(rng: random.Random, atk: dict[str, Any], dfd: dict[str, Any],
+                  *, extra: list[dict[str, Any]] | None = None,
+                  label: str = "攻击检定") -> dict[str, Any]:
+    mods = list(atk.get("attack_parts") or []) + list(extra or [])
+    bonus = int(atk.get("atk_buff") or 0) + int(atk.get("exposed") or 0) * 2
+    c = D.check(rng, label=label, dc=int(dfd["ac"]) + int(dfd.get("ac_buff") or 0),
+                mods=mods, kind="attack", bonus=bonus)
+    # 暴击区间 (禀赋「胆大心细」把 19 也算大成功)
+    if not c["crit"] and c["success"] and c["d20"] >= int(atk.get("crit_range") or 20):
+        c["crit"] = True
+        c["degree"] = "crit"
+        c["degree_cn"] = D.DEGREE_CN["crit"]
+        c["text"] = D.describe(c)
+    return c
+
+
+def _damage_roll(rng: random.Random, atk: dict[str, Any], dfd: dict[str, Any],
+                 crit: bool) -> dict[str, Any]:
+    dmg = atk["damage"]
+    count = int(dmg["count"]) * (2 if crit else 1)
+    dice = D.roll_dice(rng, count, int(dmg["sides"]))
+    raw = dice["sum"] + int(dmg["flat"])
+    guard = float(dfd.get("guard") or 0.0)
+    taken = max(1, int(round(raw * (1.0 - guard))) - int(dfd.get("pierce") or 0))
+    return {"dice": dice, "raw": int(raw), "taken": int(taken),
+            "guard": round(guard, 2), "pierce": int(dfd.get("pierce") or 0)}
+
+
+def _save_check(rng: random.Random, dfd: dict[str, Any], *, label: str,
+                dc: int) -> dict[str, Any]:
+    parts = ((dfd.get("saves") or {}).get("gen") or {}).get("parts") or []
+    return D.check(rng, label=label, dc=int(dc), mods=list(parts), kind="save")
+
+
+# ------------------------------------------------------------------ 一拍
 
 def _pick_pfm(fight: dict[str, Any], rng: random.Random) -> dict[str, Any] | None:
     usable = [p for p in (fight.get("pfms") or []) if p["cost"] <= fight["neili"]]
     if not usable:
         return None
-    # 不是每一下都放绝招: 起手先用狠招, 之后看情况 (内力见底就留着)
+    # 不是每一下都放绝招: 内力见底就留着, 平时也只用四成
     if rng.random() > 0.45:
         return None
     if fight["neili"] < fight["neili_max"] * 0.25 and rng.random() > 0.5:
@@ -248,88 +303,152 @@ def _pick_pfm(fight: dict[str, Any], rng: random.Random) -> dict[str, Any] | Non
     return usable[0] if rng.random() > 0.4 else rng.choice(usable)
 
 
-def _act(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
-         log: list[dict[str, Any]], rnd: int, side: str) -> None:
-    """一次出手: 选招 → 命中 → 结算。就地改 atk / dfd。"""
+def _log(log: list[dict[str, Any]], rnd: int, side: str, kind: str, text: str, *,
+         atk: dict[str, Any], dfd: dict[str, Any], move: str = "",
+         dmg: int = 0, self_dmg: int = 0, effect: str = "",
+         rolls: list[dict[str, Any]] | None = None,
+         dice: dict[str, Any] | None = None) -> None:
+    log.append({
+        "r": int(rnd), "side": side, "move": move, "kind": kind, "text": text,
+        "dmg": int(dmg), "self": int(self_dmg), "effect": effect,
+        "hp": {"a": int(atk["hp"]), "b": int(dfd["hp"])},
+        "rolls": rolls or [], "dice": dice or {},
+    })
+
+
+def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
+          log: list[dict[str, Any]], rnd: int) -> None:
+    """一次出手: 解定身 → 选招 → 运功 → 攻击检定 → 伤害/效果。就地改两人。"""
+    side = str(atk["side"])
+
+    # 被定住: 掷豁免挣脱 (不过就再错过一拍)
     if atk["stun"] > 0:
         atk["stun"] -= 1
-        log.append({"r": rnd, "side": side, "move": "", "kind": "stun",
-                    "text": f"{atk['name']} 一时动弹不得, 错过一拍",
-                    "dmg": 0, "hp": {"a": atk["hp"], "b": dfd["hp"]}})
+        save = _save_check(rng, atk, label="定身豁免", dc=12)
+        _log(log, rnd, side, "stun",
+             (f"{atk['name']} 一时动弹不得 (豁免 {save['total']}/{save['dc']} "
+              f"{'脱身' if save['success'] else '仍被定住'})"),
+             atk=atk, dfd=dfd, rolls=[save])
+        if save["success"]:
+            atk["stun"] = 0
         return
 
-    atk["guard"] = max(0.0, (atk.get("guard") or 0.0) - 0.25) if atk.get("guard") else 0.0
+    # 守势逐拍消退
+    if atk.get("guard"):
+        atk["guard"] = max(0.0, round(float(atk["guard"]) - 0.25, 2))
+    atk["ac_buff"] = 0
+    atk["atk_buff"] = 0
+    atk["exposed"] = 0
+
     pfm = _pick_pfm(atk, rng)
-    move = ""
-    mult = 1.0
-    effect = "damage"
-    success = True
+    rolls: list[dict[str, Any]] = []
+    move, effect = "", "damage"
+
     if pfm:
         atk["neili"] = max(0, atk["neili"] - pfm["cost"])
-        move = pfm["name"]
-        effect = pfm["effect"]
-        mult = {"damage": 1.40, "control": 0.60, "defend": 0.50,
-                "evade": 0.75, "heal": 0.0, "buff": 0.85}.get(effect, 1.0)
-        success = rng.random() * 100 < pfm["rate"]
+        move, effect = pfm["name"], pfm["effect"]
+        tier = int(atk.get("perform", {}).get("neili_tier") or 0)
+        pc = D.check(rng, label="运功 · " + move, dc=int(pfm["dc"]),
+                     mods=D.mods_of((f"招式 {move} {pfm['level']} 级",
+                                     D.skill_mod(pfm["level"]), "skill"),
+                                    ("内力档次", tier, "situ")),
+                     kind="perform")
+        rolls.append(pc)
+        if not pc["success"]:
+            # 骰出 1 = 内息倒冲, 真反噬; 只是没过难度 = 招式没运成, 手还照常递出去
+            if pc["fumble"]:
+                back = 2 + int(pfm["fail"]) * (2 + int(atk["damage"]["flat"]) // 12)
+                atk["hp"] = max(0, atk["hp"] - back)
+                _log(log, rnd, side, "fail",
+                     f"{atk['name']} 一招「{move}」走偏, 内息倒冲, 自伤 {back}",
+                     atk=atk, dfd=dfd, move=move, self_dmg=back, effect=effect,
+                     rolls=rolls)
+                return
+            _log(log, rnd, side, "miss",
+                 f"{atk['name']} 运「{move}」没跟上内息, 花样散了, 只好照常递出一招",
+                 atk=atk, dfd=dfd, move="", rolls=rolls)
+            pfm = None
+            move, effect = "", "damage"
 
-    if pfm and not success:
-        # 反噬: 自己吃一下, 内力白花
-        back = 2 + pfm["fail"] * (2 + int(atk["combat"]["damage"]) // 12)
-        atk["hp"] = max(0, atk["hp"] - back)
-        log.append({"r": rnd, "side": side, "move": move, "kind": "fail",
-                    "text": f"{atk['name']} 一招「{move}」走偏, 反噬己身, 伤 {back}",
-                    "dmg": 0, "self": back, "hp": {"a": atk["hp"], "b": dfd["hp"]}})
+    # 疗伤 / 守势 / 身法 / 涨己 —— 不必打到人
+    if pfm and effect in ("heal", "defend", "evade", "buff"):
+        flat = int(atk["damage"]["flat"])
+        if effect == "heal":
+            heal = max(1, int(flat * 0.8))
+            atk["hp"] = min(atk["hp_max"], atk["hp"] + heal)
+            _log(log, rnd, side, "heal",
+                 f"{atk['name']} 用「{move}」调息, 回气 {heal}", atk=atk, dfd=dfd,
+                 move=move, effect=effect, rolls=rolls)
+        elif effect == "defend":
+            atk["guard"] = 0.30
+            _log(log, rnd, side, "defend",
+                 f"{atk['name']} 摆出「{move}」, 稳住门户 (卸力三成)", atk=atk, dfd=dfd,
+                 move=move, effect=effect, rolls=rolls)
+        elif effect == "evade":
+            atk["ac_buff"] = 3
+            _log(log, rnd, side, "evade",
+                 f"{atk['name']} 依「{move}」游走, 身影散开 (护体 +3)", atk=atk, dfd=dfd,
+                 move=move, effect=effect, rolls=rolls)
+        else:
+            atk["atk_buff"] = 2
+            _log(log, rnd, side, "buff",
+                 f"{atk['name']} 运「{move}」通身, 下一拍更沉 (命中 +2)", atk=atk, dfd=dfd,
+                 move=move, effect=effect, rolls=rolls)
         return
 
-    if effect == "heal":
-        heal = max(1, int(atk["combat"]["damage"] * 0.8))
-        atk["hp"] = min(atk["hp_max"], atk["hp"] + heal)
-        log.append({"r": rnd, "side": side, "move": move, "kind": "heal",
-                    "text": f"{atk['name']} 用「{move}」调息, 回气 {heal}",
-                    "dmg": 0, "hp": {"a": atk["hp"], "b": dfd["hp"]}})
-        return
-    if effect == "defend":
-        atk["guard"] = 0.30
-        atk["dmg_buff"] = 0.0
-        log.append({"r": rnd, "side": side, "move": move, "kind": "defend",
-                    "text": f"{atk['name']} 摆出「{move}」, 稳住门户",
-                    "dmg": 0, "hp": {"a": atk["hp"], "b": dfd["hp"]}})
-        return
-    if effect == "evade":
-        atk["dodge_buff"] = 15
-        mult = 0.75
-    if effect == "control":
-        mult = 0.65
+    extra = []
+    if pfm:
+        extra.append({"name": "绝招加值", "value": 2, "src": "skill"})
+    atk_check = _attack_check(rng, atk, dfd, extra=extra)
+    rolls.append(atk_check)
 
-    chance = _hit_chance(atk, dfd)
-    if rng.random() * 100 >= chance:
-        log.append({"r": rnd, "side": side, "move": move, "kind": "miss",
-                    "text": (f"{atk['name']} 一招「{move}」出手, 被 {dfd['name']} 让开了"
-                             if move else
-                             f"{atk['name']} 一拳递过去, 被 {dfd['name']} 让开了"),
-                    "dmg": 0, "hp": {"a": atk["hp"], "b": dfd["hp"]}})
+    if not atk_check["success"]:
+        if atk_check["fumble"]:
+            atk["exposed"] = 1
+            back = 1 + int(atk["damage"]["flat"]) // 12
+            atk["hp"] = max(0, atk["hp"] - back)
+            _log(log, rnd, side, "fail",
+                 f"{atk['name']} 力用过了, 招式散掉, 反伤 {back}",
+                 atk=atk, dfd=dfd, move=move, self_dmg=back, rolls=rolls)
+            return
+        _log(log, rnd, side, "miss",
+             (f"{atk['name']} 一招「{move}」出手, 被 {dfd['name']} 让开了" if move
+              else f"{atk['name']} {_atk_word(atk)}递过去, 被 {dfd['name']} 让开了"),
+             atk=atk, dfd=dfd, move=move, rolls=rolls)
         return
 
-    dmg, crit, note = _damage(atk, dfd, rng, mult)
-    dfd["hp"] = max(0, dfd["hp"] - dmg)
-    extra = ""
+    hit = _damage_roll(rng, atk, dfd, bool(atk_check["crit"]))
+    dfd["hp"] = max(0, dfd["hp"] - hit["taken"])
+    extra_txt = ""
+    if atk_check["crit"]:
+        extra_txt += ", 正中要害"
+    if hit["guard"]:
+        extra_txt += f", 被卸去 {int(hit['guard'] * 100)}%"
+
     if pfm and effect == "control":
-        dfd["stun"] = max(dfd["stun"], int(pfm["busy"]))
-        extra = f", 定住对方 {pfm['busy']} 拍"
-    if crit:
-        extra += ", 正中要害"
-    hit_txt = (f"{atk['name']} 用「{move}」命中 {dfd['name']}, 伤 {dmg}"
-               if move else f"{atk['name']} 一拳打中 {dfd['name']}, 伤 {dmg}")
-    log.append({"r": rnd, "side": side, "move": move, "kind": "hit",
-                "text": f"{hit_txt}{(' (' + note + ')') if note else ''}{extra}",
-                "dmg": dmg, "effect": effect if pfm else "",
-                "hp": {"a": atk["hp"], "b": dfd["hp"]}})
+        dc = 8 + D.skill_mod(pfm["level"]) + int(pfm["bonus"] // 2)
+        save = _save_check(rng, dfd, label="定身豁免", dc=dc)
+        rolls.append(save)
+        if save["success"]:
+            extra_txt += ", 对方挣脱了"
+        else:
+            dfd["stun"] = max(dfd["stun"], int(pfm["busy"]))
+            extra_txt += f", 定住对方 {pfm['busy']} 拍"
 
+    hit_txt = (f"{atk['name']} 用「{move}」命中 {dfd['name']}" if move
+               else f"{atk['name']} {_atk_word(atk)}打中 {dfd['name']}")
+    _log(log, rnd, side, "hit",
+         f"{hit_txt}, 伤 {hit['taken']}{extra_txt}",
+         atk=atk, dfd=dfd, move=move, dmg=hit["taken"],
+         effect=(effect if pfm else ""), rolls=rolls, dice=hit["dice"])
+
+
+# ------------------------------------------------------------------ 结算
 
 def resolve(ch: dict[str, Any], foe: dict[str, Any] | None = None, *,
             terms: list[dict[str, Any]] | None = None,
             seed: int | None = None) -> dict[str, Any]:
-    """结算一场遭遇。就地改 ``ch`` 的 hp / neili / fame, 返回战报。"""
+    """结算一场遭遇。就地改 ``ch`` 的 hp / neili / fame, 返回可展开的战报。"""
     if seed is None:
         seed = zlib.crc32(f"{ch.get('name')}|{ch.get('level')}|{foe or ''}".encode()) & 0x7FFFFFFF
     rng = random.Random(int(seed))
@@ -337,39 +456,36 @@ def resolve(ch: dict[str, Any], foe: dict[str, Any] | None = None, *,
         foe = make_foe(ch, terms, seed=int(seed) + 1)
     else:
         foe = dict(foe)
-        foe.setdefault("stun", 0)
-        foe.setdefault("guard", 0.0)
-        foe.setdefault("dodge_buff", 0)
-    foe.setdefault("pfms", _foe_pfms(foe))
 
     me = _my_fighter(ch)
+    him = _foe_fighter(foe)
     start_hp, start_neili = me["hp"], me["neili"]
+
+    # ── 先攻: 每场掷一次
+    init_me = D.check(rng, label="先攻", dc=0, mods=list(me["init"]["parts"]),
+                      kind="initiative", allow_crit=False)
+    init_him = D.check(rng, label="先攻", dc=0, mods=list(him["init"]["parts"]),
+                       kind="initiative", allow_crit=False)
+    order = [me, him] if init_me["total"] >= init_him["total"] else [him, me]
+
     log: list[dict[str, Any]] = []
-
+    result = "draw"
     for rnd in range(1, MAX_ROUNDS + 1):
-        # 先手: 速度 + 抖动, 每回合重算 (招式会添乱)
-        me_sp = me["combat"]["speed"] + rng.uniform(-3, 3)
-        foe_sp = foe["combat"]["speed"] + rng.uniform(-3, 3)
-        order = [(me, foe, "me"), (foe, me, "foe")]
-        if foe_sp > me_sp:
-            order = [(foe, me, "foe"), (me, foe, "me")]
-        for atk, dfd, side in order:
-            if me["hp"] <= 0 or foe["hp"] <= 0:
-                break
-            _act(atk, dfd, rng, log, rnd, side)
-        if me["hp"] <= 0 or foe["hp"] <= 0:
+        if me["hp"] <= 0 or him["hp"] <= 0:
             break
+        for who in order:
+            other = him if who is me else me
+            if me["hp"] <= 0 or him["hp"] <= 0:
+                break
+            _turn(who, other, rng, log, rnd)
 
-    if foe["hp"] <= 0 and me["hp"] > 0:
-        result = "win"
-    elif me["hp"] <= 0 and foe["hp"] > 0:
-        result = "lose"
-    elif me["hp"] <= 0 and foe["hp"] <= 0:
-        result = "draw"
+        if me["hp"] <= 0 or him["hp"] <= 0:
+            result = "lose" if me["hp"] <= 0 else "win"
+            break
     else:
         # 打满回合: 比气血比例, 差 5% 以内算平手
         a = me["hp"] / max(1, me["hp_max"])
-        b = foe["hp"] / max(1, foe["hp_max"])
+        b = him["hp"] / max(1, him["hp_max"])
         if abs(a - b) < 0.05:
             result = "draw"
         else:
@@ -395,8 +511,8 @@ def resolve(ch: dict[str, Any], foe: dict[str, Any] | None = None, *,
 
     summary = {
         "win": f"赢了 —— {foe['name']} 先撑不住",
-        "lose": f"输了 —— 吃了 {foe['name']} 一记重的, 带伤退走",
-        "draw": f"打平 —— 双方各自收手, 谁都看出再打下去要断骨头",
+        "lose": f"吃了 {foe['name']} 一记重的, 带伤退走",
+        "draw": "打平 —— 双方各自收手, 谁都看出再打下去要断骨头",
     }[result]
 
     return {
@@ -411,8 +527,25 @@ def resolve(ch: dict[str, Any], foe: dict[str, Any] | None = None, *,
         "fame": fame_gain,
         "hp": {"from": start_hp, "to": me["hp"], "max": me["hp_max"]},
         "neili": {"from": start_neili, "to": me["neili"], "max": me["neili_max"]},
-        "seed": int(seed),
+        "initiative": {"order": [f["side"] for f in order],
+                       "me": init_me, "foe": init_him,
+                       "text": (("先攻: 我方先手 " if order[0] is me else "先攻: 对方先手 ")
+                                + f"(d20 {init_me['d20']} vs {init_him['d20']})")},
+        "fighters": {
+            "me": {"name": me["name"], "hp": me["hp"], "hp_max": me["hp_max"],
+                   "ac": me["ac"], "ac_parts": me["ac_parts"],
+                   "attack": me["attack"], "attack_parts": me["attack_parts"],
+                   "damage": me["damage"], "pierce": me["pierce"],
+                   "init": me["init"], "crit_range": me["crit_range"]},
+            "foe": {"name": him["name"], "hp": him["hp"], "hp_max": him["hp_max"],
+                    "ac": him["ac"], "attack": him["attack"],
+                    "damage": him["damage"], "pierce": him["pierce"],
+                    "init": him["init"], "crit_range": him["crit_range"]},
+        },
+        "rulebook": D.rulebook(),
+        "rolls": int(sum(len(e.get("rolls") or []) for e in log)),
         "rounds_used": (log[-1]["r"] if log else 0),
+        "seed": int(seed),
         "effect_cn": EFFECT_CN,
     }
 

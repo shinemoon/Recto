@@ -144,6 +144,50 @@ function renderChar(ch) {
       '</span><span class="cs-meta-v">' + esc(r[1]) + '</span></div>').join('');
   }
 
+  // 交手用的 d20 数值 —— 每一项都拆账 (根骨 / 技能 / 禀赋)
+  const d20box = $('#char-d20');
+  if (d20box) {
+    const t = ch.d20 || {};
+    const rows = [];
+    function parts(list) {
+      if (!list || !list.length) {
+        return '<span class="d20-mod" data-src="none">无加值</span>';
+      }
+      return list.map(function (m) {
+        return '<span class="d20-mod" data-src="' + esc(m.src || '') + '">' +
+          esc(m.name) + ' <b>' + signed(m.value) + '</b></span>';
+      }).join('');
+    }
+    rows.push(['护体', '10 + ' + parts(t.ac_parts) + ' = <b>' + t.ac + '</b>']);
+    rows.push(['命中', parts(t.attack_parts) + ' = <b>' + signed(t.attack) + '</b>']);
+    rows.push(['伤害', '<b>' + esc((t.damage || {}).text || '—') + '</b> · ' +
+      esc((t.damage || {}).weapon || '空手') + ' · 卸力 ' + (t.pierce == null ? '—' : t.pierce)]);
+    rows.push(['先攻', parts((t.init || {}).parts) + ' = <b>' + signed((t.init || {}).total) + '</b>']);
+    const sv = t.saves || {};
+    rows.push(['豁免', ['gen', 'ding', 'shen'].map(function (k) {
+      return { gen: '根骨', ding: '定力', shen: '身法' }[k] + ' ' +
+        signed(((sv[k] || {}).total) || 0);
+    }).join(' · ')]);
+    rows.push(['暴击', '骰出 ' + (t.crit_range || 20) + ' 以上即大成功 · 骰出 20 必中']);
+    d20box.innerHTML = rows.map(function (r) {
+      return '<div class="cs-d20-row"><span class="cs-d20-l">' + esc(r[0]) +
+        '</span><span class="cs-d20-v">' + r[1] + '</span></div>';
+    }).join('');
+    const sum = $('#char-d20-sum');
+    if (sum) sum.textContent = '护体 ' + (t.ac == null ? '—' : t.ac) +
+      ' · 命中 ' + signed(t.attack) + ' · ' + ((t.damage || {}).text || '');
+  }
+  const rules = $('#char-d20-rules');
+  if (rules && state.schema && (state.schema.d20_rules || []).length) {
+    rules.innerHTML = state.schema.d20_rules.map(function (x) {
+      return '<div class="cs-meta-row"><span class="cs-meta-v">' + esc(x) + '</span></div>';
+    }).join('');
+  } else if (rules && !rules.innerHTML) {
+    rules.innerHTML = '<div class="cs-meta-row"><span class="cs-meta-v">' +
+      '一切判定都是 d20: 骰点 + 根骨 / 技能 / 禀赋 + 情境, 与难度比大小。' +
+      '</span></div>';
+  }
+
   // 六项根骨
   const pot = $('#attr-pot');
   if (pot) {
@@ -762,11 +806,98 @@ function advParagraphs(body) {
   }).join('');
 }
 
-/** 这一回真打的那一场 (后端算出来的战报, 不是编的) */
+/* ── 掷骰 (d20) 的展示零件 ──────────────────────────────────────
+   后端把每一次掷骰拆成 mods (根骨 / 技能 / 禀赋 / 情境), 这里只负责画。
+   不在这里算任何数 —— 页面上的每一个数都是后端掷出来的。 */
+
+const SRC_CN = { attr: '根骨', skill: '技能', trait: '禀赋', situ: '情境', gear: '器物' };
+
+function signed(n) {
+  n = Number(n) || 0;
+  return (n > 0 ? '+' : '') + n;
+}
+
+function d20Verdict(c) {
+  if (c.crit) return '大成功';
+  if (c.fumble) return '大失败';
+  const kind = String(c.kind || '');
+  if (kind === 'attack') return c.success ? '中' : '不中';
+  if (kind === 'perform') return c.success ? '成了' : '没成';
+  return c.success ? '过' : '没过';
+}
+
+function rollRow(c) {
+  if (!c) return '';
+  const mods = (c.mods || []).map(function (m) {
+    return '<span class="d20-mod" data-src="' + esc(m.src || '') + '" title="' +
+      esc(SRC_CN[m.src] || m.src || '') + '">' + esc(m.name) + ' <b>' +
+      signed(m.value) + '</b></span>';
+  }).join('');
+  const bonus = Number(c.bonus || 0)
+    ? '<span class="d20-mod" data-src="situ">情境 <b>' + signed(c.bonus) + '</b></span>'
+    : '';
+  const cls = c.crit ? 'crit' : (c.fumble ? 'fumble' : (c.success ? 'ok' : 'err'));
+  const dc = Number(c.dc || 0)
+    ? '= ' + c.total + ' vs ' + c.dc +
+      (c.dc_label ? ' <i>' + esc(c.dc_label) + '</i>' : '')
+    : '= ' + c.total;
+  return '<div class="d20-row ' + cls + '">' +
+    '<span class="d20-k">' + esc(c.label || c.kind_cn || '检定') + '</span>' +
+    '<span class="d20-face" title="d20">' + esc(String(c.d20)) + '</span>' +
+    '<span class="d20-mods">' + mods + bonus + '</span>' +
+    '<span class="d20-tot">' + dc + '</span>' +
+    '<span class="d20-v">' + esc(d20Verdict(c)) + '</span>' +
+    '</div>';
+}
+
+function rollsBlock(rolls) {
+  if (!rolls || !rolls.length) return '';
+  return '<div class="d20-rolls">' + rolls.map(rollRow).join('') + '</div>';
+}
+
+function diceLine(dice) {
+  if (!dice || !dice.faces) return '';
+  return '<div class="d20-dice">伤害骰 ' + esc(dice.text || '') + '</div>';
+}
+
+/** 双方交手数据 (护体 / 命中 / 伤害骰) —— 点开才看 */
+function fightersBlock(f, init) {
+  if (!f || !f.me) return '';
+  function side(k, label) {
+    const x = f[k] || {};
+    const dmg = x.damage || {};
+    return '<div class="duel-side"><b>' + esc(x.name || label) + '</b>' +
+      '<span>护体 <b>' + (x.ac == null ? '—' : x.ac) + '</b></span>' +
+      '<span>命中 <b>' + signed(x.attack) + '</b></span>' +
+      '<span>伤害 <b>' + esc(dmg.text || '—') + '</b></span>' +
+      '<span>卸力 <b>' + (x.pierce == null ? '—' : x.pierce) + '</b></span>' +
+      (init && init[k] ? '<span>先攻 <b>' + init[k].total + '</b></span>' : '') +
+      '</div>';
+  }
+  return '<details class="duel-stats"><summary>交手数据与规则</summary>' +
+    '<div class="duel-sides">' + side('me', '我方') + side('foe', '对方') + '</div>' +
+    (init && init.text ? '<div class="cs-dim">' + esc(init.text) + '</div>' : '') +
+    '</details>';
+}
+
+/** 一拍的正文 + 掷骰明细 */
+function duelRound(r, i) {
+  const tag = r.side === 'me' ? '我' : '敌';
+  const move = r.move ? '<span class="duel-move">「' + esc(r.move) + '」</span>' : '';
+  return '<li class="duel-round" data-kind="' + esc(r.kind || '') + '">' +
+    '<span class="duel-r">' + (r.r || i + 1) + '</span>' +
+    '<span class="duel-side-tag">' + tag + '</span>' +
+    '<div class="duel-body"><div class="duel-text">' + move + esc(r.text || '') +
+    '</div>' + rollsBlock(r.rolls) + diceLine(r.dice) + '</div>' +
+    '</li>';
+}
+
+/** 这一回真打的那一场 (后端按 d20 算出来的战报, 不是编的) */
 function duelBlock(d) {
   if (!d || !d.foe) return '';
-  const rounds = (d.rounds || []).slice(0, 6);
+  const rounds = d.rounds || [];
   const res = d.result === 'win' ? 'ok' : (d.result === 'lose' ? 'err' : 'warn');
+  const hd = rounds.slice(0, 3);
   return '<div class="adv-duel">' +
     '<div class="adv-duel-h"><span class="pill ' + res + '">' +
       esc(d.result_cn || '') + '</span>' +
@@ -774,7 +905,7 @@ function duelBlock(d) {
       '<span class="cs-dim">' + esc(d.foe.arena || '') +
       (d.foe.weapon_cn ? ' · ' + esc(d.foe.weapon_cn) : '') + '</span>' +
       '<span class="cs-dim">' + esc(d.summary || '') + '</span></div>' +
-    '<div class="adv-duel-r">' + rounds.map(function (r) {
+    '<div class="adv-duel-r">' + hd.map(function (r) {
       return '<span>' + esc(r.text || '') + '</span>';
     }).join('') + '</div>' +
     (d.moves && d.moves.length
@@ -782,9 +913,39 @@ function duelBlock(d) {
           return '<span class="adv-chip ok">使 ' + esc(m) + '</span>';
         }).join('') + '</div>'
       : '') +
+    (rounds.length
+      ? '<details class="duel-log"><summary>完整战报 · ' + rounds.length + ' 拍 · ' +
+        (d.rolls || 0) + ' 次掷骰</summary>' +
+        '<ol class="duel-rounds">' + rounds.map(duelRound).join('') + '</ol>' +
+        '</details>'
+      : '') +
+    fightersBlock(d.fighters, d.initiative) +
     '<div class="cs-dim adv-duel-f">气血 ' + (d.hp ? d.hp.from + ' → ' + d.hp.to +
-      ' / ' + d.hp.max : '—') + (d.fame ? ' · 声望 +' + d.fame : '') + '</div>' +
+      ' / ' + d.hp.max : '—') + (d.fame ? ' · 声望 +' + d.fame : '') +
+      (d.neili ? ' · 内力 ' + d.neili.from + ' → ' + d.neili.to + ' / ' + d.neili.max : '') +
+      '</div>' +
     '</div>';
+}
+
+/** 路上的坎 (不打斗的判定) */
+function checksBlock(list) {
+  if (!list || !list.length) return '';
+  return '<div class="adv-checks">' +
+    '<div class="adv-checks-h"><b>路上的坎</b>' +
+    '<span class="cs-dim">' + list.map(function (c) {
+      return esc(c.label || '') + ' ' + (c.success ? '✓' : '✗');
+    }).join(' · ') + '</span></div>' +
+    '<ol class="adv-check-list">' + list.map(function (c) {
+      const pill = c.fumble ? 'err' : (c.success ? 'ok' : 'warn');
+      return '<li class="adv-check"><span class="pill ' + pill + '">' +
+        esc(c.degree_cn || (c.success ? '过' : '没过')) + '</span>' +
+        '<b>' + esc(c.label || '') + '</b>' +
+        '<span class="cs-dim">' + esc(c.target || '') + '</span>' +
+        (c.white ? '<span class="adv-chip">白检定</span>'
+                 : '<span class="adv-chip warn">红检定 · 一次定生死</span>') +
+        '<span class="adv-check-out">' + esc(c.outcome || '') + '</span>' +
+        rollRow(c) + '</li>';
+    }).join('') + '</ol></div>';
 }
 
 function renderChronicle(v) {
@@ -899,6 +1060,7 @@ function renderChronicle(v) {
           : '') +
         duelBlock(g.duel) +
         '<div class="adv-body">' + advParagraphs(latest.body) + '</div>' +
+        checksBlock(g.checks) +
         (latest.terms && latest.terms.length
           ? '<div class="adv-chips">' + latest.terms.map(function (t) {
               return '<span class="adv-chip">' + esc(t) + '</span>';
@@ -917,7 +1079,8 @@ function renderChronicle(v) {
           return '<details class="adv-item"><summary><b>第 ' + a.no + ' 回</b> ' +
             esc(a.title) + '<span class="adv-at">' +
             esc(String(a.at || '').replace('T', ' ').slice(0, 16)) + '</span></summary>' +
-            '<div class="adv-body">' + advParagraphs(a.body) + '</div></details>';
+            '<div class="adv-body">' + advParagraphs(a.body) + '</div>' +
+            checksBlock((a.growth || {}).checks) + '</details>';
         }).join('')
       : '<p class="tip">还没有更早的游历。</p>';
   }
@@ -1025,6 +1188,12 @@ function renderRunResult(r) {
     if ((d.moves || []).length) {
       lines.push('<div class="adv-run-line">使过: ' + d.moves.map(esc).join(' / ') + '</div>');
     }
+  }
+  if ((r.checks || []).length) {
+    lines.push('<div class="adv-run-line">路上的坎: ' + r.checks.map(function (c) {
+      return esc(c.label) + ' ' + (c.success ? '过' : '没过') +
+        ' (' + c.total + '/' + c.dc + ')';
+    }).join(' · ') + '</div>');
   }
   if (r.adventure) {
     lines.push('<div class="adv-run-line">游历: ' + esc(r.adventure.title) + '</div>');
