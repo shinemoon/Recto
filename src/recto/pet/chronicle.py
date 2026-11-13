@@ -41,7 +41,7 @@ log = logging.getLogger("recto.pet.chronicle")
 
 DEFAULT_CFG: dict[str, Any] = {
     "enabled": True,
-    "interval_min": 120,        # 多久推演一次
+    "interval_min": 30,         # 多久推演一次 (攒够一站约一小时阅读, 半小时看一眼)
     "lookback_hours": 48,       # 每次看多长的窗口 (有 last_at 时以 last_at 为界)
     "min_minutes": 3,           # 少于这么多分钟且无推进 → 视为没有活动
     "max_lore_books": 3,        # 一回合最多为几本书立卡
@@ -854,16 +854,29 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
             # 存**比例** (0~1), 不是百分数 —— gather 那边统一 ×100 展示
             "percent": round(float(r.get("percent_to") or 0) / 100.0, 6)}
     _prune_credit(st)
+    # 故事日只在**真走出故事**时才推进。
+    # 否则模型那一步没成 (截断/429) → 这一趟被吞掉, 读者读了半小时也看不到任何变化,
+    # 而故事时钟已经往前走了 —— 用户只会看到"从昨天到现在什么都没发生"。
+    story_day_now = int(life.story_day(ch)) if story else int(st.get("story_day") or 0)
+    if not story:
+        st["last_story_error"] = (lore.LAST_ERROR
+                                  or "模型没写出这一回 (输出不完整)")
+        log.warning("推演 · 这一回没走出故事, 故事日不推进 (还欠一趟): %s",
+                    st["last_story_error"])
+    else:
+        st.pop("last_story_error", None)
     st.update({"last_at": at, "cycle": cycle_no, "adventure_no": adv_no,
                "last_status": "ok", "next_at": clock.fmt_sec(now + int(c["interval_min"]) * 60,
                                                              "%Y-%m-%dT%H:%M:%S"),
-               "story_day": life.story_day(ch),
+               "story_day": story_day_now,
                "age": life.age_years(ch),
                "last_growth": {"at": at, "exp": applied.get("exp"),
                                "fame": applied.get("fame"),
                                "levels": applied.get("levels"),
                                "days": int(ev.get("days") or 0)},
                "last_summary": (j.get("assessment") or {}).get("one_line") or "",
+               "last_fallback_why": str(j.get("_fallback_why") or ""),
+               "llm_model": lore.model_name(),
                "last_checks": [{"label": c.get("label"), "dc": c.get("dc"),
                                 "total": c.get("total"), "ok": bool(c.get("success"))}
                                for c in checks_out],
@@ -934,9 +947,36 @@ def backfill_adventure(cycle_id: int | None = None) -> dict[str, Any] | None:
         prev = {"no": int(prev_row.get("no") or 0), "title": prev_row.get("title") or "",
                 "place": prev_row.get("place") or "", "tail": _tail_of(prev_row)}
     judgement = _jdict(row.get("judgement"))
-    gain = judgement.get("growth") or {}
+    gain = dict(judgement.get("growth") or {})
+    # 补写也要"走一趟": 打一场、过几道坎, 否则补出来的故事只有走路没有交手。
+    # 种子与原回合同口径 (名字|故事日|这段时间见过的词) —— 同一回合重跑可复现。
+    terms_all = ev["encounters"].get("terms") or []
+    tag = "|".join(sorted(str(t.get("term") or "") for t in terms_all[:12]))
+    seed = zlib.crc32(
+        f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
+    ) & 0x7FFFFFFF
+    retiring = life.ready_to_retire(ch)
+    if not retiring:
+        try:
+            from recto.pet import duel as _duel
+
+            gain["duel"] = _duel.resolve(ch, terms=terms_all, seed=seed)
+        except Exception as e:  # noqa: BLE001
+            log.warning("游历 · 补写时遭遇失败: %s", e)
+        try:
+            from recto.pet import checks as _checks
+
+            got = _checks.resolve(ch, terms_all, seed=seed,
+                                  memory=st.get("check_memory") or {})
+            gain["checks"] = got["checks"]
+            st["check_memory"] = got["memory"]
+        except Exception as e:  # noqa: BLE001
+            log.warning("游历 · 补写时判定失败: %s", e)
     story = compose(ev, ch, gain, prev)
     if not story:
+        st["last_story_error"] = (lore.LAST_ERROR or "模型没写出这一回 (输出不完整)")
+        save_state(st)
+        log.warning("游历 · 补写失败 (回合 #%s): %s", row.get("id"), st["last_story_error"])
         return None
     no = int(st.get("adventure_no") or 0) + 1
     at = clock.iso_local()
@@ -947,10 +987,23 @@ def backfill_adventure(cycle_id: int | None = None) -> dict[str, Any] | None:
         (int(row.get("id") or 0), at, no, story["title"], story["place"], story["body"],
          json.dumps(story["themes_used"], ensure_ascii=False),
          json.dumps(story["terms_used"], ensure_ascii=False),
-         json.dumps({"exp": gain.get("exp"), "backfill": True}, ensure_ascii=False), at))
+         json.dumps({"exp": gain.get("exp"), "backfill": True,
+                     "duel": gain.get("duel"), "checks": gain.get("checks") or [],
+                     "days": int((_jdict(row.get("evidence")) or {}).get("days") or 0)},
+                    ensure_ascii=False), at))
     db.commit()
     db.close()
+    # 打完这一场, 也要调息 (与正常回合同一口径)
+    try:
+        mins = int(row.get("minutes") or 0)
+        cs.restore(ch, 0.5 + 0.5 * (float(mins) / 60.0))
+        cs.save_char(ch)
+    except Exception as e:  # noqa: BLE001
+        log.warning("游历 · 补写后调息失败: %s", e)
     st["adventure_no"] = no
+    # 这一趟算是真走了 —— 故事时钟对齐到当前, 下次再攒新的日子。
+    st["story_day"] = int(life.story_day(ch))
+    st.pop("last_story_error", None)
     save_state(st)
     log.info("游历 · 补写了第 %d 回 (回合 #%s)", no, row.get("id"))
     return story
@@ -1046,6 +1099,16 @@ def reset_after_inherit() -> None:
     log.info("推演 · 传承完成, 故事时钟归零 (新一代从 %d 岁起)", st["age"])
 
 
+def _looks_reasoning(model: str) -> bool:
+    """这个型号会不会把预算烧在思考上 (页面上要给个提醒)。"""
+    try:
+        from recto.core import llm as llmmod
+
+        return bool(llmmod.looks_reasoning_model(str(model or "")))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def state_view() -> dict[str, Any]:
     """页面 / 接口用的现状 (一次给全, 前端不用问三遍)。"""
     c = cfg()
@@ -1059,7 +1122,11 @@ def state_view() -> dict[str, Any]:
         "state": {k: st.get(k) for k in
                   ("last_at", "next_at", "cycle", "adventure_no", "last_status",
                    "last_summary", "last_check_at", "story_day", "age",
-                   "waiting_note", "last_growth")},
+                   "waiting_note", "last_growth", "last_story_error",
+                   "last_fallback_why", "llm_model")},
+        "llm": {"model": lore.model_name(),
+                "last_error": lore.LAST_ERROR,
+                "reasoning": _looks_reasoning(lore.model_name())},
         "life": life.view(ch),
         "adventures": adv,
         "recent": cycles(limit=6),

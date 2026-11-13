@@ -212,6 +212,20 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
         return 200, {"adventures": chronicle_mod.adventures(limit=limit),
                      "cycles": chronicle_mod.cycles(limit=8)}
 
+    # 补写: 上一回判成长落了地、故事却没写出来的那一趟 (不重判成长)
+    if path == "/adventure/backfill":
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        body = _body(h)
+        cid = body.get("cycle")
+        story = chronicle_mod.backfill_adventure(int(cid) if cid else None)
+        if not story:
+            return 400, {"error": "这一回补不出来",
+                         "detail": chronicle_mod.load_state().get("last_story_error") or "",
+                         "llm": lore_mod.LAST_ERROR}
+        return 200, {"ok": True, "story": story,
+                     "adventures": chronicle_mod.adventures(limit=8)}
+
     if path == "/lore":
         return 200, {"stats": lore_mod.stats(), "books": lore_mod.all_cards()}
 

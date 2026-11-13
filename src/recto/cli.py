@@ -310,7 +310,9 @@ def cmd_time(args) -> int:
 # ---------------------------------------------------------------- 书宠
 def cmd_pet(args) -> int:
     """书宠的运维口 (它不说话, 所有交互都在这里 / 页面上)。"""
-    from recto.pet import chronicle, encounters, lore
+    from recto.pet import chronicle, encounters, lore, petlogs
+
+    petlogs.ensure()      # 运维口也要能看到后台那些行
 
     act = args.action
     if act == "state":

@@ -54,6 +54,15 @@ def _llm() -> dict[str, Any] | None:
 LAST_ERROR = ""
 
 
+def model_name() -> str:
+    """当前生效的模型名 (页面/状态里显示用)。没配就是空串。"""
+    try:
+        llm = _llm() or {}
+        return str(llm.get("model") or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def chat(system: str, user: str, *, max_tokens: int = 900,
          temperature: float = 0.3) -> str | None:
     global LAST_ERROR

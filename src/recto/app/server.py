@@ -237,6 +237,10 @@ def _start_pet_ticker():
     try:
         from recto.pet import chronicle as _chronicle
         from recto.pet import companion as _companion
+        from recto.pet import petlogs as _petlogs
+
+        # 日志先落地 —— 否则后台推演失败只有 print 之外的 silence
+        _petlogs.ensure()
 
         if _companion.start_ticker():
             print(f"[recto] 陪读心跳每 {int(_companion.TICK_SEC)} 秒折算一次书宠成长", flush=True)

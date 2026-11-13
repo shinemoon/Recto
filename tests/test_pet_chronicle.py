@@ -238,6 +238,11 @@ out2 = ch.run(trigger="manual")
 ok(out2["status"] == "ok" and out2["fallback"] is True, "模型不可用时走保底")
 ok(out2["growth"]["exp"] == 120, f"保底 = 60 分钟 × 2 got {out2['growth']['exp']}")
 ok(out2["adventure"] is None, "写不出故事时宁可不写")
+# 故事日不推进: 这一趟还欠着, 下次拿同一笔阅读再走 (否则读者看不到任何变化)
+st_fail = ch.load_state()
+ok(int(st_fail.get("story_day") or 0) == st_before,
+   f"没写出故事 → 故事日不动 got {st_fail.get('story_day')} vs {st_before}")
+ok(bool(st_fail.get("last_story_error")), "失败原因留痕 (页面要显示)")
 
 lore.chat = fake_chat
 
@@ -250,7 +255,9 @@ before = cs.load_char()
 d = ch.run(trigger="manual", dry=True)
 after = cs.load_char()
 ok(d["status"] == "dry", f"dry 状态 got {d.get('status')}")
-ok(d["judgement"]["growth"]["exp"] == 320, f"dry 也判数 (按故事日上限) got {d['judgement']['growth']}")
+# 上一回欠着的那趟也算在 days 里 → 上限按 days × 32 (不是按单窗分钟)
+ok(d["judgement"]["growth"]["exp"] == int(d["days"]) * 32,
+   f"dry 判数按故事日上限 (days={d.get('days')}) got {d['judgement']['growth']}")
 ok(int(after["exp"]) == int(before["exp"]) and int(after["level"]) == int(before["level"]),
    "dry 没有改动存档")
 ok(ch.load_state()["cycle"] == 2, "dry 不推进回合数")
@@ -259,7 +266,8 @@ ok(ch.load_state()["cycle"] == 2, "dry 不推进回合数")
 # ── 9. 强制跑 (没活动也给一回合) ───────────────────────
 f = ch.run(trigger="manual", force=True)
 ok(f["status"] == "ok", f"force 无视最小分钟 got {f.get('status')}")
-ok(f["growth"]["exp"] <= f["minutes"] * 6, f"force 修为仍受分钟约束 got {f['growth']['exp']} / {f['minutes']} 分钟")
+ok(f["growth"]["exp"] <= max(1, int(f["days"])) * 32,
+   f"force 修为仍受故事日上限约束 got {f['growth']['exp']} / {f['days']} 天")
 
 
 # ── 9b. 文本 / 页面 ─────────────────────────────────

@@ -998,6 +998,14 @@ function renderChronicle(v) {
     ['游历', (st.adventure_no || 0) + ' 回'],
   ];
   if (st.last_summary) rows.push(['上次判词', st.last_summary]);
+  if (st.last_story_error) {
+    rows.push(['上一回没写出故事', st.last_story_error + ' (可点「补写上一回」)']);
+  }
+  if (st.last_fallback_why) rows.push(['判成长走了保底', st.last_fallback_why]);
+  const lm = v.llm || {};
+  if (lm.model) {
+    rows.push(['推演模型', lm.model + (lm.reasoning ? ' · 推理型 (思考吃预算, 容易截断)' : '')]);
+  }
   const lore = v.lore || {};
   rows.push(['书籍底细', (lore.books || 0) + ' 本立卡 · ' + (lore.chapters || 0) +
     ' 章储备 · 见过 ' + (lore.seen || 0) + ' 章']);
@@ -1026,6 +1034,9 @@ function renderChronicle(v) {
 
   // 最新一回
   const latest = (v.adventures || [])[0];
+  // 上一回合判了成长、故事却没写出来 → 给一个补写入口 (不重判成长)
+  const bf = $('#btn-chronicle-backfill');
+  if (bf) bf.hidden = !st.last_story_error;
   const boxLatest = $('#adventure-latest');
   if (boxLatest) {
     if (!latest) {
@@ -1229,6 +1240,22 @@ $('#btn-chronicle-dry').onclick = async () => {
 };
 
 $('#btn-chronicle-refresh').onclick = () => { loadChronicle(); };
+
+$('#btn-chronicle-backfill').onclick = async () => {
+  const st = $('#chronicle-status');
+  const btn = $('#btn-chronicle-backfill');
+  try {
+    btn.disabled = true;
+    setStatus(st, '补写中…');
+    const r = await api('/api/adventure/backfill', {
+      method: 'POST', body: JSON.stringify({})
+    });
+    setStatus(st, '补写了「' + ((r.story || {}).title || '一回') + '」', 'ok');
+    await loadChronicle();
+  } catch (e) {
+    setStatus(st, e.message, 'err');
+  } finally { btn.disabled = false; }
+};
 
 $('#btn-chronicle-save').onclick = async () => {
   const st = $('#chronicle-cfg-status');
