@@ -131,19 +131,35 @@ def _target(ch: dict[str, Any], tpl: dict[str, Any], terms: list[dict[str, Any]]
 
 def plan(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
          seed: int | None = None, memory: dict[str, Any] | None = None,
-         count: int = 2) -> list[dict[str, Any]]:
+         count: int = 2, prefer: str = "any") -> list[dict[str, Any]]:
     """挑这一趟路上要过的坎 (不掷骰), 返回待判定的清单。
 
-    一道"路" + 一道"人"; ``count=1`` 时只出一道路。
+    ``prefer`` 决定坎从哪个池子里挑 (由这一趟是什么事决定, 见 ``kind``):
+      · ``any``    一道"路" + 一道"人" (交手那一趟)
+      · ``person`` 两道"人" —— 见人 / 看破 / 交涉
+      · ``road``   两道"路" —— 赶路 / 学艺 / 伸手帮人
+    ``count=1`` 时只出一道 (从偏好的池子里挑)。
     """
     rng = random.Random(int(seed if seed is not None else 0))
     terms = terms or []
     memory = memory or {}
+    prefer = prefer if prefer in ("any", "person", "road") else "any"
+    pools: list[list[dict[str, Any]]] = []
+    if prefer == "person":
+        pools = [PERSON_TEMPLATES, PERSON_TEMPLATES]
+    elif prefer == "road":
+        pools = [ROAD_TEMPLATES, ROAD_TEMPLATES]
+    else:
+        pools = [ROAD_TEMPLATES, PERSON_TEMPLATES]
     picks: list[dict[str, Any]] = []
-    road = rng.choice(ROAD_TEMPLATES)
-    picks.append(road)
-    if count >= 2:
-        picks.append(rng.choice(PERSON_TEMPLATES))
+    used: set[str] = set()
+    for pool in pools[:max(1, int(count))]:
+        want = 1
+        cand = [t for t in pool if str(t["key"]) not in used] or list(pool)
+        got = rng.sample(cand, min(want, len(cand)))
+        for tpl in got:
+            used.add(str(tpl["key"]))
+            picks.append(tpl)
 
     out = []
     for tpl in picks:
@@ -168,14 +184,14 @@ def plan(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
 
 def resolve(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None, *,
             seed: int | None = None, memory: dict[str, Any] | None = None,
-            count: int = 2) -> dict[str, Any]:
+            count: int = 2, prefer: str = "any") -> dict[str, Any]:
     """掷这一趟路上的坎。返回 ``{"checks": [...], "memory": {...}, ...}``。
 
     ``memory`` 传上一回合的账; 白检定重试一次 +1 (封顶 +3), 成了就把账抹平。
     """
     rng = random.Random((int(seed) if seed is not None else 0) + 977)
     memory = dict(memory or {})
-    planned = plan(ch, terms, seed, memory, count=count)
+    planned = plan(ch, terms, seed, memory, count=count, prefer=prefer)
     out: list[dict[str, Any]] = []
     for p in planned:
         tries = int(p.get("tries") or 0)

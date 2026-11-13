@@ -83,6 +83,13 @@ def as_text(v: Any, limit: int = 0) -> str:
     这里只做归一: 统一换行符、去行尾空格、最多保留一个空行。
     """
     s = v if isinstance(v, str) else ("" if v is None else str(v))
+    # 模型偶尔把分段写成**字面**的 \n (JSON 里被双重转义), 于是整篇没有真换行,
+    # 页面上就成了一整块 —— 2026-11-13 第 8 回实测 86 处字面 \n、0 个真换行。
+    # 中文正文里不会自然出现字面 \n, 所以这是安全的兜底 (有真换行就不动)。
+    if "\n" not in s and s.count(chr(92) + "n") >= 3:
+        s = (s.replace(chr(92) + "r" + chr(92) + "n", "\n")
+             .replace(chr(92) + "n", "\n")
+             .replace(chr(92) + "t", "\t"))
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     s = "\n".join(line.rstrip() for line in s.split("\n"))
     while "\n\n\n" in s:

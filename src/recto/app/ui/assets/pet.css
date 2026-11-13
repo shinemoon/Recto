@@ -741,3 +741,48 @@
   .pg-world-grid { grid-template-columns: 1fr; }
   .pg-gauge { grid-template-columns: 38px 1fr 56px; }
 }
+
+/* ── 这一趟的来处 (书 / 章 / 语料): 代码从账本取, 读者要认出"这是我刚读的那段" ── */
+.rc-pet .adv-kind {
+  font-size: 10.5px; letter-spacing: .08em;
+  padding: 2px 7px; line-height: 1.4;
+  color: var(--rc-fg);
+  background: color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 32%, transparent);
+  white-space: nowrap;
+}
+.rc-pet .adv-item > summary .adv-kind { font-size: 10px; padding: 1px 5px; }
+.rc-pet .adv-echo {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  background: color-mix(in oklab, var(--rc-fg) 3%, transparent);
+  border-left: 2px solid color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 26%, transparent);
+}
+.rc-pet .adv-item .adv-echo { margin: 8px 0 0; padding: 6px 8px; }
+.rc-pet .adv-echo-h {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 11px; letter-spacing: .1em; color: var(--rc-mute);
+}
+.rc-pet .adv-echo-m { letter-spacing: 0; }
+.rc-pet .adv-echo-books { margin: 6px 0 0; padding: 0; list-style: none; }
+.rc-pet .adv-echo-books li {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
+  font-size: 12px; margin: 0 0 4px;
+}
+.rc-pet .adv-echo-books b { font-weight: 600; }
+.rc-pet .echo-au { color: var(--rc-mute); font-size: 11.5px; }
+.rc-pet .echo-meta {
+  color: var(--rc-mute); font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.rc-pet .echo-motif { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.rc-pet .echo-motif .adv-chip { font-size: 10.5px; padding: 2px 6px; }
+.rc-pet .adv-echo-terms {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 6px;
+}
+.rc-pet .adv-echo-l { font-size: 10.5px; letter-spacing: .1em; color: var(--rc-mute); }
+.rc-pet .echo-term { font-size: 10.5px; padding: 3px 6px; }
+@media (max-width: 640px) {
+  .rc-pet .adv-hero .adv-echo { padding: 7px 8px; }
+  .rc-pet .adv-echo-books li { font-size: 11.5px; }
+}

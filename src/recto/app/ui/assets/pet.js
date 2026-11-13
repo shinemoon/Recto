@@ -894,6 +894,51 @@ function duelRound(r, i) {
 }
 
 /** 这一回真打的那一场 (后端按 d20 算出来的战报, 不是编的) */
+// 这一趟的来处: 读的是哪一本、哪一章、撞见哪些语料。全部来自账本, 不是模型编的。
+function echoBlock(e) {
+  if (!e || (!(e.books || []).length && !(e.terms || []).length)) return '';
+  const books = (e.books || []).map(function (b) {
+    const bits = [];
+    if (b.chapter_label) bits.push('读到 ' + b.chapter_label);
+    if (b.chapters > 0) bits.push('推了 ' + b.chapters + ' 章');
+    if (b.percent_to != null) {
+      bits.push((b.percent_from != null && b.percent_from !== b.percent_to
+        ? b.percent_from + '% → ' : '') + b.percent_to + '%');
+    }
+    if (b.minutes) bits.push(b.minutes + ' 分钟');
+    if (b.notes) bits.push('划线 ' + b.notes);
+    if (b.bookmarks) bits.push('书签 ' + b.bookmarks);
+    return '<li><b>' + esc(b.title || '') + '</b>' +
+      (b.author ? '<span class="echo-au">' + esc(b.author) + '</span>' : '') +
+      (bits.length ? '<span class="echo-meta">' + esc(bits.join(' · ')) + '</span>' : '') +
+      ((b.motif || []).length
+        ? '<span class="echo-motif">' + b.motif.map(function (m) {
+            return '<span class="adv-chip">' + esc(m) + '</span>';
+          }).join('') + '</span>'
+        : '') + '</li>';
+  }).join('');
+  const terms = (e.terms || []).slice(0, 10).map(function (t) {
+    return '<span class="adv-chip echo-term">' + esc(t.term) +
+      (t.count ? ' <b>' + t.count + '</b>' : '') + '</span>';
+  }).join('');
+  return '<div class="adv-echo"><div class="adv-echo-h">这一趟的来处' +
+    (e.minutes ? '<span class="adv-echo-m">这段日子读了 ' + e.minutes + ' 分钟</span>' : '') +
+    '</div>' + (books ? '<ul class="adv-echo-books">' + books + '</ul>' : '') +
+    (terms ? '<div class="adv-echo-terms"><span class="adv-echo-l">' +
+      (e.terms_days ? '近 ' + e.terms_days + ' 天撞见' : '撞见') + '</span>' +
+      terms + '</div>' : '') +
+    '</div>';
+}
+
+function kindBadge(g) {
+  if (!g || !g.kind) return '';
+  return '<span class="adv-kind" title="' + esc(g.kind_why || '') + '">' +
+    esc(g.kind_cn || '') + ' · ' + esc(({
+      fight: '动手', talk: '会人', observe: '观事',
+      learn: '学艺', rescue: '救人', travel: '行路'
+    })[g.kind] || '') + '</span>';
+}
+
 function duelBlock(d) {
   if (!d || !d.foe) return '';
   const rounds = d.rounds || [];
@@ -1068,6 +1113,7 @@ function renderChronicle(v) {
       boxLatest.innerHTML =
         '<article class="adv-card' + (g.tag === 'retire' ? ' is-retire' : '') + '"><header>' +
         '<span class="adv-no">第 ' + latest.no + ' 回</span>' +
+        kindBadge(g) +
         '<h3>' + esc(latest.title) + '</h3>' +
         (latest.place ? '<span class="adv-place">' + esc(latest.place) + '</span>' : '') +
         '<span class="adv-at">' + esc(String(latest.at || '').replace('T', ' ').slice(0, 16)) +
@@ -1083,6 +1129,7 @@ function renderChronicle(v) {
               return '<div class="adv-warn">' + esc(t) + '</div>';
             }).join('')
           : '') +
+        echoBlock(g.echo) +
         duelBlock(g.duel) +
         '<div class="adv-body">' + advParagraphs(latest.body) + '</div>' +
         checksBlock(g.checks) +
@@ -1101,11 +1148,14 @@ function renderChronicle(v) {
     const older = (v.adventures || []).slice(1);
     list.innerHTML = older.length
       ? older.map(function (a) {
+          const gg = a.growth || {};
           return '<details class="adv-item"><summary><b>第 ' + a.no + ' 回</b> ' +
+            kindBadge(gg) + ' ' +
             esc(a.title) + '<span class="adv-at">' +
             esc(String(a.at || '').replace('T', ' ').slice(0, 16)) + '</span></summary>' +
+            echoBlock(gg.echo) +
             '<div class="adv-body">' + advParagraphs(a.body) + '</div>' +
-            checksBlock((a.growth || {}).checks) + '</details>';
+            checksBlock(gg.checks) + '</details>';
         }).join('')
       : '<p class="tip">还没有更早的游历。</p>';
   }

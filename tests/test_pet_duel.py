@@ -27,6 +27,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 TMP = Path(tempfile.mkdtemp(prefix="recto-petduel-"))
 os.environ["RECTO_DATA_DIR"] = str(TMP / "data")
+# 这两个测试盯的是"交手"这条链: 钉死这一趟是「斗」,
+# 否则类型由阅读纹理抽签, 必然时不时抽到会/观/学。
+os.environ["RECTO_PET_FORCE_KIND"] = "fight"
 os.environ["RECTO_LIBRARY_DIR"] = str(TMP / "library")
 os.environ["RECTO_CLOUD_AUTH_FILE"] = str(TMP / "auth.json")
 os.environ["RECTO_PET_DIR"] = str(TMP / "data" / "pet")

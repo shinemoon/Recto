@@ -27,6 +27,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 TMP = Path(tempfile.mkdtemp(prefix="recto-petduelgate-"))
 os.environ["RECTO_DATA_DIR"] = str(TMP / "data")
+# 这两个测试盯的是"交手"这条链: 钉死这一趟是「斗」,
+# 否则类型由阅读纹理抽签, 必然时不时抽到会/观/学。
+os.environ["RECTO_PET_FORCE_KIND"] = "fight"
 os.environ["RECTO_LIBRARY_DIR"] = str(TMP / "library")
 os.environ["RECTO_CLOUD_AUTH_FILE"] = str(TMP / "auth.json")
 os.environ["RECTO_PET_DIR"] = str(TMP / "data" / "pet")
@@ -268,7 +271,10 @@ ev3 = {"reading": [], "encounters": {"terms": [], "cats": {}},
 story = ch.compose(ev3, cs.load_char(), {"exp": 1}, None, None)
 ok(CALLS["modes"].count("story-fight") + CALLS["modes"].count("story-omit") == 1,
    f"没交手只写一稿 got {CALLS['modes']}")
-ok(story is not None and story.get("duel_shown") is True, "没打时 duel_shown 视为满足")
+# 闸门那条规矩没变 (没交手就不重写, 见上一条), 但**落库字段**如实写 False:
+# "这一回真打的一场写出来了吗" —— 没打就不是 True (2026-11-13 T3 起的口径)。
+ok(story is not None and story.get("duel_shown") is False,
+   "没交手时 duel_shown 写 False (不假装打过)")
 
 print()
 print(f"{PASS} passed, {FAIL} failed")

@@ -37,7 +37,7 @@ from typing import Any
 from recto.core import clock
 from recto.pet import charsheet as cs
 from recto.pet import config as petcfg
-from recto.pet import encounters, guidance, growth, jsonout, life, lore, proper, store
+from recto.pet import encounters, guidance, growth, jsonout, kind as kinds, life, lore, proper, store
 
 log = logging.getLogger("recto.pet.chronicle")
 
@@ -193,7 +193,7 @@ def gather(st: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
             rc, "SELECT book, COUNT(*) n FROM rbookmark WHERE created_at >= ? GROUP BY book",
             (from_iso,))
         titles = {}
-        for r in store.rows(rc, "SELECT key, title, author FROM rbook"):
+        for r in store.rows(rc, "SELECT key, title, author, path FROM rbook"):
             titles[r["key"]] = r
     except Exception as e:  # noqa: BLE001
         log.warning("推演 · 读阅读记录失败: %s", e)
@@ -240,6 +240,8 @@ def gather(st: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
             "percent_from": pct_from, "percent_to": pct_to,
             "progress_known": bool(prev),
             "notes": notes.get(book, 0), "bookmarks": marks.get(book, 0),
+            "path": (titles.get(book) or {}).get("path") or "",
+            "chapter_label": "",
             "lore": {},
         })
     reading.sort(key=lambda x: -x["minutes"])
@@ -255,6 +257,7 @@ def gather(st: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
             "prev_at": st.get("last_at") or "", "already_today": already,
             "last_duel": st.get("last_duel") or {},
             "last_checks": st.get("last_checks") or [],
+            "last_kind": st.get("last_kind") or "",
             "encounters": encounters.recent(days=max(2, int(window["hours"] // 24) + 2),
                                             limit=40)}
 
@@ -349,6 +352,9 @@ def judge(ev: dict[str, Any], ch: dict[str, Any]) -> dict[str, Any]:
         "last_duel": ev.get("last_duel") or {},
         # 上一回路上没过的那几道坎 —— "该练什么"的第一手依据之一
         "last_checks": ev.get("last_checks") or [],
+        # 上一趟是什么事 (斗 / 会 / 观 / 学 / 救 / 行) —— 连着两回不重样,
+        # 判成长时也该知道"它上回是见人, 不是打架"。
+        "last_kind": ev.get("last_kind") or "",
         # 能长哪几门功夫 —— 给 id 让模型从里面挑, 不许自己发明招式名
         "skill_menu": [{"id": x["id"], "name": x["name"], "type": x["type"]}
                        for x in cs.SKILLS],
@@ -552,6 +558,71 @@ def _checks_brief(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _chapter_label_of(path: str, spine: int) -> str:
+    """篇下标 → 目录里的章名 (「第七章 琢磨」)。取不到就空串, 不猜。"""
+    if not path:
+        return ""
+    try:
+        from recto.services import sync as _sync
+
+        geo = _sync._geometry_of(path)
+    except Exception:  # noqa: BLE001
+        return ""
+    if geo is None:
+        return ""
+    toc = getattr(geo, "toc", {}) or {}
+    for idx in (int(spine), int(spine) - 1):
+        if idx in toc:
+            return str(toc[idx])
+    return ""
+
+
+def _echo(ev: dict[str, Any], enc: dict[str, Any] | None = None) -> dict[str, Any]:
+    """这一趟的**来处**: 读的是哪一本、哪一章、哪些语料。
+
+    这一块**只进页面, 不进提示词** —— 模型那边照旧只拿"意"(母题/类别),
+    免得别人的书名地名被写进它自己的世界。而读者要认得出"这是我刚读的那段",
+    所以书、章、百分比、语料词都由代码从账本里取, 一个都不让模型编。
+    """
+    books: list[dict[str, Any]] = []
+    for r in (ev.get("reading") or [])[:5]:
+        card = r.get("lore") or {}
+        seeds = card.get("seeds") if isinstance(card.get("seeds"), dict) else {}
+        spine = int(r.get("chapter_to") or 0)
+        label = r.get("chapter_label") or _chapter_label_of(r.get("path") or "", spine)
+        books.append({
+            "title": r.get("title") or "",
+            "author": r.get("author") or "",
+            "minutes": int(r.get("minutes") or 0),
+            "chapters": int(r.get("chapters") or 0),
+            "chapter_label": label,
+            "percent_from": r.get("percent_from"),
+            "percent_to": r.get("percent_to"),
+            "notes": int(r.get("notes") or 0),
+            "bookmarks": int(r.get("bookmarks") or 0),
+            "motif": [str(x) for x in (seeds.get("motif") or [])][:5],
+            "image": [str(x) for x in (seeds.get("image") or [])][:3],
+        })
+    enc_all = ev.get("encounters") or {}
+    terms = [{"term": str(t.get("term") or ""), "cat": str(t.get("cat") or ""),
+              "count": int(t.get("count") or 0)}
+             for t in (enc_all.get("terms") or [])[:12] if t.get("term")]
+    enc = enc or {}
+    return {
+        "kind": str(enc.get("kind") or ""),
+        "kind_cn": str(enc.get("cn") or ""),
+        "why": str(enc.get("why") or ""),
+        "minutes": int(ev.get("total_minutes") or 0),
+        "days": int(ev.get("days") or 0),
+        "books": books,
+        "terms": terms,
+        # 语料窗口与"这一趟读的书"不是同一个区间 (语料按天, 读书按这一回合),
+        # 所以页面上要把天数写出来, 不能让人以为这些词都出在同一本书里。
+        "terms_days": int(enc_all.get("days") or 0),
+        "cats": {str(k): int(v or 0) for k, v in (enc_all.get("cats") or {}).items()},
+    }
+
+
 def _reading_brief(r: dict[str, Any]) -> dict[str, Any]:
     """一段读书记录的**去书化**摘要 (给模型看的)。
 
@@ -616,8 +687,14 @@ def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
             sd = {"motif": list(card.get("themes") or [])[:6]}
         if sd:
             seeds.append(sd)
+    enc = ev.get("encounter") or {}
     return {
         "char": _char_brief(ch),
+        # 这一趟是什么事 (斗 / 会 / 观 / 学 / 救 / 行) —— 故事的骨架按它搭。
+        # 它只说"该写成什么样", 不含书里的任何名字。
+        "encounter": ({"kind": enc.get("kind"), "cn": enc.get("cn"),
+                       "label": enc.get("label"), "why": enc.get("why") or "",
+                       "shape": enc.get("shape") or ""} if enc else {}),
         "duel": _duel_brief(gain.get("duel") or None),
         "checks": _checks_brief(gain.get("checks") or []),
         "growth": {"exp": gain.get("exp"), "fame": gain.get("fame"),
@@ -737,7 +814,9 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         "tail": jsonout.as_str(data.get("tail"), 60),
         "verdict": jsonout.as_str(data.get("verdict"), 40),
         "growth_shown": jsonout.as_list(data.get("growth_shown"), 5, 24),
-        "duel_shown": bool(duel_ok),
+        # 只有**真有交手**时这一栏才有意义; 这一趟不是「斗」→ False
+        # (闸门那边仍按"没交手视为满足"处理, 两件事分开)
+        "duel_shown": bool(duel_req) and bool(duel_ok),
         "checks_shown": bool(checks_ok) if checks_req else bool(data.get("checks_shown")),
         "days": jsonout.as_int(data.get("days"), 1, 1, 5),
     }
@@ -884,6 +963,19 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                 "window": ev["window"], "reading": len(ev["reading"])}
     st.pop("waiting_note", None)
 
+    # ── 这一趟是什么事 (斗 / 会 / 观 / 学 / 救 / 行) —— 由这段时间的阅读纹理决定。
+    #    交手只是其中一类: 没有语料就不打架, 带着伤不再往刀口上撞,
+    #    上一回斗过这一回先换个过法。种子取 (名字|故事日|语料), 同一天重跑一致。
+    terms_all = ev["encounters"].get("terms") or []
+    tag = "|".join(sorted(str(t.get("term") or "") for t in terms_all[:12]))
+    seed = zlib.crc32(
+        f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
+    ) & 0x7FFFFFFF
+    ev["seed"] = seed
+    ev["encounter"] = kinds.choose(ev, ch, st, seed=seed)
+    log.info("推演 · 这一趟是「%s」 · %s",
+             ev["encounter"]["label"], ev["encounter"]["why"])
+
     # ── 知识储备 (先给模型看书, 再判成长)
     for r in ev["reading"][: int(c["max_lore_books"])]:
         if dry:
@@ -909,18 +1001,15 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     gain = dict(j.get("growth") or {})
 
     if dry:
-        # 预演: 在**副本**上打一场, 让"先会怎么判"也能看到大概会撞上谁 (不落盘)
+        # 预演: 在**副本**上走一遍, 让"先会怎么判"也能看到大概会撞上谁 (不落盘)。
+        # 「斗」才预演交手, 其余几类只预演这一趟该有的判定。
         preview = None
-        if not life.ready_to_retire(ch):
+        if not life.ready_to_retire(ch) and ev["encounter"]["kind"] == "fight":
             try:
                 from recto.pet import duel as _duel
 
-                terms = ev["encounters"].get("terms") or []
-                tag = "|".join(sorted(str(t.get("term") or "") for t in terms[:12]))
-                seed = zlib.crc32(
-                    f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
-                ) & 0x7FFFFFFF
-                preview = _duel.resolve(json.loads(json.dumps(ch)), terms=terms, seed=seed)
+                preview = _duel.resolve(json.loads(json.dumps(ch)),
+                                        terms=terms_all, seed=seed)
             except Exception as e:  # noqa: BLE001
                 log.warning("推演 · 预演遭遇失败: %s", e)
         preview_checks: list[dict[str, Any]] = []
@@ -929,12 +1018,14 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                 from recto.pet import checks as _checks
 
                 preview_checks = _checks.resolve(
-                    json.loads(json.dumps(ch)), terms,
-                    seed=seed, memory=st.get("check_memory") or {})["checks"]
+                    json.loads(json.dumps(ch)), terms_all, seed=seed,
+                    memory=st.get("check_memory") or {},
+                    prefer=str(ev["encounter"].get("checks") or "any"))["checks"]
             except Exception as e:  # noqa: BLE001
                 log.warning("推演 · 预演判定失败: %s", e)
         return {**ctx, "status": "dry", "window": ev["window"], "minutes": minutes,
                 "days": ev["days"], "reading": ev["reading"], "judgement": j,
+                "encounter": ev["encounter"],
                 "duel": preview, "checks": preview_checks,
                 "fallback": bool(j.get("_fallback")),
                 "fallback_why": str(j.get("_fallback_why") or ""),
@@ -960,13 +1051,8 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     # ── 遭遇: 这一趟路上会撞上谁、打不打得过 —— 由 duel 算, 故事只负责照写。
     #    种子取 (名字|故事日|这段时间见过的词), 同一天重跑结果一致 (可复现)。
     retiring = life.ready_to_retire(ch)
-    terms_all = ev["encounters"].get("terms") or []
-    tag = "|".join(sorted(str(t.get("term") or "") for t in terms_all[:12]))
-    seed = zlib.crc32(
-        f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
-    ) & 0x7FFFFFFF
     duel_out: dict[str, Any] | None = None
-    if not retiring:
+    if not retiring and ev["encounter"]["kind"] == "fight":
         try:
             from recto.pet import duel as _duel
 
@@ -986,7 +1072,8 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
             from recto.pet import checks as _checks
 
             got = _checks.resolve(ch, terms_all, seed=seed,
-                                  memory=st.get("check_memory") or {})
+                                  memory=st.get("check_memory") or {},
+                                  prefer=str(ev["encounter"].get("checks") or "any"))
             checks_out = got["checks"]
             st["check_memory"] = got["memory"]      # 白检定的"再试"账
             applied["checks"] = checks_out
@@ -1006,6 +1093,8 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     if retiring and not story:
         story = _fallback_legacy(ch)
 
+    # 这一趟的来处 (书 / 章 / 语料) —— 只进页面, 不进提示词
+    echo = _echo(ev, ev.get("encounter")) if story else {}
     at = clock.fmt_sec(now, "%Y-%m-%dT%H:%M:%S")
     cycle_no = int(st.get("cycle") or 0) + 1
     adv_no = int(st.get("adventure_no") or 0)
@@ -1045,7 +1134,11 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                          "days": int(ev.get("days") or 0),
                          "story_day": life.story_day(ch),
                          "age": life.age_years(ch),
-                         "tag": "retire" if retiring else ""},
+                         "tag": "retire" if retiring else "",
+                         "kind": (ev.get("encounter") or {}).get("kind"),
+                         "kind_cn": (ev.get("encounter") or {}).get("cn"),
+                         "kind_why": (ev.get("encounter") or {}).get("why") or "",
+                         "echo": echo},
                         ensure_ascii=False),
              at))
         # 故事里新造的地名/人物/器物记回世界 —— 下次还能认出它们
@@ -1113,6 +1206,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                "last_summary": (j.get("assessment") or {}).get("one_line") or "",
                "last_fallback_why": str(j.get("_fallback_why") or ""),
                "llm_model": lore.model_name(),
+               "last_kind": (ev.get("encounter") or {}).get("kind") or "",
                "last_checks": [{"label": c.get("label"), "dc": c.get("dc"),
                                 "total": c.get("total"), "ok": bool(c.get("success"))}
                                for c in checks_out],
@@ -1141,6 +1235,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
             "fallback": bool(j.get("_fallback")),
             "fallback_why": str(j.get("_fallback_why") or ""),
             "adventure": story, "duel": duel_out, "checks": checks_out,
+            "encounter": ev.get("encounter"),
             "skill_version": guidance.version("chronicle"),
             "life": life.view(ch), "char": cs.view(ch)}
 
@@ -1192,18 +1287,24 @@ def backfill_adventure(cycle_id: int | None = None) -> dict[str, Any] | None:
         f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
     ) & 0x7FFFFFFF
     retiring = life.ready_to_retire(ch)
-    if not retiring:
+    # 这一趟是什么事 —— 与原回合同口径 (同一批语料 + 同一故事日 → 同一类)
+    ev["days"] = int((_jdict(row.get("evidence")) or {}).get("days") or 1)
+    enc = kinds.choose(ev, ch, st, seed=seed)
+    ev["encounter"] = enc
+    if not retiring and enc["kind"] == "fight":
         try:
             from recto.pet import duel as _duel
 
             gain["duel"] = _duel.resolve(ch, terms=terms_all, seed=seed)
         except Exception as e:  # noqa: BLE001
             log.warning("游历 · 补写时遭遇失败: %s", e)
+    if not retiring:
         try:
             from recto.pet import checks as _checks
 
             got = _checks.resolve(ch, terms_all, seed=seed,
-                                  memory=st.get("check_memory") or {})
+                                  memory=st.get("check_memory") or {},
+                                  prefer=str(enc.get("checks") or "any"))
             gain["checks"] = got["checks"]
             st["check_memory"] = got["memory"]
         except Exception as e:  # noqa: BLE001
@@ -1228,7 +1329,10 @@ def backfill_adventure(cycle_id: int | None = None) -> dict[str, Any] | None:
                      "duel_omitted": bool(story.get("duel_omitted")),
                      "checks_omitted": bool(story.get("checks_omitted")),
                      "duel": gain.get("duel"), "checks": gain.get("checks") or [],
-                     "days": int((_jdict(row.get("evidence")) or {}).get("days") or 0)},
+                     "days": int((_jdict(row.get("evidence")) or {}).get("days") or 0),
+                     "kind": enc.get("kind"), "kind_cn": enc.get("cn"),
+                     "kind_why": enc.get("why") or "",
+                     "echo": _echo(ev, enc)},
                     ensure_ascii=False), at))
     db.commit()
     db.close()
@@ -1306,11 +1410,30 @@ def repair_adventure(no: int) -> dict[str, Any] | None:
                 "place": prev_row.get("place") or "",
                 "tail": _tail_of(prev_row)}
     ch = cs.load_char()
+    # 这一回当初是哪一类事 —— 优先用当时记下的, 老记录没有就按同一套口径重挑
+    st = load_state()
+    kk = str(g.get("kind") or "")
+    if kk in kinds.KINDS:
+        meta = kinds.KINDS[kk]
+        ev["encounter"] = {"kind": kk, "cn": meta["cn"], "label": meta["label"],
+                           "shape": meta["shape"], "checks": meta["checks"],
+                           "why": str(g.get("kind_why") or "")}
+    else:
+        terms_all = ev["encounters"].get("terms") or []
+        tag = "|".join(sorted(str(t.get("term") or "") for t in terms_all[:12]))
+        seed = zlib.crc32(
+            f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
+        ) & 0x7FFFFFFF
+        ev["encounter"] = kinds.choose(ev, ch, st, seed=seed)
     story = compose(ev, ch, gain, prev)
     if not story:
         log.warning("游历 · 第 %s 回重写失败: %s", no,
                     lore.LAST_ERROR or "模型没写出这一回")
         return None
+    g.setdefault("kind", (ev.get("encounter") or {}).get("kind"))
+    g.setdefault("kind_cn", (ev.get("encounter") or {}).get("cn"))
+    if not g.get("echo"):
+        g["echo"] = _echo(ev, ev.get("encounter"))
     g.update({
         "growth_shown": story.get("growth_shown") or [],
         "checks_shown": bool(story.get("checks_shown")),
@@ -1376,6 +1499,12 @@ def adventures(limit: int = 20) -> list[dict[str, Any]]:
         if "duel_shown" not in g and (g.get("duel") or None):
             g["duel_shown"] = _duel_in_body(body, g.get("duel"), None)
             g["duel_omitted"] = not g["duel_shown"]
+        # 老记录没存来处 → 从这一回合的证据补算 (只补来处, 不补类型)
+        if not g.get("echo"):
+            try:
+                g["echo"] = _echo_from_cycle(int(r.get("cycle") or 0))
+            except Exception as e:  # noqa: BLE001 — 补不出来就不显示, 别拖垮页面
+                log.debug("游历 · 补算来处失败 #%s: %s", r.get("no"), e)
         out.append({
             "id": r["id"], "no": int(r.get("no") or 0), "at": r.get("at"),
             "title": r.get("title") or "", "place": r.get("place") or "",
@@ -1384,6 +1513,46 @@ def adventures(limit: int = 20) -> list[dict[str, Any]]:
             "growth": g,
         })
     return out
+
+
+def _echo_from_cycle(cycle_id: int) -> dict[str, Any]:
+    """老游历没存 ``echo`` —— 从这一回合的 cycle 证据把"来处"补算出来。
+
+    补的**只有来处** (读了哪本、哪一章、多少分钟、哪些语料), 不补 ``kind``:
+    当年没掷过这一栏, 补一个就是编。补不出来就返回空 (页面不渲染)。
+    """
+    if not cycle_id:
+        return {}
+    try:
+        c = store.conn()
+        row = store.one(c, "SELECT evidence, minutes FROM cycle WHERE id=?",
+                        (int(cycle_id),))
+    except Exception:  # noqa: BLE001
+        return {}
+    if not row:
+        return {}
+    raw = _jdict(row.get("evidence"))
+    reading: list[dict[str, Any]] = []
+    for r in raw.get("reading") or []:
+        if not isinstance(r, dict):
+            continue
+        item = dict(r)
+        if not item.get("path"):
+            try:
+                from recto.services import reader_state as _rs
+
+                bk = _rs.get_book(str(item.get("book") or "")) or {}
+                item["path"] = bk.get("path") or ""
+            except Exception:  # noqa: BLE001
+                item["path"] = ""
+        reading.append(item)
+    if not reading and not (raw.get("encounters") or {}).get("terms"):
+        return {}
+    ev = {"reading": reading,
+          "total_minutes": int(row.get("minutes") or raw.get("minutes") or 0),
+          "days": int(raw.get("days") or 0),
+          "encounters": raw.get("encounters") or {}}
+    return _echo(ev, {})
 
 
 def _jlist(v: Any) -> list[str]:
@@ -1463,7 +1632,7 @@ def state_view() -> dict[str, Any]:
                   ("last_at", "next_at", "cycle", "adventure_no", "last_status",
                    "last_summary", "last_check_at", "story_day", "age",
                    "waiting_note", "last_growth", "last_story_error",
-                   "last_fallback_why", "llm_model")},
+                   "last_fallback_why", "llm_model", "last_kind")},
         "llm": {"model": lore.model_name(),
                 "last_error": lore.LAST_ERROR,
                 "reasoning": _looks_reasoning(lore.model_name())},
