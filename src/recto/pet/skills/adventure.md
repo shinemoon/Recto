@@ -18,6 +18,9 @@
    (人 / 地貌 / 器物 / 势力 / 事) 与次数 —— **只有类别, 没有词**。
    某一类次数多, 这一回就多出现这类东西; 具体是什么、叫什么, 由你在自己的世界里定。
    `traces` 为空 = 这一趟只靠种子与自己的世界走, 也要走出去。
+5. **示例是格式, 不是素材。** 下面 JSON 与正文里的名字 (`<地名>` / `<人名>` 之外
+   的示范写法) 只是告诉你字段长什么样 —— **一个都不许照抄进故事**, 一律用这一回合
+   `world` 里给的名字, 或按规矩自己新造并报回 `world_new`。
 
 ## 输入
 
@@ -45,15 +48,14 @@
   "growth": {"exp": 220, "fame": 6, "levels": 1, "pot": 1, "vein": 3,
              "trait": "见微知著",
              "attrs": [{"key": "wu", "name": "悟性", "from": 13, "to": 14}],
-             "skills": [{"id": "dushuwudao", "name": "读书悟道", "from": 5, "to": 6}],
+             "skills": [{"id": "jibenneigong", "name": "基本内功", "from": 5, "to": 6}],
              "reason": "……"},
-  "time": {"days": 1, "story_day": 4200, "day_no": 4201, "minutes_per_story_day": 60},
-  "world": {"name": "残照江湖", "era": "不知何朝何代, 官道失修, 山头林立",
-            "law": "江湖上认两样东西: 手里的本事, 和说过的话。",
-            "regions": [{"name": "寒鸦渡", "note": "一条结不了冰的河"}],
-            "factions": [{"name": "墨池剑庐", "note": "以剑立门"}],
-            "notables": [{"name": "柳跛子", "role": "摆渡人", "note": "知道谁过了河"}],
-            "things": [{"name": "半截木牌", "note": "上面只剩一个姓"}]},
+  "time": {"days": 1, "story_day": 4200, "day_no": 4201, "minutes_per_story_day": 6},
+  "world": {"name": "<世界名>", "era": "<一句话年代>", "law": "<一句话铁律>",
+            "regions": [{"name": "<地名>", "note": "<一句话>"}],
+            "factions": [{"name": "<势力名>", "note": "<一句话>"}],
+            "notables": [{"name": "<人名>", "role": "<身份>", "note": "<一句话>"}],
+            "things": [{"name": "<器物名>", "note": "<一句话>"}]},
   "seeds": [{"motif": ["迟到的赎罪"], "image": ["熄了又亮的灯"],
              "weather": "常年阴雨, 冷得干净",
              "texture": "粗粝, 像摸过砂石",

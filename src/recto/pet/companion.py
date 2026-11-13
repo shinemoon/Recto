@@ -152,13 +152,28 @@ def reconcile_anchor(ch: dict[str, Any], total: int) -> dict[str, Any]:
     """
     credited = max(0, int(ch.get("credited_minutes") or 0))
     cap = max(0, int(total or 0))
+    # 基线也不许高过数据源: 基线 = 复位那一刻的累计分钟。若之后时长表被清理过
+    # (删测试数据 / 换书库 / 探针还原), 基线就会永远压在 total 上面 ——
+    # ``credit_reading_minutes`` 里 ``max(base,total)-base`` 恒为 0, 于是
+    # **读多少都不再长一分**, 页面表现正是"推演再也不动"。(真踩过)
+    base = max(0, int(ch.get("reading_baseline") or 0))
+    base_fixed = 0
+    if base > cap:
+        ch["reading_baseline"] = cap
+        base_fixed = base - cap
+        log.info("陪读 · 基线校准 %d → %d (时长表被清理过)", base, cap)
     if credited <= cap:
-        return {"adjusted": 0, "from": credited, "to": credited}
+        return {"adjusted": 0, "from": credited, "to": credited,
+                "baseline_fixed": base_fixed,
+                "baseline_to": int(ch.get("reading_baseline") or 0)}
+
     # credited 与 minutes 是同一个数的两个名字 —— 一起校准, 别分叉
     ch["credited_minutes"] = cap
     ch["minutes"] = cap
     log.info("陪读 · 锚点校准 %d → %d (数据源被清理过)", credited, cap)
-    return {"adjusted": credited - cap, "from": credited, "to": cap}
+    return {"adjusted": credited - cap, "from": credited, "to": cap,
+            "baseline_fixed": base_fixed,
+            "baseline_to": int(ch.get("reading_baseline") or 0)}
 
 
 def _disk_minutes() -> tuple[int, int] | None:
@@ -193,7 +208,8 @@ def feed_now() -> dict[str, Any]:
     healed = bool(disk is not None
                   and disk != (int(ch.get("minutes") or 0),
                                int(ch.get("credited_minutes") or 0)))
-    if gain.get("grew") or fix.get("adjusted") or healed:
+    if (gain.get("grew") or fix.get("adjusted") or fix.get("baseline_fixed")
+            or healed):
         cs.save_char(ch)
     out = dict(gain)
     out["reconciled"] = fix

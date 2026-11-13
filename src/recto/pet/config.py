@@ -66,7 +66,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # 后台推演 —— 定期翻账本: 读书记录 → 判成长 → 走一趟游历
     "chronicle": {
         "enabled": True,
-        "interval_min": 30,        # 多久推演一回合
+        "interval_min": 10,        # 多久推演一回合
         "lookback_hours": 48,      # 一回合看多长的窗口 (有上次记录时以它为界)
         "min_minutes": 3,          # 低于这个分钟数且无推进 → 视为没有活动, 不烧 token
         "max_lore_books": 3,       # 一回合最多为几本书立知识卡

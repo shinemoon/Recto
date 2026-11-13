@@ -41,7 +41,7 @@ log = logging.getLogger("recto.pet.chronicle")
 
 DEFAULT_CFG: dict[str, Any] = {
     "enabled": True,
-    "interval_min": 30,         # 多久推演一次 (攒够一站约一小时阅读, 半小时看一眼)
+    "interval_min": 10,         # 多久推演一次 (一站 = 一个故事日 ≈ 6 分钟阅读, 十分钟看一眼)
     "lookback_hours": 48,       # 每次看多长的窗口 (有 last_at 时以 last_at 为界)
     "min_minutes": 3,           # 少于这么多分钟且无推进 → 视为没有活动
     "max_lore_books": 3,        # 一回合最多为几本书立卡
@@ -51,7 +51,10 @@ DEFAULT_CFG: dict[str, Any] = {
     "max_exp_per_minute": 6,    # 修为上限 = 分钟 × 这个系数 (兜底)
     "max_exp_per_day": 32,      # 修为上限 = 故事内天数 × 这个数 (一回合的主口径)
                                 # 32/天 ÷ 10 天每小时 ≈ 原来 320/天 的现实节奏
-    "days_per_adventure": 10,   # 攒够几个故事内天才走一趟 (十天 ≈ 一小时阅读)
+    "days_per_adventure": 1,    # 攒够几个故事内天才走一趟 (一天 ≈ 6 分钟阅读)
+                                # 2026-11-13 从 10 收到 1: 十天才走一趟 = 读一小时才见一次变化,
+                                # 读者眼里就是"推演没动"。世界可以慢, 反馈不能慢。
+    "max_days_per_cycle": 30,   # 一回合最多走过几个故事日 (时钟对不上时的闸)
 }
 
 STATE_NAME = "chronicle.json"
@@ -716,6 +719,16 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     ev["days"] = max(0, life.story_day(ch) - int(st.get("story_day") or 0))
     ev["story_day"] = life.story_day(ch)
     ev["age"] = life.age_years(ch)
+    # 时针对不上时的闸: 一回合最多走 ``max_days_per_cycle`` 个故事日。
+    # 什么时候会对不上: 存档被还原 / 时长表被清理后基线校准 / 手工改过
+    # chronicle.json。不设这道闸, 一次推演会"凭空走过一百多天",
+    # 修为按天数封顶一次吃满, 故事却只有一回 —— 账就乱了。
+    day_gap_cap = max(1, int(c.get("max_days_per_cycle") or 30))
+    if ev["days"] > day_gap_cap:
+        log.warning("推演 · 时针对不上 (差 %d 日) → 按 %d 日封顶, 并校准到当前 %d 日",
+                    ev["days"], day_gap_cap, ev["story_day"])
+        ev["days"] = day_gap_cap
+        ev["clock_reset"] = True
 
     # 已退隐, 等读者点头传承 —— 不再长大, 也不再出门
     if life.stage(ch) == "retiring":
