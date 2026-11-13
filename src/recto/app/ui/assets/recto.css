@@ -43,6 +43,10 @@ a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 hr { border: 0; border-top: 1px solid var(--rc-outline-variant); margin: var(--rc-gap) 0; }
 
+/* `hidden` 必须真的不显示 —— button 的 `display:inline-flex` 会把 UA 的
+   `[hidden]{display:none}` 盖掉, 于是 `el.hidden = true` 看着没生效。 */
+[hidden] { display: none !important; }
+
 /* 状态层 —— Material 的悬停/按下不是换色, 是叠一层半透明 */
 .rc-state-layer { position: relative; }
 

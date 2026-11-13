@@ -62,7 +62,7 @@
 |---|---|
 | **书架** | 书库入口页：卡片式书架（封面 / 进度 / 划线 / 时长）+ 即时搜索 + 排列顺序（**最近阅读** / **书名**，逐设备记忆）+ 统计条 + **卡片上的删除键**（文件直接删除，进度与划线保留）。维护动作（重扫书库、对齐云端映射）收成**屏幕右侧竖排圆钮**，hover 才显示名字；手机上回到页头横排 |
 | **内置阅读器** | 直接读 `library/` 里的原书：滚动 / 左右翻页双模式、排版面板（字号 / 行间距 / 段间距 / 边距 / 宽度 / 字体）、目录分层折叠、划线与书签、阅读时长记录、语料关键词高亮 |
-| **云端同步** | 掌阅双向：进度 / 划线 / 书签 / 阅读时长。「从掌阅拉取」= 进度 + 逐日时长 + 划线书签**一次拉完**；时长「取较大值」融合，不重复计。扫码登录与个人云书籍（列表 / 下载 / 覆盖下载）也在这页。**书库里没进云书架的书**可以在「本地书籍 · 云端同步」里按**文件内容指纹**接入 —— 掌阅 App 对本地导入的书本来就按 `getFileMD5(文件)` 记账，接入后同一份文件在两端的进度/划线/时长立即互通（**文件本身传不上去**：掌阅的上传接口要 App 原生签名，详见下）。执行结果与日志**写成人话**（结论 + 计数 + 每本书一行），原始 JSON 收进折叠区 |
+| **云端同步** | 掌阅双向：进度 / 划线 / 书签 / 阅读时长。「从掌阅拉取」= 进度 + 逐日时长 + 划线书签**一次拉完**；时长「取较大值」融合，不重复计。扫码登录与个人云书籍（列表 / 下载 / 覆盖下载）也在这页。**书库里没进云书架的书**在「本地书籍 · 云端同步」卡里处理：可以**把文件本体上传到云书架**（其它设备/App 直接下载阅读），也可以只按**文件内容指纹**接入 —— 掌阅 App 对本地导入的书本来就按 `getFileMD5(文件)` 记账，接入后同一份文件在两端的进度/划线/时长立即互通。上传走 PC 网页端那套（OSS 预签名 PUT），**不需要 App 原生签名**，详见下文。执行结果与日志**写成人话**（结论 + 计数 + 每本书一行），原始 JSON 收进折叠区 |
 | **摘录接入** | 接收墨水屏设备推来的摘录（:8080），入账本，可导出到纸间 |
 | **书宠** | 陪读精灵 —— **它不跟人说话**：**江湖上那套**人物体系（六项根骨 / 门派 / 兵器拳脚 / 内功 / 绝招 / 杂学 / 性情 / 经脉，取法 MUD《侠客行》）+ 陪读数据（阅读器真实时长）+ **后台推演**（读账本 → 判定成长 → **算一场遭遇** → 写一回游历）。属性与招式**按 d20 掷骰**结算（先攻 / 攻击检定 / 护体 / 豁免 / 伤害骰，内力被吃、失手反噬、气血写回存档；另有不打斗的「路上的坎」白红检定）。三份 markdown skill 决定它怎么判、怎么写故事 |
 | **语料** | 内置的 EPUB 关键字精炼：选书 → 分块抽词 → 固定导出（`<书名>-<hash>.json` + `latest.json`），断点续跑、模型库、额度熔断都在里面。同一套外壳与皮肤 |
@@ -306,33 +306,57 @@ PYTHONPATH=src python3 -m recto.cli align          # 判定: bad: 0 (位置与�
 只要手机和 Recto 书库里是**同一份文件**，云端早就有这本书的账，
 差的只是 Recto 这边没记这个身份。
 
-「云端同步」分区里有一块 **本地书籍 · 云端同步**：
+「云端同步」分区里有一块 **本地书籍 · 云端同步**（在**书库**分区底部）：
 
 ```bash
 PYTHONPATH=src python3 -c "from recto.services import cloudlink; print(cloudlink.summary(refresh=True))"
+PYTHONPATH=src python3 -m recto.cli --help    # 见 cloud 相关子命令
 ```
 
 | 动作 | 结果 |
 |---|---|
-| 接入同步 | 把 `cloud.id32 = MD5(文件)` 写进 `<书名>.recto.json`，立刻 pull 一次进度 |
-| 全部接入 | 对面板里所有未接入的书批量做上一步 |
-| 取消接入 | 只清边车身份，云端记录与本地进度都不动 |
+| 上传到云端 | 把**文件本体**传进掌阅云存储，并加进云书架 —— 其它设备/App 打开掌阅即可下载阅读 |
+| 全部上传 | 对面板里所有还没进云书架的书批量做上一步 |
+| 接入同步 | 只补 `cloud.id32 = MD5(文件)` 身份（不上传文件），立刻 pull 一次进度 |
+| 取消接入 | 只清边车身份，云端记录、云书架条目与本地进度都不动 |
 
-接入后进度 / 划线 / 批注 / 阅读时长全部按同一口径双向同步（推送写 32 hex
-那一条，正是 App 读的那份）。
+「文件」列有三种状态：
+`未上传` → `文件已传·未入书架`（文件在云存储但被从书架删过，点一下只补书架条目）→ `在云书架`。
 
-**为什么不能"上传文件到掌阅云"** —— 实测三条路都不通，都需要 **App 原生签名**
-（`Security.hash(sortedParams)`，JNI）：
+### 怎么上传的（不需要 App 的签名）
 
-| 端点 | 结果 |
-|---|---|
-| `icloud.zhangyue.com/cloud_book/storage/upload/authorize` | 参数齐（`file_type/file_id/file_name/file_size/user_name/timestamp`）后 `100004 verify sign error` |
-| `api-pc.zhangyue.com/bookstore/open/cloud/storage/upload/authorize` | `600001 token Verification failed` → 补齐后 `200003` / `100004` |
-| `icloud.zhangyue.com/cloud/bookcase/safe/uploadData` | `20712 文件签名不能为空` |
+`pc.ireader.com` 的**「传书到手机」**页（`/upload`，chunk 36）本身就在浏览器里做完整套上传，
+没有 JNI 签名这一关。Recto 按它逐字实现（`services/cloudlink.upload`）：
 
-所以面板里写的是「同一份文件在手机上导入一次后，进度/划线/时长即可双向同步」，
-而不是"上传"。等哪天拿到签名（或掌阅放开这个接口），`cloudlink.upload_capability()`
-换成真实实现即可，其余链路不用改。
+```text
+file_id  = MD5(文件内容) 大写        file_name = "<file_id>.<ext>"
+GET  /bookstore/open/cloud/storage/upload/authorize?file_type=1&file_id&file_name&file_size
+       code 0 + body.type=2  → OSS 预签名 PUT（simpleUpload）
+       code 0 + body.type=1  → STS 分片（目前明确报错，不假装成功）
+       code 200004           → "file exist error"：对象已在云存储，跳过上传
+PUT  <sign_url>  Content-Type: application/octet-stream
+                 Content-MD5: base64(MD5 原始 16 字节)      ← 不是 hex 串
+                 X-Oss-Callback / X-Oss-Callback-var        ← OSS 回调服务端转 book-prod/
+POST /bookstore/open/cloud/bookshelf/upsert   type=1  multipart: usr / current_version / data=json
+     book_id = MD5(文件) + MD5(book_name)；is_local_book=true；book_file_id = MD5(文件)
+     book_type: txt=1 / epub=5 / pdf=12 …（网页端那张表）
+```
+
+几件实测过的事实：
+
+* **`type=200004` 是常态**，不是错误：同一份文件以前从网页端传过、后来被从书架删掉，文件仍在
+  `book-prod/`。这时只需补书架条目（秒级）。
+* **大文件也走 `type=2`**：69 MB 的 epub 拿到的仍是预签名 PUT，不是 STS 分片。
+* **上传成功后 `file/info` 能取回同一个文件**（`book-temp-prod/` → 服务端回调搬到
+  `book-prod/<md5>.<ext>`），下载回来 MD5 逐位相同。
+* **云书架条目只是"书在那里"**，进度/划线仍然按 `MD5(文件)` 那 32 hex 记 ——
+  所以「上传」与「接入同步」是两件事，上传后通常两者都已完成（`upload` 会顺手写身份 + pull 一次）。
+* **`book_name` 用清理过的书名**（网页端用文件名；`书名 = 日文名 (译者) (z-library.sk…)`
+  这种文件名在 App 里很难看）。`book_id` 跟着 `book_name` 变，所以同名策略必须固定。
+
+早期那条"必须 App 原生签名"的结论作废：`icloud.zhangyue.com/cloud_book/storage/upload/authorize`
+那条路要签名，但 PC 网页端走的是另一条（`api-pc` + OSS 预签名），本来就没有签名。
+
 
 ### Step 7 · 常驻（可选）
 
