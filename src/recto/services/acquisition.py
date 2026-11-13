@@ -427,6 +427,25 @@ def job_status(jid: str) -> dict | None:
         return dict(j) if j else None
 
 
+def job_begin(kind: str, label: str, *, total: int | None = None) -> str:
+    """给外部服务 (如 cloudlink 上传) 一个通用任务槽, 复用同一套轮询接口。"""
+    jid = uuid.uuid4().hex[:12]
+    with _jobs_lock:
+        _jobs[jid] = {"id": jid, "kind": kind, "key": "", "state": "queued",
+                      "dest": "", "name": label, "bytes": 0, "total": total,
+                      "path": None, "error": None, "note": None, "result": None,
+                      "started": datetime.now().isoformat(timespec="seconds"),
+                      "finished": None}
+    return jid
+
+
+def job_update(jid: str, **fields) -> None:
+    with _jobs_lock:
+        j = _jobs.get(jid)
+        if j:
+            j.update(fields)
+
+
 def jobs_list(limit: int = 20) -> list[dict]:
     with _jobs_lock:
         items = sorted(_jobs.values(), key=lambda x: x["started"], reverse=True)
@@ -543,3 +562,107 @@ def local_files() -> list[dict]:
                         "actual_size": p.stat().st_size,
                         "cloud_link": bool(sidecar.cloud_link(p))})
     return sorted(out, key=lambda r: r.get("downloaded_at") or "", reverse=True)
+
+
+# --------------------------------------------------------------------------
+# 上传文件本体 (PC 网页端 = "传书到手机")
+# --------------------------------------------------------------------------
+#
+# 口径来自 pc.ireader.com 的 `/upload` 页 (chunk 36) —— 浏览器自己做全套,
+# **不需要 App 的原生签名**:
+#
+#   1. file_id = MD5(文件内容) 大写;  file_name = "<file_id>.<ext>"
+#   2. GET upload/authorize?file_type=1&file_id&file_name&file_size
+#        code 0      + body.type == 2 → simpleUpload (OSS 预签名 PUT)
+#        code 0      + body.type == 1 → STS 分片 (我们不走这条)
+#        code 200004 ("file exist error") → 对象已在云存储, 直接加书架
+#   3. PUT sign_url  头: Content-Type / Content-MD5(base64(md5 原始 16 字节))
+#                        / X-Oss-Callback / X-Oss-Callback-var
+#      OSS 回调服务端把它从 book-temp-prod/ 转到 book-prod/
+#   4. POST bookshelf/upsert  type=1  → 云书架出现这本书
+#
+# book_id(64 hex) = MD5(文件内容) + MD5(book_name), 与网页端一致。
+
+UPLOAD_AUTH_PATH = "/bookstore/open/cloud/storage/upload/authorize"
+
+# 网页端 `book_type` 表 (module 52): 决定 App 用哪个阅读器打开
+BOOK_TYPE = {
+    "txt": 1, "umd": 2, "epub": 5, "ebk3": 9, "pdf": 12, "mobi": 25,
+    "doc": 14, "docx": 15, "wps": 16, "xls": 17, "xlsx": 18, "et": 19,
+    "ppt": 20, "pptx": 21, "dps": 22, "azw3": 100,
+}
+UPLOAD_EXTS = ("txt", "pdf", "epub", "mobi", "umd", "doc", "docx", "wps",
+               "xls", "xlsx", "et", "ppt", "pptx", "dps", "azw3")
+
+
+def authorize_upload(file_id: str, file_name: str, size: int) -> dict:
+    """GET 上传授权。原样返回 (code 0 = 给了签名地址; 200004 = 文件已在云存储)。"""
+    return _api(UPLOAD_AUTH_PATH, {"file_type": 1, "file_id": file_id,
+                                   "file_name": file_name, "file_size": int(size)})
+
+
+def put_object(sign_url: str, data: bytes, *, callback: str = "",
+               callback_var: str = "", md5_hex: str = "", timeout: int = 900) -> dict:
+    """把文件 PUT 进 OSS (带回调头)。md5_hex 是文件内容 MD5 大写 32 位。"""
+    import base64
+
+    req = urllib.request.Request(sign_url, data=data, method="PUT")
+    req.add_header("Content-Type", "application/octet-stream")
+    req.add_header("User-Agent", UA)
+    if md5_hex:
+        req.add_header("Content-MD5",
+                       base64.b64encode(bytes.fromhex(md5_hex)).decode())
+    if callback:
+        req.add_header("X-Oss-Callback", callback)
+    if callback_var:
+        req.add_header("X-Oss-Callback-var", callback_var)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        raw = r.read()
+    try:
+        return json.loads(raw.decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001 — OSS 回什么都可以, 以 file/info 为准
+        return {"raw": raw[:200].decode("utf-8", "replace")}
+
+
+def file_present(file_ids: list[str]) -> dict[str, dict]:
+    """批量子集: 哪些 file_id 已经在云端 (book-prod)。一次请求问一批。"""
+    ids = [i for i in dict.fromkeys(x for x in file_ids if x)]
+    if not ids:
+        return {}
+    j = _api(FILE_INFO_PATH, {"file_ids": ",".join(ids)})
+    body = j.get("body") or {}
+    return {k: v for k, v in body.items()
+            if isinstance(v, dict) and v.get("object_name")}
+
+
+def shelf_add(entry: dict) -> dict:
+    """云书架加一本 (type=1)。entry 需要 book_id / file_id / book_name / size。
+
+    字段照网页端 `upsert()` 拼: dtype=BOOK(0), is_local_book=True,
+    book_file_id = 文件 MD5, order 取现有最小值再往下排 (越小越靠前)。
+    """
+    info = shelf_raw()
+    ver = info.get("version")
+    if not ver:
+        raise CloudError("拿不到 current_version，加不了书架")
+    orders = [int(x.get("order") or 0) for x in (info.get("data") or [])]
+    order = (min(orders) if orders else 0) - 1
+    rec = {
+        "dtype": 0, "order": order, "folder": "",
+        "md5": entry.get("file_id", ""), "top": 0, "top_sort": 0,
+        "book_id": entry["book_id"],
+        "book_name": entry.get("book_name", ""),
+        "book_type": entry.get("book_type", 5),
+        "cover_name": "", "is_local_book": True,
+        "book_file_id": entry.get("file_id", ""),
+        "book_file_size": int(entry.get("size") or 0),
+        "cover_file_id": "", "cover_file_size": 0, "folder_hierarchy": "[]",
+    }
+    j = _multipart(SHELF_UPSERT_PATH,
+                   {"usr": _auth().get("usr", ""), "current_version": ver,
+                    "type": 1, "data": json.dumps([rec], ensure_ascii=False)})
+    code = j.get("code")
+    if str(code) not in ("0", "None"):
+        raise CloudError(f"加到云书架失败: {code} {j.get('msg')}")
+    return {"code": code, "msg": j.get("msg"), "book_id": entry["book_id"],
+            "order": order}

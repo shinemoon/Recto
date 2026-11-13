@@ -94,6 +94,7 @@ def fake_pull(key, **kw):
 import recto.services.acquisition as acquisition  # noqa: E402
 
 acquisition.shelf_books = fake_shelf  # type: ignore[assignment]
+acquisition.file_present = lambda ids: {}  # type: ignore[assignment] — 别联网问文件库
 sync.pull_book = fake_pull  # type: ignore[assignment]
 cloudlink._SHELF["at"] = 0.0
 cloudlink._MD5.clear()
@@ -109,8 +110,11 @@ ok(all(not r["attached"] for r in rows), "初始都未接入")
 
 s = cloudlink.summary(refresh=True)
 ok(s["total"] == 2 and s["attached"] == 0, "summary 计数")
-ok(s["upload"]["available"] is False, "文件上传当前不可用 (需要 App 原生签名)")
-ok(len(s["upload"]["endpoints"]) == 3, "upload_capability 记录三条实测端点")
+ok(s["upload"]["available"] is True, "文件上传可用 (走网页端 OSS 预签名 PUT)")
+ok(s["upload"]["method"] == "oss-presigned-put", "上传方式可追溯")
+ok("epub" in s["upload"]["exts"], "支持的格式里含 epub")
+ok(s["uploadable"] == 1 and s["uploaded"] == 0,
+   "uploadable 只数「不在云书架」的 (甲已在书架, 乙没在)")
 
 # ---------------------------------------------------------------- attach
 res = cloudlink.attach(key_a)
@@ -124,8 +128,10 @@ ok(link.get("identity") == "file-md5", "身份来源可追溯")
 ok("total_count" not in link, "章数未知就不写进边车")
 ok(calls["pull"] and calls["pull"][-1] == key_a, "attach 后立刻拉一次进度")
 
-# 云书架命中 ⇒ 写完 id64 就交给常规同步面板 (这里不再列它)
-ok(len(cloudlink.items(refresh=True)) == 1, "接入 id64 之后从本面板消失")
+# 云书架命中 ⇒ 仍列在本面板 (标 in_shelf), 只是不再需要"接入"
+rows_a = {r["key"]: r for r in cloudlink.items(refresh=True)}
+ok(len(rows_a) == 2, "已进云书架的书仍列在这里 (上传/接入同一张卡)")
+ok(rows_a[key_a]["in_shelf"] is True, "云书架命中 ⇒ in_shelf")
 
 # 不在云书架的那本: 只写 id32, 留在面板里标「已接入」
 res_b = cloudlink.attach(key_b)
@@ -134,7 +140,8 @@ ok(link_b.get("id32") == md5_b, "只按指纹接入 (id32)")
 ok(link_b.get("id64") == "", "没有同一份文件时不瞎写 id64")
 rows = {r["key"]: r for r in cloudlink.items(refresh=True)}
 ok(rows[key_b]["attached"] is True, "接入后 items 标 attached")
-ok(len(rows) == 1, "面板里只剩没进云书架的那本")
+ok(rows[key_b]["in_shelf"] is False, "只接入没上传 ⇒ 文件还不在云书架")
+ok(len(rows) == 2, "两本都在列表里 (只是状态不同)")
 
 # ---------------------------------------------------------------- detach
 cloudlink.detach(key_b)
