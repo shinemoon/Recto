@@ -121,7 +121,7 @@ def items(refresh: bool = False) -> list[dict]:
             "author": b.get("author") or "",
             "path": path,
             "size": int(b.get("bytes") or 0),
-            "pct": round(float(b.get("pct") or 0.0), 6),
+            "pct": round(float(b.get("percent") or 0.0), 6),
             "md5": md5,
             "attached": bool(id32),
             "in_shelf": bool(hit),
