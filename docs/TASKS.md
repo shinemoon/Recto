@@ -36,7 +36,7 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 | `app/console.py` | `POST /api/cloud/ident/upload`；卡片挪到书架分区；`renderUploadJob`；三态「文件」列 |
 | `ui/assets/recto.css` | `[hidden]{display:none!important}`（button 的 `display:inline-flex` 盖掉了 UA 规则） |
 | `tests/test_cloud_upload.py` | 离线断言（授权参数 / PUT 头 / book_id / 200004 / STS 明确报错 / 任务槽） |
-| `tools/probe_cloud_upload.mjs` | 14 项真浏览器（列 / 按钮文案 / 数量 / 隐藏 / 窄屏不溢出） |
+| `tools/probe_cloud_upload.mjs` | 12 项真浏览器（卡头 / 无清单 / 单一按钮 / 数量 / 置灰 / 窄屏不溢出） |
 
 **验收（真账号已跑）**
 * `多崎作` `海边的卡夫卡` `刺杀骑士团长` `九诗心` 四本 → 云书架出现，名字是清理过的书名，
@@ -50,6 +50,16 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 * 上传不改本地文件；书库里的文件被替换（内容变了）就是另一本书
 
 ---
+
+**2026-11-13 收尾（用户口径：不要清单，就一个上传按钮）**
+
+* 卡里那张六列表格整段删除；`items()` 仍保留在后端（决定"该传哪些"用它），
+  前端不再渲染清单 —— 只留一句说明 + 一个 `上传到掌阅云 (N 本)` 按钮。
+* 按钮 N = 书库里"不在云书架"或"还没补身份"的本数；全就绪时置灰并写「都已上传」。
+* `upload_all()` 的跳过条件从"在云书架"收紧成"在云书架**且**已有身份" ——
+  否则"文件传上去了但边车缺 id32"的书永远补不上，进度/划线也永远不通。
+* 前端随之删掉 `identUpload` / `identAct` / `identAll`（逐本上传、接入、全部接入），
+  以及 `#ident-body` / `#ident-refresh` / `#ident-hint` 之外的所有表格钩子。
 
 ## T2 · 精排书籍的注释/旁注排版 — `done` (2026-11-13)
 

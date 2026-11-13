@@ -340,7 +340,7 @@ def upload_all() -> dict:
     """书库里所有「有文件、但文件还没进云」的书, 一本本传。"""
     done, failed, skipped = [], [], []
     for r in items(refresh=True):
-        if r.get("in_shelf"):
+        if r.get("in_shelf") and r.get("attached"):
             skipped.append(r["key"])
             continue
         try:

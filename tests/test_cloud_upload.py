@@ -320,6 +320,42 @@ cloudlink._SHELF["at"] = 0.0
 cb.shelf_books = lambda *a, **kw: []  # type: ignore[assignment]
 ok(cloudlink.shelf_by_md5(True) == {}, "云端返回空书架 ⇒ 缓存清空 (不沿用陈旧条目)")
 
+# ---------------------------------------------------------------- upload_all 的挑选口径
+# 2026-11-13: 面板不再列清单, 只剩一个按钮 —— 所以"该传哪些"必须由这里判干净:
+#   在云书架 + 已有身份 => 跳过; 在云书架但没身份 => 还要走一遍 (只补身份, 不重传文件)
+SEEN["put"].clear(); SEEN["shelf"].clear(); SEEN["api"].clear(); SEEN["pull"].clear()
+cb.shelf_books = lambda *a, **kw: [{"id": want_book_id, "name": "笔记体"}]  # type: ignore[assignment]
+cloudlink._SHELF["at"] = 0.0
+cloudlink._MD5.clear()
+res_all = cloudlink.upload_all()
+ok(res_all["skipped"] == 1, f"已在云书架且已有身份的书被跳过 ({res_all['skipped']})")
+ok(res_all["uploaded"] == 1, f"不在云书架的那本仍会传 ({res_all['uploaded']})")
+ok(all(p["md5"] != md5_t for p in SEEN["put"]), "被跳过的那本一个字节都不重传")
+ok([p["md5"] for p in SEEN["put"]] == [md5_e], f"只传了缺的那本 ({len(SEEN['put'])})")
+
+# 在云书架但边车没身份 => 只补身份, 不重传文件
+sidecar.touch_cloud(str(book_e), id32="", id64="", identity="", attached_at="")
+SEEN["put"].clear(); SEEN["api"].clear()
+cb.shelf_books = lambda *a, **kw: [{"id": md5_e + "0" * 32, "name": "要上传的书"}]  # type: ignore[assignment]
+cloudlink._SHELF["at"] = 0.0
+cloudlink._MD5.clear()
+res_all1 = cloudlink.upload_all()
+link_e = sidecar.cloud_link(str(book_e)) or {}
+ok(res_all1["skipped"] == 1, f"只有已就绪的那本被跳过 ({res_all1['skipped']})")
+ok(not SEEN["put"], "在云书架但缺身份的书不重传文件")
+ok(link_e.get("id32") == md5_e, "补上了云端身份 (id32 = 文件 MD5)")
+
+# 都不在云书架 => 一个都不跳
+sidecar.touch_cloud(str(book_e), id32="", id64="", identity="", attached_at="")
+cb.shelf_books = lambda *a, **kw: []  # type: ignore[assignment]
+cloudlink._SHELF["at"] = 0.0
+cloudlink._MD5.clear()
+res_all2 = cloudlink.upload_all()
+ok(any(r["key"] == key_e for r in res_all2["detail"]),
+   "没有云端身份的书一定进上传清单 (不会被当成已就绪)")
+ok(res_all2["skipped"] == 1,
+   "另一本边车还留着 id64 ⇒ 仍算在云书架 (跳过是对的)")
+
 print()
 print("FAILED:", len(FAILED))
 for f in FAILED:

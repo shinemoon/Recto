@@ -554,7 +554,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if body.get("all"):
                     keys = [r["key"] for r in cloudlink.items(refresh=True)
-                            if not r.get("in_shelf")]
+                            if not r.get("in_shelf") or not r.get("attached")]
                 else:
                     keys = [str(body.get("key") or "")]
                 jid = cloudlink.start_upload(keys)
@@ -924,65 +924,37 @@ async function loadCloud(refresh) {
   });
 }
 
-// ---- 本地书 · 云端同步 -----------------------------------------------------
-// 没进云书架的书, 掌阅 App 是按「文件内容指纹」记账的 —— 补上那份身份就能互通。
+// ---- 上传到掌阅云 ---------------------------------------------------------
+// 一个按钮: 书库里还没进云的书 -> 传文件本体 + 补云端身份(进度/划线/时长互通)。
+// 不列清单 —— 该传哪些由后端按「文件内容指纹」自己判断。
 async function loadIdent(refresh) {
   const s = await api("/api/cloud/ident");
-  const body = $("ident-body");
-  if (!body) return;
+  const btn = $("ident-upload-all");
+  const note = $("ident-note");
+  const hint = $("ident-hint");
   if (s.error) {
     setPill("ident-pill", "读取失败", false);
-    body.innerHTML = `<tr><td colspan="5" class="empty">${esc(s.error)}</td></tr>`;
+    if (note) note.textContent = s.error;
+    if (btn) btn.disabled = true;
     return;
   }
   const rows = s.items || [];
-  const up = s.upload || {};
-  setPill("ident-pill", (s.attached || 0) + " / " + (s.total || 0) + " 已接入", (s.attached || 0) > 0);
-  const note = $("ident-note");
+  const pending = rows.filter((r) => !r.in_shelf || !r.attached);
+  const inShelf = rows.filter((r) => r.in_shelf).length;
+  setPill("ident-pill", inShelf + " / " + rows.length + " 在云书架", inShelf > 0);
   if (note) {
-    note.innerHTML = "掌阅 App 按「文件内容指纹(MD5)」记本地书。"
-      + "<strong>上传到云端</strong>会把文件本体放进云书架，手机/平板可直接下载阅读；"
-      + "<strong>接入同步</strong>只补身份，让进度、划线、批注、时长双向同步。"
-      + "<br>前提是两侧是<strong>同一份文件</strong>（字节一致，改了内容就是另一本）。"
-      + (up.available ? "" : `<br><span class="pill err">上传文件不可用</span> ${esc(up.reason || "")}`);
+    note.innerHTML = "把书库里的书<strong>传到掌阅云书架</strong>，手机 / 平板可直接下载阅读；"
+      + "同时补上云端身份，进度、划线、批注、阅读时长双向同步。"
+      + "<br>以<strong>文件内容</strong>认书：手机上放了同一份文件才会互通。";
   }
-  const allBtn = $("ident-all");
-  if (allBtn) allBtn.hidden = !(s.total - s.attached);
-  const upAllBtn = $("ident-upload-all");
-  if (upAllBtn) {
-    const n = (s.items || []).filter((r) => !r.in_shelf).length;
-    upAllBtn.hidden = !n;
-    upAllBtn.textContent = `全部上传 (${n})`;
+  if (btn) {
+    btn.disabled = !pending.length;
+    btn.textContent = pending.length ? "上传到掌阅云 (" + pending.length + " 本)" : "都已上传";
   }
-  body.innerHTML = rows.length ? rows.map((r) => `<tr>
-      <td class="cell-book">${esc(r.title)}<div class="meta">${esc(r.author || "")}</div></td>
-      <td class="nowrap"><code>${esc((r.md5 || "").slice(0, 12))}…</code></td>
-      <td class="num nowrap">${(r.pct * 100).toFixed(1)}%</td>
-      <td class="nowrap">${r.in_shelf
-        ? '<span class="pill ok">在云书架</span>'
-        : (r.uploaded ? '<span class="pill">文件已传·未入书架</span>'
-                      : '<span class="pill">未上传</span>')}</td>
-      <td class="nowrap">${r.attached ? '<span class="pill ok">已接入</span>' : '<span class="pill">未接入</span>'}</td>
-      <td class="nowrap">${r.in_shelf ? "" : `<button class="small" data-up="${esc(r.key)}">
-          ${r.uploaded ? "加入云书架" : "上传到云端"}</button>`}
-        <button class="small" data-ident="${r.attached ? "detach" : "attach"}"
-        data-key="${esc(r.key)}">${r.attached ? "取消接入" : "接入同步"}</button></td>
-    </tr>`).join("") : `<tr><td colspan="6" class="empty">书库里没有本地书</td></tr>`;
+  if (hint) hint.textContent = pending.length ? "" : "书库里的书都已经在云书架里";
 }
 
 // ---- 上传文件本体 -----------------------------------------------------------
-async function identUpload(key, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = "上传中…"; }
-  const r = await api("/api/cloud/ident/upload", {method: "POST",
-    headers: {"Content-Type": "application/json"}, body: JSON.stringify({key})});
-  if (!r.ok) {
-    if (btn) { btn.disabled = false; btn.textContent = "上传到云端"; }
-    toast("上传失败：" + (r.error || "未知错误"), true);
-    return;
-  }
-  pollUploadJob(r.job && r.job.id);
-}
-
 async function identUploadAll() {
   const r = await api("/api/cloud/ident/upload", {method: "POST",
     headers: {"Content-Type": "application/json"}, body: JSON.stringify({all: true})});
@@ -1007,30 +979,6 @@ async function pollUploadJob(jid) {
   await loadIdent(true);
 }
 
-
-async function identAct(key, action) {
-  const path = action === "attach" ? "/api/cloud/ident/attach" : "/api/cloud/ident/detach";
-  const r = await api(path, {method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({key})});
-  if (!r.ok) { toast("操作失败：" + (r.error || "未知错误"), true); return; }
-  if (action === "detach") { toast("已取消接入"); }
-  else {
-    const pull = r.pull || {};
-    const moved = pull && pull.state && pull.state.cloud_pct;
-    toast(moved != null ? `已接入 · 云端 ${(moved * 100).toFixed(1)}%`
-      : (r.in_shelf ? "已接入（云书架有同一份文件）" : "已接入 · 等手机上打开同一份文件后开始互通"));
-    loadState();
-  }
-  await loadIdent(true);
-}
-
-async function identAll() {
-  const r = await api("/api/cloud/ident/attach", {method: "POST",
-    headers: {"Content-Type": "application/json"}, body: JSON.stringify({all: true})});
-  if (!r.ok) { toast("接入失败：" + (r.error || "未知错误"), true); return; }
-  toast("已接入 " + (r.attached || 0) + " 本" + ((r.failed || []).length ? "，" + r.failed.length + " 本失败" : ""));
-  loadState(); await loadIdent(true);
-}
 
 async function pollJob(jid) {
   if (!jid) return;
@@ -1419,16 +1367,7 @@ document.addEventListener("click", (e) => {
   else if (id === "log-refresh") loadLog();
   else if (id === "link-refresh") probeCloud();
   else if (id === "cloud-refresh") loadCloud(true);
-  else if (id === "ident-refresh") loadIdent(true);
-  else if (id === "ident-all") identAll();
   else if (id === "ident-upload-all") identUploadAll();
-  const upBtn = e.target && e.target.closest ? e.target.closest("button[data-up]") : null;
-  if (upBtn && !upBtn.disabled) identUpload(upBtn.dataset.up, upBtn);
-  const ib = e.target && e.target.closest ? e.target.closest("button[data-ident]") : null;
-  if (ib && !ib.disabled) {
-    ib.disabled = true;
-    identAct(ib.dataset.key, ib.dataset.ident).finally(() => { ib.disabled = false; });
-  }
 });
 // 用 document 委托, 不依赖"脚本执行时元素已在 DOM 里" (defer 顺序靠不住)
 document.addEventListener("input", (e) => {
@@ -1526,17 +1465,11 @@ def _page_html(user: str | None) -> str:
   </div>
 
   <details class="sec" id="sec-ident">
-    <summary>本地书籍 · 云端同步 <span class="pill" id="ident-pill">…</span></summary>
+    <summary>上传到掌阅云 <span class="pill" id="ident-pill">…</span></summary>
     <div class="sec-body">
       <p class="meta" id="ident-note">加载中…</p>
-      <div class="row"><button id="ident-refresh" class="ghost">刷新</button>
-        <button id="ident-upload-all" class="ghost" hidden>全部上传</button>
-        <button id="ident-all" class="ghost" hidden>全部接入</button></div>
-      <div class="table-wrap"><table class="bordered">
-        <thead><tr><th>书名</th><th>云端指纹</th><th class="num">本地</th>
-          <th>文件</th><th>同步</th><th></th></tr></thead>
-        <tbody id="ident-body"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
-      </table></div>
+      <div class="row"><button id="ident-upload-all" class="primary">上传到掌阅云</button>
+        <span class="meta" id="ident-hint"></span></div>
     </div>
   </details>
 </section>
