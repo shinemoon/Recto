@@ -380,12 +380,12 @@ def _pick_pfm(fight: dict[str, Any], rng: random.Random) -> dict[str, Any] | Non
 
 
 def _log(log: list[dict[str, Any]], rnd: int, side: str, kind: str, text: str, *,
-         atk: dict[str, Any], dfd: dict[str, Any], move: str = "",
+         atk: dict[str, Any], dfd: dict[str, Any], move: str = "", sid: str = "",
          dmg: int = 0, self_dmg: int = 0, effect: str = "",
          rolls: list[dict[str, Any]] | None = None,
          dice: dict[str, Any] | None = None) -> None:
     log.append({
-        "r": int(rnd), "side": side, "move": move, "kind": kind, "text": text,
+        "r": int(rnd), "side": side, "move": move, "sid": sid, "kind": kind, "text": text,
         "dmg": int(dmg), "self": int(self_dmg), "effect": effect,
         "hp": {"a": int(atk["hp"]), "b": int(dfd["hp"])},
         "rolls": rolls or [], "dice": dice or {},
@@ -419,11 +419,12 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
 
     pfm = _pick_pfm(atk, rng)
     rolls: list[dict[str, Any]] = []
-    move, effect = "", "damage"
+    move, effect, sid = "", "damage", ""
 
     if pfm:
         atk["neili"] = max(0, atk["neili"] - pfm["cost"])
         move, effect = pfm["name"], pfm["effect"]
+        sid = str(pfm.get("id") or "")     # 熟练度按"真使过的招式"记 (见 growth.practice_from)
         tier = int(atk.get("perform", {}).get("neili_tier") or 0)
         pc = D.check(rng, label="运功 · " + move, dc=int(pfm["dc"]),
                      mods=D.mods_of((f"招式 {move} {pfm['level']} 级",
@@ -440,14 +441,14 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
                      (F.backfire(voice, who=atk["name"], move=move,
                                  weapon=_weapon(atk)).rstrip("。")
                       + f", 自伤 {back}。"),
-                     atk=atk, dfd=dfd, move=move, self_dmg=back, effect=effect,
-                     rolls=rolls)
+                     atk=atk, dfd=dfd, move=move, sid=sid, self_dmg=back,
+                     effect=effect, rolls=rolls)
                 return
             _log(log, rnd, side, "miss",
                  F.pfm_lost(voice, who=atk["name"], move=move),
                  atk=atk, dfd=dfd, move="", rolls=rolls)
             pfm = None
-            move, effect = "", "damage"
+            move, effect, sid = "", "damage", ""
 
     # 疗伤 / 守势 / 身法 / 涨己 —— 不必打到人
     if pfm and effect in ("heal", "defend", "evade", "buff"):
@@ -458,22 +459,22 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
             _log(log, rnd, side, "heal",
                  F.effect(voice, who=atk["name"], move=move, kind="heal",
                           amount=heal),
-                 atk=atk, dfd=dfd, move=move, effect=effect, rolls=rolls)
+                 atk=atk, dfd=dfd, move=move, sid=sid, effect=effect, rolls=rolls)
         elif effect == "defend":
             atk["guard"] = 0.30
             _log(log, rnd, side, "defend",
                  F.effect(voice, who=atk["name"], move=move, kind="defend"),
-                 atk=atk, dfd=dfd, move=move, effect=effect, rolls=rolls)
+                 atk=atk, dfd=dfd, move=move, sid=sid, effect=effect, rolls=rolls)
         elif effect == "evade":
             atk["ac_buff"] = 3
             _log(log, rnd, side, "evade",
                  F.effect(voice, who=atk["name"], move=move, kind="evade"),
-                 atk=atk, dfd=dfd, move=move, effect=effect, rolls=rolls)
+                 atk=atk, dfd=dfd, move=move, sid=sid, effect=effect, rolls=rolls)
         else:
             atk["atk_buff"] = 2
             _log(log, rnd, side, "buff",
                  F.effect(voice, who=atk["name"], move=move, kind="buff"),
-                 atk=atk, dfd=dfd, move=move, effect=effect, rolls=rolls)
+                 atk=atk, dfd=dfd, move=move, sid=sid, effect=effect, rolls=rolls)
         return
 
     extra = []
@@ -491,12 +492,12 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
                  (F.fumble(voice, who=atk["name"], weapon=_weapon(atk),
                            move=move).rstrip("。")
                   + f", 反伤 {back}。"),
-                 atk=atk, dfd=dfd, move=move, self_dmg=back, rolls=rolls)
+                 atk=atk, dfd=dfd, move=move, sid=sid, self_dmg=back, rolls=rolls)
             return
         _log(log, rnd, side, "miss",
              F.miss(voice, who=atk["name"], whom=dfd["name"],
                     weapon=_weapon(atk), move=move),
-             atk=atk, dfd=dfd, move=move, rolls=rolls)
+             atk=atk, dfd=dfd, move=move, sid=sid, rolls=rolls)
         return
 
     hit = _damage_roll(rng, atk, dfd, bool(atk_check["crit"]))
@@ -518,7 +519,7 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
          F.hit(voice, who=atk["name"], whom=dfd["name"], weapon=_weapon(atk),
                move=move, crit=bool(atk_check["crit"]), dmg=hit["taken"],
                guard=float(hit["guard"] or 0), stun=stunned, note=note),
-         atk=atk, dfd=dfd, move=move, dmg=hit["taken"],
+         atk=atk, dfd=dfd, move=move, sid=sid, dmg=hit["taken"],
          effect=(effect if pfm else ""), rolls=rolls, dice=hit["dice"])
 
 
@@ -580,6 +581,22 @@ def resolve(ch: dict[str, Any], foe: dict[str, Any] | None = None, *,
     if fame_gain:
         ch["fame"] = int(ch.get("fame") or 0) + fame_gain
 
+    # ── 练到了什么 (给 growth.practice_from 用): 自己出手几拍、使了哪门绝招、
+    #    被攻几拍 (拆招 / 轻功)。判定掷了什么, 就该长什么 —— 别让战报与本事脱钩。
+    usage: dict[str, Any] = {"turns": 0, "weapon": _weapon(me), "perform": {},
+                             "defended": 0, "rounds": int(log[-1]["r"]) if log else 0}
+    for e in log:
+        kind = str(e.get("kind") or "")
+        if e.get("side") == "me":
+            if kind == "stun":
+                continue
+            usage["turns"] = int(usage["turns"]) + 1
+            s_id = str(e.get("sid") or "")
+            if s_id:
+                usage["perform"][s_id] = int(usage["perform"].get(s_id, 0)) + 1
+        elif e.get("side") == "foe" and kind in ("hit", "miss", "fail", "stun"):
+            usage["defended"] = int(usage["defended"]) + 1
+
     moves, foe_moves = [], []
     for e in log:
         mv = e.get("move") or ""
@@ -604,6 +621,7 @@ def resolve(ch: dict[str, Any], foe: dict[str, Any] | None = None, *,
         "summary": summary,
         "moves": moves,
         "foe_moves": foe_moves,
+        "usage": usage,
         "fame": fame_gain,
         "hp": {"from": start_hp, "to": me["hp"], "max": me["hp_max"]},
         "neili": {"from": start_neili, "to": me["neili"], "max": me["neili_max"]},

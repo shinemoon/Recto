@@ -12,8 +12,10 @@
   · 升级 → 潜能点: 每级 ``POT_PER_LEVEL`` 点 (自由分配到六项根骨)
   · 升级 → 声望: 每级 ``FAME_PER_LEVEL`` 点
   · 经脉: 按累计陪读分钟推进 (层数门槛见 ``charsheet.VEINS``)
-  · 技能: 陪读时长自动长「基本内功」(读书如打坐 —— 内力是慢功夫),
-         真武学与绝招由后台推演判定 (一次最多一门一级)
+  · 技能: ① 陪读时长自动长「基本内功」(读书如打坐 —— 内力是慢功夫);
+         ② **真用过的功夫**按拍数攒熟练度 (出手 / 绝招 / 拆招 / 过坎);
+         ③ 后台判词点名的那一门再加一笔。熟练度满 ``PROF_PER_LEVEL`` 升一级,
+         上限只看等级 (``charsheet.skill_cap``)。
 
 **留白的部分** (等接阅读器再定)
 
@@ -46,13 +48,26 @@ AUTO_SKILL = "jibenneigong"
 #: AUTO_SKILL 每多少分钟长 1 级 (现实分钟, 与故事日无关)。
 #: 300 分钟 = 五小时一级 —— 慢到"翻好几天书才长一层"。
 AUTO_SKILL_MINUTES_PER_LEVEL = 300
-#: 判定口径的技能限速: 每 N 个**故事内**天, 最多由判定长 1 级
-#: (自动「基本内功」不占这条, 它自己按 300 分钟一级走)
-#: 300 个故事日 × 0.6 分钟/天 = 180 分钟 = 3 小时阅读一级。
-#: 2026-11-16 从 800 收到 300: 800 是"8 小时阅读一级", 折算下来要读几十趟才动一格,
-#: 读者连续十几回看不到本事长 —— 慢成长是对的, 但慢到看不出就是坏了。
-#: 时间流速每变一次都按现实口径折算, 不是随手放大。
-SKILL_DAYS_PER_LEVEL = 300
+#: ── 熟练度 (2026-11-16 起技能成长的主路径) ────────────────────────
+#: 技能等级只由熟练度决定: 满 ``PROF_PER_LEVEL`` 升一级 (与 charsheet 同一口径)。
+#: 熟练度从两处来 —— ① 这一趟**真用过的功夫** (出手/绝招/拆招/过坎)
+#: ② 后台判词点名的那一门 ("这一趟悟到了什么")。判定不再直接给一整级。
+PROF_PER_LEVEL = cs.PROF_PER_LEVEL
+
+#: 计一次"练手"折多少熟练度。数字的来处:
+#: 一场十来拍的遭遇 ≈ 36 (出手) + 12 (绝招) + 10 (拆招) ≈ 58,
+#: 两道坎 ≈ 15 —— 一趟合计 ≈ 70~90, 摊到四五门功夫上, 主修那门约 2~3 趟升一级。
+#: 一小时阅读 = 十趟 ≈ 主修涨 3~4 级 (受等级上限约束)。
+PRACTICE = {
+    "attack": 3,     # 自己出手一拍 (主修的兵刃 / 拳脚)
+    "perform": 4,    # 使一次绝招
+    "defend": 1,     # 被攻一拍 (基本招架 / 轻功拆招)
+    "check_ok": 9,   # 过了一道坎
+    "check_no": 6,   # 没过 —— 败也是练, 只是少些
+    "judged": 25,    # 判词点名的那一门 (说书人说"这一趟悟到了")
+}
+#: 一趟里**同一门功夫**最多攒多少实战熟练度 (防"一场车轮战直接把上限打满")
+PER_SKILL_PER_CYCLE_CAP = 50
 
 #: 先天属性: 每升 N 级 +1。
 #: 为什么要有这一条: 光靠潜能点, 属性永远不动 —— 故事里也就写不出"人变了"。
@@ -69,7 +84,10 @@ GROWTH_RULES: dict[str, Any] = {
     "fame_per_level": FAME_PER_LEVEL,
     "auto_skill": AUTO_SKILL,
     "auto_skill_minutes_per_level": AUTO_SKILL_MINUTES_PER_LEVEL,
-    "skill_days_per_level": SKILL_DAYS_PER_LEVEL,
+    "prof_per_level": PROF_PER_LEVEL,
+    "practice": dict(PRACTICE),
+    "practice_cap_per_skill": PER_SKILL_PER_CYCLE_CAP,
+    "skill_cap_by_level": "技能上限 = f(等级), 见 charsheet.skill_cap —— 与修为零头无关",
     "born_on_level": dict(BORN_ON_LEVEL),
     "max_minutes_per_call": MAX_MINUTES_PER_CALL,
     "one_way": True,
@@ -194,11 +212,15 @@ def award_minutes(ch: dict[str, Any], minutes: int, *, skill_gain: bool = True,
         born_gain = _apply_born(ch, before_level)
 
     # 陪读自动长「基本内功」—— 按累计分钟算, 不是按这次 (每 N 分钟整一格)
+    # 但**仍然受等级上限约束** (2026-11-16 上限改成与等级挂钩之后, 一条老账
+    # 可能让内功"读着读着超过上限": 3900 分钟 = 13 级, 而 5 级的人只许练到 6 级)
     skill_gain_map: dict[str, int] = {}
     if skill_gain and AUTO_SKILL in cs.SKILL_BY_ID:
         skills = ch.get("skills") or {}
         want = total_min // AUTO_SKILL_MINUTES_PER_LEVEL
         cur = int(skills.get(AUTO_SKILL, 0))
+        cap = cs.cap_for(ch, cs.SKILL_BY_ID[AUTO_SKILL])
+        want = max(cur, min(int(want), int(cap)))
         if want > cur:
             skills[AUTO_SKILL] = want
             ch["skills"] = skills
@@ -326,9 +348,7 @@ def skill_boost(ch: dict[str, Any], skill_id: str, levels: int = 1) -> dict[str,
         return {"ok": False, "error": "等级必须为正"}
     skills = ch.get("skills") or {}
     cur = int(skills.get(skill_id, 0))
-    cap = min(int(sk.get("cap", 30)),
-              cs.skill_cap(cs.lifetime_exp(ch),
-                           cs.effective_attrs(ch).get(sk.get("attr", "wu"), 10)))
+    cap = cs.cap_for(ch, sk)
     if cur + levels > cap:
         return {"ok": False, "error": f"{sk['name']} 已达上限 {cap}"}
     skills[skill_id] = cur + levels
@@ -343,9 +363,109 @@ MAX_EXP_PER_CYCLE = 3000
 #: 一回合最多给几点潜能 / 声望
 MAX_POT_PER_CYCLE = 3
 MAX_FAME_PER_CYCLE = 20
-#: 一回合最多长几门功夫 (每次每门 +1 级)
-#: 一回合 (≈ 一小时阅读 ≈ 故事内十天) 只许长一门 —— 慢成长的关键闸门之一
+#: 一回合最多长几门功夫 (由判词点名)
+#: 一回合只许判词点一门 —— 多的交给"实战练到的"去累积, 那是另一条路。
 MAX_SKILLS_PER_CYCLE = 1
+
+
+# ── 熟练度: 把"这一趟练了什么"落到实处 ───────────────────────────
+
+def _skill_row(sid: str, res: dict[str, Any], why: list[str],
+               before: dict[str, int]) -> dict[str, Any]:
+    """一条熟练度记录 (给页面看: 涨了多少 / 现在到哪 / 升没升级)。"""
+    sk = cs.SKILL_BY_ID.get(str(sid)) or {}
+    lv0 = int(before.get(str(sid), 0))
+    return {
+        "id": str(sid),
+        "name": sk.get("name") or str(sid),
+        "gain": int(res.get("added") or 0),
+        "level": int(res.get("level") or lv0),
+        "leveled": int(res.get("leveled") or 0),
+        "from": lv0,
+        "prof": int(res.get("prof") or 0),
+        "prof_need": PROF_PER_LEVEL,
+        "cap": int(res.get("cap") or 0),
+        "blocked": str(res.get("blocked") or ""),
+        "why": list(why),
+    }
+
+
+def practice_from(ch: dict[str, Any], duel: dict[str, Any] | None = None,
+                  checks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """把这一趟**真用过的功夫**折成熟练度 (就地改 ``ch``)。
+
+    为什么要这一步: 旧口径里技能只由后台"点名 +1 级"推动, 而战报里明明写着
+    这一场使了十二剑、那一道坎用的是追踪 —— 读者却看不到「剑法」动过一格。
+    判定掷了什么, 就该长什么。
+
+    量: 出手 3 / 绝招 4 / 拆招 1 / 过坎 9 / 没过 6, 每门一趟封顶
+    ``PER_SKILL_PER_CYCLE_CAP``; 满 ``PROF_PER_LEVEL`` 升一级, 受等级上限约束。
+    """
+    before = dict(ch.get("skills") or {})
+    detail: dict[str, dict[str, Any]] = {}
+
+    def add(sid: Any, n: int, why: str) -> None:
+        sid = str(sid or "")
+        if not sid or sid not in cs.SKILL_BY_ID or int(n) <= 0:
+            return
+        row = detail.setdefault(sid, {"gain": 0, "why": []})
+        room = max(0, PER_SKILL_PER_CYCLE_CAP - int(row["gain"]))
+        g = min(int(n), room)
+        if g <= 0:
+            return
+        row["gain"] = int(row["gain"]) + g
+        if why not in row["why"]:
+            row["why"].append(why)
+
+    if duel:
+        usage = dict(duel.get("usage") or {})
+        turns = int(usage.get("turns") or 0)
+        add(usage.get("weapon"), turns * PRACTICE["attack"], "交手")
+        for sid, n in (usage.get("perform") or {}).items():
+            add(sid, int(n) * PRACTICE["perform"], "绝招")
+        add("jibenzhaojia", int(usage.get("defended") or 0) * PRACTICE["defend"], "拆招")
+
+    for c in (checks or []):
+        n = PRACTICE["check_ok"] if c.get("success") else PRACTICE["check_no"]
+        add(c.get("skill"), n, "路上")
+
+    rows, levels, total = [], [], 0
+    for sid, row in detail.items():
+        res = cs.add_practice(ch, sid, int(row["gain"]))
+        if not int(res.get("added") or 0):
+            continue
+        total += int(res["added"])
+        item = _skill_row(sid, res, row["why"], before)
+        rows.append(item)
+        if item["leveled"]:
+            levels.append({"id": sid, "name": item["name"],
+                           "from": item["from"], "to": item["level"]})
+    rows.sort(key=lambda r: (-int(r["leveled"]), -int(r["gain"]), r["name"]))
+    return {"skills": rows, "levels": levels, "total": total}
+
+
+def practice_judged(ch: dict[str, Any], skills: Any) -> dict[str, Any]:
+    """判词点名的那一门攒一笔熟练度 (最多 ``MAX_SKILLS_PER_CYCLE`` 门)。
+
+    为什么不再直接 +1 级: 等级是"练出来的", 判词只是**加一笔**。这样等级表里
+    每一格背后都有可查的熟练度, 而不是"说书人一句话就涨一级"。
+    """
+    before = dict(ch.get("skills") or {})
+    picked: dict[str, int] = {}
+    if isinstance(skills, dict):
+        for sid, lv in list(skills.items())[:MAX_SKILLS_PER_CYCLE]:
+            if str(sid) in cs.SKILL_BY_ID and int(lv or 0) > 0:
+                picked[str(sid)] = PRACTICE["judged"]
+    rows, levels = [], []
+    for sid, n in picked.items():
+        res = cs.add_practice(ch, sid, n)
+        item = _skill_row(sid, res, ["判定"], before)
+        rows.append(item)
+        if item["leveled"]:
+            levels.append({"id": sid, "name": item["name"],
+                           "from": item["from"], "to": item["level"]})
+    return {"skills": rows, "levels": levels,
+            "total": sum(int(r["gain"]) for r in rows)}
 
 
 def award_judged(ch: dict[str, Any], j: dict[str, Any], *,
@@ -396,41 +516,23 @@ def award_judged(ch: dict[str, Any], j: dict[str, Any], *,
     ch["fame"] = max(0, before["fame"] + add_fame)
     ch["morality"] = max(-100, min(100, before["morality"] + add_mor))
 
-    # 技能 (最多 MAX_SKILLS_PER_CYCLE 门, 每门 +1) —— 且受"每 N 个故事日一级"限速。
-    # 限速为什么必要: 一回合 ≈ 故事内十天, 没有这道闸门, 模型每回合都会挑一门给 +1,
-    # 一个月就把技能堆到上限 —— 招式等级一高, 故事里"长本事"这件事就不值钱了。
-    gained: dict[str, int] = {}
-    gate: dict[str, Any] = {}
-    try:
-        from recto.pet import life as _life
-
-        day = int(story_day if story_day is not None else _life.story_day(ch))
-        last = int(ch.get("last_skill_day") or 0)
-        gate = {"day": day, "last": last, "days_per_level": SKILL_DAYS_PER_LEVEL,
-                "blocked": (day - last) < SKILL_DAYS_PER_LEVEL}
-    except Exception:  # noqa: BLE001
-        gate = {"blocked": False}
-    skills_in = j.get("skills") or {}
-    if isinstance(skills_in, dict) and not gate.get("blocked"):
-        for sid, lv in list(skills_in.items())[:MAX_SKILLS_PER_CYCLE]:
-            sk = cs.SKILL_BY_ID.get(str(sid))
-            if not sk or int(lv or 0) <= 0:
-                continue
-            cur = int((ch.get("skills") or {}).get(str(sid), 0))
-            cap = cs.cap_for(ch, sk)
-            if cur + 1 > cap:
-                continue
-            ch.setdefault("skills", {})[str(sid)] = cur + 1
-            ch["last_skill_day"] = int(gate.get("day") or 0)
-            gained[str(sid)] = cur + 1
-            break
+    # 技能: 判词点名的那一门只**加熟练度**, 不再直接给一整级 (2026-11-16 改口径)。
+    # 旧口径是"每 300 个故事日许升一级、每回一门 +1" —— 与"真练了什么"无关,
+    # 而且闸门一挡, 读者连读十几回也看不到本事动。现在两条路并行:
+    #   · 判词点名: 一笔 25 点熟练度 (说书人说"这一趟悟到了什么")
+    #   · 实战练手: 出手/绝招/拆招/过坎, 见 practice_from()
+    # 满 charsheet.PROF_PER_LEVEL 升一级, 上限只看等级。
+    prac = practice_judged(ch, j.get("skills") or {})
+    gained = {str(r["id"]): int(r["to"]) for r in prac.get("levels") or []}
 
     return {
         "exp": add_exp, "levels": levels,
         "pot": add_pot, "fame": add_fame, "morality": add_mor,
         "skills": gained, "trait": str(j.get("trait") or ""),
         "born": born_gain,
-        "skill_gate": gate,
+        "practice": prac,
+        "skill_gate": {"by": "practice", "prof_per_level": PROF_PER_LEVEL,
+                       "practice_cap": PER_SKILL_PER_CYCLE_CAP},
         "clamped": {"exp": raw_exp != add_exp,
                     "exp_raw": raw_exp, "exp_cap": cap_exp},
         "level": int(ch.get("level") or 1), "exp_now": int(ch["exp"]),

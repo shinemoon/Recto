@@ -67,6 +67,24 @@ function attrName(key) {
   return a ? a.name : key;
 }
 
+/**
+ * 熟练度格: 到上限就写「满」, 否则一条细进度 + "还有多少点升一级"。
+ * 为什么要有这一格: 等级是跳变的 (3 → 4 之间什么都没有), 读者只能看见"没动";
+ * 熟练度是连续量, 一眼能看出"这一趟虽然没升级, 但练了四成"。
+ */
+function profCell(s) {
+  const need = s.prof_need || 120;
+  const prof = Math.max(0, s.prof || 0);
+  const capped = s.cap != null && s.level >= s.cap;
+  if (capped) return '<span class="cs-prof-x" title="已到等级允许的上限">满</span>';
+  const pct = Math.max(0, Math.min(100, s.prof_pct != null ? s.prof_pct
+    : Math.round(prof * 100 / need)));
+  return '<span class="cs-prof-w" title="熟练 ' + prof + ' / ' + need +
+    ' —— 满了升一级 (上限由等级决定)">' +
+    '<i class="cs-bar-in"><b style="width:' + pct + '%"></b></i>' +
+    '<em>' + prof + '/' + need + '</em></span>';
+}
+
 /** 状态条: 当前/上限 */
 function statBar(label, cur, max, cls) {
   const pct = max > 0 ? Math.max(0, Math.min(100, Math.round(cur * 100 / max))) : 0;
@@ -130,7 +148,11 @@ function renderChar(ch) {
     rows.push(['修为', (ch.exp || 0) + ' / ' + (ch.exp_needed || 0) +
       ' (' + (ch.exp_pct != null ? ch.exp_pct : 0) + '%)' +
       (ch.exp_left ? ' · 还差 ' + ch.exp_left : ' · 已可升级')]);
-    rows.push(['累计修为', (ch.exp_total || 0) + ' (技能上限看它)']);
+    rows.push(['累计修为', (ch.exp_total || 0) + ' (一辈子的总和)']);
+    if (ch.skill_cap != null) {
+      rows.push(['技能上限', '等级 ' + (ch.level || 1) + ' → 每门最高 ' +
+        ch.skill_cap + ' 级 (再按悟性折)']);
+    }
     rows.push(['声望', ch.fame + ' / ' + ch.fame_needed]);
     rows.push(['门忠', ch.loyalty || 0]);
     rows.push(['心性', ch.morality || 0]);
@@ -301,8 +323,9 @@ function renderChar(ch) {
         '<td class="nowrap cs-dim">' + esc(TYPE_CN[s.type] || s.type) +
           (s.effect ? '·' + esc(EFFECT_CN[s.effect] || s.effect) : '') + '</td>' +
         '<td class="nowrap cs-dim">' + esc(attrName(s.attr)) + '</td>' +
-        '<td class="num">' + s.level + '</td>' +
+        '<td class="num">' + (s.level ? s.level : '<span class="cs-dim">未入门</span>') + '</td>' +
         '<td class="num cs-dim">' + (s.cap != null ? s.cap : '—') + '</td>' +
+        '<td class="cs-prof">' + profCell(s) + '</td>' +
         '<td class="num">' + (perf ? s.rate + '%' : '—') + '</td>' +
         '<td class="num">' + (perf ? s.busy : '—') + '</td>' +
         '<td class="num">' + (perf ? s.fail : '—') + '</td>' +
@@ -411,7 +434,15 @@ function renderChar(ch) {
       '<span class="cs-meta-v">' + (g.fame_per_level != null ? g.fame_per_level : '—') + '</span></div>' +
       '<div class="cs-meta-row"><span class="cs-meta-l">自动长进</span>' +
       '<span class="cs-meta-v">' + (g.auto_skill_minutes_per_level != null ?
-        ('每 ' + g.auto_skill_minutes_per_level + ' 分钟') : '—') + '</span></div>' +
+        ('每 ' + g.auto_skill_minutes_per_level + ' 分钟 (基本内功)') : '—') + '</span></div>' +
+      '<div class="cs-meta-row"><span class="cs-meta-l">技能熟练</span>' +
+      '<span class="cs-meta-v">' + (g.prof_per_level != null ?
+        ('满 ' + g.prof_per_level + ' 点升一级 · 每趟每门封顶 ' +
+         (g.practice_cap_per_skill != null ? g.practice_cap_per_skill : '—')) : '—') +
+      '</span></div>' +
+      '<div class="cs-meta-row"><span class="cs-meta-l">技能上限</span>' +
+      '<span class="cs-meta-v">' + (ch.skill_cap != null ? ('等级决定 · 当前 ' + ch.skill_cap + ' 级') : '—') +
+      '</span></div>' +
       (pend.length ? '<div class="cs-meta-row" style="grid-column:1/-1">' +
         '<span class="cs-meta-l">待定</span>' +
         '<span class="cs-meta-v cs-dim">' + pend.map(esc).join(' · ') + '</span></div>' : '');
@@ -1104,6 +1135,12 @@ function renderChronicle(v) {
       (g.skills || []).forEach(function (k) {
         show.push((k.name || k.id) + ' ' + k.from + '→' + k.to + ' 级');
       });
+      // 练了但没升级的那几门 —— 「本事在长」不该只在升级那一次才看得见
+      (g.practice || []).forEach(function (k) {
+        if (k.leveled) return;
+        if (g.skills && g.skills.some(function (x) { return x.id === k.id; })) return;
+        show.push((k.name || k.id) + ' 熟练 +' + k.gain);
+      });
       (g.attrs || []).forEach(function (a) {
         show.push((a.name || a.key) + ' ' + a.from + '→' + a.to);
       });
@@ -1273,6 +1310,14 @@ function renderRunResult(r) {
     if ((d.moves || []).length) {
       lines.push('<div class="adv-run-line">使过: ' + d.moves.map(esc).join(' / ') + '</div>');
     }
+  }
+  // 这一趟练到了什么 (熟练度): 升级与"只攒了熟练"分开写
+  const prac = (r.practice && r.practice.skills) || (g.practice || []);
+  if (prac.length) {
+    lines.push('<div class="adv-run-line">练了: ' + prac.slice(0, 5).map(function (k) {
+      return esc(k.name || k.id) + ' 熟练 +' + (k.gain || 0) +
+        (k.leveled ? ' (升到 ' + k.level + ' 级)' : '');
+    }).join(' · ') + '</div>');
   }
   if ((r.checks || []).length) {
     lines.push('<div class="adv-run-line">路上的坎: ' + r.checks.map(function (c) {

@@ -137,9 +137,9 @@ ok(cs.derive(ch)["neili_max"] > cs.derive(cs.new_char())["neili_max"],
 
 ch = cs.new_char()
 ch["traits"] = ["gugqingqi"]
-ch["exp"] = 1000                    # 上限还没顶到 skill.cap 时, 百分比才看得出来
+ch["level"] = 12                    # 上限与等级挂钩: 1 级时整数取整看不出百分比
 plain = cs.new_char()
-plain["exp"] = 1000
+plain["level"] = 12
 ok(cs.cap_for(ch, cs.SKILL_BY_ID["jianfa"]) > cs.cap_for(plain, cs.SKILL_BY_ID["jianfa"]),
    f"骨骼清奇 → 技能上限涨 got {cs.cap_for(ch, cs.SKILL_BY_ID['jianfa'])} vs "
    f"{cs.cap_for(plain, cs.SKILL_BY_ID['jianfa'])}")

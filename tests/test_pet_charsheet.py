@@ -110,15 +110,45 @@ ok(all(cs.VEINS[i]["minutes"] < cs.VEINS[i + 1]["minutes"] for i in range(9)),
    "经脉耗时递增")
 
 # ── 公式 ───────────────────────────────────────────────
-# 侠客行原式: skill_level = (EXP*10)^(1/3)+1 (30 悟性)
-ok(cs.skill_cap(2_700_000, 30) == 300, f"技能上限原式 (exp=270万, 悟性30 → 300) got {cs.skill_cap(2_700_000, 30)}")
-# 2026-11-16 改折法: 原来是 attr//30 (悟性 15 = 半折, 起步 10 = 三分之一,
-# 一辈子修为 800 的人上限只有 7, 已经练上去的等级永远卡住)。现按 (10+attr)/40。
-ok(cs.skill_cap(2_700_000, 15) == 300 * 25 // 40,
-   f"悟性 15 → 按 (10+15)/40 折 got {cs.skill_cap(2_700_000, 15)}")
-ok(cs.skill_cap(0, 30) == 1, "修为 0 → 上限 1")
-ok(cs.skill_cap(2_700_000, 10) == 300 * 20 // 40,
-   f"起步悟性 10 只打半折 (不是三分之一) got {cs.skill_cap(2_700_000, 10)}")
+# 2026-11-16 起: 技能上限**与等级挂钩** —— 外形仍是侠客行的 (EXP*10)^(1/3)+1,
+# 但 EXP 取"升到这一级所需的累计修为", 与口袋里剩多少修为无关。
+ok(cs.skill_cap(1, 30) == 3, f"1 级 / 悟性 30 → 3 got {cs.skill_cap(1, 30)}")
+_lv = 12
+_base = int((cs.level_exp(_lv) * 10) ** (1 / 3)) + 1
+ok(cs.skill_cap(_lv, 30) == _base, f"12 级 / 悟性 30 → 原式 {_base} got {cs.skill_cap(_lv, 30)}")
+# 悟性按 (10+attr)/40 折 (悟性 10 → 半折, 30 → 原值)
+ok(cs.skill_cap(_lv, 15) == _base * 25 // 40,
+   f"悟性 15 → 按 (10+15)/40 折 got {cs.skill_cap(_lv, 15)}")
+ok(cs.skill_cap(_lv, 10) == _base * 20 // 40,
+   f"起步悟性 10 打半折 got {cs.skill_cap(_lv, 10)}")
+# 与"零头修为"无关: 升级前剩一万点, 上限也不动
+_c1, _c2 = cs.new_char(), cs.new_char()
+_c1["level"], _c2["level"] = _lv, _lv
+_c1["exp"], _c2["exp"] = 0, 99999
+ok(cs.cap_for(_c1, cs.SKILL_BY_ID["jianfa"]) == cs.cap_for(_c2, cs.SKILL_BY_ID["jianfa"]),
+   "上限只看等级, 不看手里剩的修为")
+# 升级一定抬上限 (不回落)
+_c1["level"] = _lv + 1
+ok(cs.cap_for(_c1, cs.SKILL_BY_ID["jianfa"]) >= cs.cap_for(_c2, cs.SKILL_BY_ID["jianfa"]),
+   "升一级上限只升不降")
+
+# ── 熟练度 (技能等级的唯一来源) ───────────────────────────
+ok(cs.PROF_PER_LEVEL == 120, f"熟练度满 120 升一级 got {cs.PROF_PER_LEVEL}")
+_cp = cs.new_char()
+_cp["level"] = 12
+_cp["skills"] = {"jianfa": 3}
+ok(cs.prof_of(_cp, "jianfa") == 0, "新练的功夫熟练度为 0")
+r1 = cs.add_practice(_cp, "jianfa", 50)
+ok(r1["level"] == 3 and r1["prof"] == 50, f"攒 50 点还不够升级 got {r1}")
+r2 = cs.add_practice(_cp, "jianfa", 70)
+ok(r2["level"] == 4 and r2["leveled"] == 1, f"满 120 升一级 got {r2}")
+ok(r2["prof"] == 0, f"升完余 0 got {r2['prof']}")
+r3 = cs.add_practice(_cp, "jianfa", 3000)
+ok(r3["level"] == r3["cap"], f"一次攒很多也只到上限 got {r3}")
+ok(r3["cap"] == cs.cap_for(_cp, cs.SKILL_BY_ID["jianfa"]), "上限就是 cap_for")
+r4 = cs.add_practice(_cp, "jianfa", 50)
+ok(r4["added"] == 0 and r4.get("blocked") == "capped", f"到上限不再吃熟练度 got {r4}")
+ok(cs.prof_of(_cp, "jianfa") == r3["prof"], "到上限后熟练度不再往上爬")
 
 # 内力上限 = 最高内功等级 × 10 + 根骨 × 2
 ch = cs.new_char()

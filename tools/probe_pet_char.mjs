@@ -175,13 +175,20 @@ ok(!!bumped, `入门后有一项被加成: ${bumped ? bumped.name + ' ' + bumped
 ok(bumped && bumped.raw.includes('门派'), `加成构成写进表格: ${bumped ? bumped.raw : ''}`);
 const skillRows1 = await page.$$eval('#skill-rows tr', (r) => r.length);
 ok(skillRows1 === 3, `入门得 3 项 (内功 + 本门兵器 + 绝招): ${skillRows1}`);
+// 列顺序: 名称 / 类 / 属性 / 等级 / 上限 / 熟练 / 成功率 / 定身 / 反噬 / 耗内力 / 说明
+// (2026-11-16 插了「熟练」一列, 成功率往后挪一格)
 const perfRow = await page.$$eval('#skill-rows tr', (rows) => rows.map((r) => ({
   name: r.children[0].textContent.trim(),
   type: r.children[1].textContent.trim(),
-  rate: r.children[5].textContent.trim(),
-  busy: r.children[6].textContent.trim(),
-  fail: r.children[7].textContent.trim(),
+  level: r.children[3].textContent.trim(),
+  cap: r.children[4].textContent.trim(),
+  prof: r.children[5].textContent.trim(),
+  rate: r.children[6].textContent.trim(),
+  busy: r.children[7].textContent.trim(),
+  fail: r.children[8].textContent.trim(),
 })));
+const anyProf = perfRow.find((r) => /\d+\/120|满/.test(r.prof));
+ok(!!anyProf, `熟练度格子有内容: ${anyProf ? anyProf.prof : '(空)'}`);
 const perf = perfRow.find((r) => r.type.startsWith('绝招'));
 ok(!!perf, '有绝招行');
 ok(/%$/.test(perf?.rate || ''), `绝招成功率带%: ${perf?.rate}`);

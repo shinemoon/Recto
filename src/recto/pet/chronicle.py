@@ -1049,9 +1049,16 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     if dry:
         # 预演: 判定与遭遇已在上面**副本**上掷过 (不落盘), 这里只把判词一起回出去,
         # 让"先会怎么判"能看到"这一趟撞上谁、路上哪道坎没过、因此长了什么"。
+        # 预演也把"会练到什么"算出来 (在副本上, 不落盘) —— 否则"先会怎么判"只说
+        # 长了多少修为, 看不到本事那一格。
+        try:
+            preview = growth.practice_from(probe_ch, duel_out, checks_out)
+        except Exception as e:  # noqa: BLE001 — 预演算不出来不该挡住判词
+            log.warning("推演 · 预演熟练度失败: %s", e)
+            preview = {}
         return {**ctx, "status": "dry", "window": ev["window"], "minutes": minutes,
                 "days": ev["days"], "reading": ev["reading"], "judgement": j,
-                "encounter": ev["encounter"],
+                "encounter": ev["encounter"], "practice": preview,
                 "duel": duel_out, "checks": checks_out,
                 "fallback": bool(j.get("_fallback")),
                 "fallback_why": str(j.get("_fallback_why") or ""),
@@ -1066,6 +1073,14 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                                        "skills": gain.get("skills")},
                                   max_exp=int(gain.get("cap") or growth.MAX_EXP_PER_CYCLE),
                                   story_day=life.story_day(ch))
+    # ── 练熟度: 这一趟**真用过的功夫** (出手 / 绝招 / 拆招 / 过坎)。
+    #    判词点名的那一笔已在 award_judged 里记过; 这里记实战那一半。
+    #    技能等级只由熟练度决定, 所以「战报里使了十二剑」现在真会长「剑法」。
+    prac = growth.practice_from(ch, duel_out, checks_out)
+    if prac.get("total"):
+        applied["practice"] = prac
+        log.info("推演 · 练熟了 %s", " · ".join(
+            f"{r['name']} +{r['gain']}" for r in prac["skills"][:4]))
     trait_gained = ""
     tid = str(gain.get("trait") or "")
     if tid:
@@ -1124,6 +1139,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                          "fame": applied.get("fame"), "pot": applied.get("pot"),
                          "trait": trait_gained,
                          "skills": change.get("skills") or [],
+                         "practice": (applied.get("practice") or {}).get("skills") or [],
                          "attrs": change.get("attrs") or [],
                          "vein": change.get("vein"),
                          "growth_shown": story.get("growth_shown") or [],

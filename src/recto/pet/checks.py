@@ -202,6 +202,8 @@ def resolve(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None, *,
         c.update({
             "id": p["id"], "target": p["target"], "white": bool(p["white"]),
             "tries": tries, "what": p["what"],
+            # 这道坎用的是哪门功夫 —— 练熟度按它记账 (见 growth.practice_from)
+            "skill": str(p.get("skill") or ""),
             "ok": p["ok"], "no": p["no"],
             "outcome": (p["ok"] if c["success"] else p["no"]),
             "hint": (f"过了 · {p['ok']}" if c["success"] else

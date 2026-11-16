@@ -268,7 +268,9 @@ ok("六分钟阅读" in html and "十天" in html, "页面写明节奏 (六分�
 rules = __import__("recto.pet.growth", fromlist=["rules"]).rules()
 ok(abs(float(rules["time"]["minutes_per_story_day"]) - 0.6) < 1e-9 and rules["time"]["retire_age"] == 80,
    f"schema 里带时序口径 got {rules['time']}")
-ok(rules["skill_days_per_level"] >= 5, f"技能限速写进规则 got {rules['skill_days_per_level']}")
+ok(rules["prof_per_level"] == 120, f"熟练度口径写进规则 got {rules.get('prof_per_level')}")
+ok(rules["practice"]["judged"] > 0, "判词那一笔也写进规则")
+ok("skill_days_per_level" not in rules, "旧的'故事日一级'闸门已撤")
 
 print()
 print("=" * 46)

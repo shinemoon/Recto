@@ -180,7 +180,11 @@ while _ex >= cs.exp_needed(_lv):
     _lv += 1
 ok(int(cu["level"]) == _lv and int(cu["exp"]) == _ex,
    f"升级把修为吃掉 (lvl={cu['level']} exp={cu['exp']} 期望 {_lv}/{_ex})")
-ok(aw["skills"] == {"jianfa": 1}, f"技能只落白名单 got {aw['skills']}")
+# 2026-11-16 起: 判词只给熟练度 (+25), 不再直接给一整级
+ok(aw["skills"] == {}, f"一笔熟练度不够升级 got {aw['skills']}")
+ok(cs.prof_of(cu, "jianfa") == g.PRACTICE["judged"],
+   f"判词点名的那门攒了熟练度 got {cs.prof_of(cu, 'jianfa')}")
+ok(cs.prof_of(cu, "bogus") == 0, "白名单外的 id 不认")
 ok(int(cu["morality"]) == -2, "心性可负 (但不超 5)")
 aw2 = g.award_judged(cu, {"exp": 500, "pot": 0, "fame": 0}, max_exp=100)
 ok(aw2["exp"] == 100 and aw2["clamped"]["exp"] is True, "超上限被夹且标出来")

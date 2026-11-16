@@ -107,19 +107,29 @@ ok(ch3["vein"] == 2, f"330 分钟 → 通 2 层 got {ch3['vein']}")
 g.award_minutes(ch3, 300)   # 累计 630 → 第三层 (540)
 ok(ch3["vein"] == 3, f"630 分钟 → 通 3 层 got {ch3['vein']}")
 
-# ── 技能限速: 每 SKILL_DAYS_PER_LEVEL 个故事日 += 1 ─────────
-ok(g.SKILL_DAYS_PER_LEVEL == 300, "技能 300 个故事日一级 (0.6 分钟一天, 现实约 3 小时)")
+# ── 技能: 判词只给熟练度 (2026-11-16 口径), 不再"一句话给一级" ────
+ok(g.PROF_PER_LEVEL == cs.PROF_PER_LEVEL == 120, "熟练度满 120 升一级")
+ok(g.PRACTICE["judged"] == 25, "判词点名 → 25 点熟练度")
 cg = cs.new_char()
-cg["minutes"] = 2                 # 故事内第 3 天 (0.6 分钟一天)
-aw_g1 = g.award_judged(cg, {"exp": 100, "skills": {"jibenneigong": 1}}, max_exp=200)
-ok(not aw_g1["skills"], f"第 3 天不该长技能 got {aw_g1['skills']}")
-ok(aw_g1["skill_gate"]["blocked"] is True, "闸门关着")
-cg["minutes"] = 540               # 第 900 天 (闸门 800 天)
-aw_g2 = g.award_judged(cg, {"exp": 100, "skills": {"jibenneigong": 1}}, max_exp=200)
-ok(aw_g2["skills"] == {"jibenneigong": 1}, f"第 900 天长一级 got {aw_g2['skills']}")
-ok(int(cg["last_skill_day"]) == 900, "记住这次长技能的故事日")
-aw_g3 = g.award_judged(cg, {"exp": 100, "skills": {"jibenneigong": 1}}, max_exp=200)
-ok(not aw_g3["skills"], "同一天内不会连涨")
+cg["level"] = 12
+cg["skills"] = {"jianfa": 3}
+aw_g1 = g.award_judged(cg, {"exp": 100, "skills": {"jianfa": 1}}, max_exp=200)
+ok(not aw_g1["skills"], f"一笔熟练度不够升级 got {aw_g1['skills']}")
+ok(cs.prof_of(cg, "jianfa") == 25, f"攒了 25 点 got {cs.prof_of(cg, 'jianfa')}")
+ok(aw_g1["skill_gate"]["by"] == "practice", "闸门改成熟练度口径")
+# 攒满就升级, 且同回合连点也不会一次升两级 (每门只加一笔)
+for _ in range(4):
+    aw_g2 = g.award_judged(cg, {"exp": 0, "skills": {"jianfa": 1}}, max_exp=200)
+ok(cg["skills"]["jianfa"] == 4, f"第五笔升到 4 级 got {cg['skills']}")
+ok(not aw_g2["skills"] or aw_g2["skills"] == {"jianfa": 4}, "升级那次如实记账")
+# 到等级上限就不涨 (判词点了也没用)
+cg["level"] = 1
+cg["exp"] = 0            # 别让上一段剩下的修为把他升上去 (升级会抬上限)
+cg["prof"] = {}
+cg["skills"] = {"jianfa": int(cs.cap_for(cg, cs.SKILL_BY_ID["jianfa"]))}
+aw_g3 = g.award_judged(cg, {"exp": 0, "skills": {"jianfa": 1}}, max_exp=0)
+ok(not aw_g3["skills"], "到上限不给级")
+ok(cs.prof_of(cg, "jianfa") == 0, "到上限也不攒熟练度")
 
 # ── 先天属性: 升级偶得 (成长才看得见) ──────────────────────
 ok(g.BORN_ON_LEVEL.get("wu") == 3, "悟性每 3 级 +1 (慢)")

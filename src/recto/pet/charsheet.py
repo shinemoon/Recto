@@ -441,7 +441,8 @@ def new_char(name: str = "小墨") -> dict[str, Any]:
         # 复位等于没发生 (真踩过: 756 分钟立刻回到 12 岁第 127 日)。
         "reading_baseline": 0,
         "skills": {},                  # 技能 id → 等级
-        "last_skill_day": 0,           # 上次技能长进时的故事内天数 (限速用)
+        "prof": {},                    # 技能 id → 熟练度 (0..PROF_PER_LEVEL-1), 满了升一级
+        "last_skill_day": 0,           # 上次技能长进时的故事内天数 (历史字段, 不再当闸门)
         "traits": [],                  # 已获性情 id
         "vein": 0,                     # 已通经脉层数
         "vein_minutes": 0,             # 本层已积累的陪读分钟
@@ -465,8 +466,14 @@ def load_char() -> dict[str, Any]:
     if not isinstance(attrs, dict):
         attrs = {}
     ch["attrs"] = {a["key"]: int(attrs.get(a["key"], a["init"])) for a in ATTRS}
-    if not isinstance(ch.get("skills"), dict):
-        ch["skills"] = {}
+    _sk_raw = ch.get("skills")
+    ch["skills"] = ({str(k): int(v or 0) for k, v in _sk_raw.items()}
+                    if isinstance(_sk_raw, dict) else {})
+    # 熟练度: 老存档没有这一栏 → 空着 (只影响"离下一级还差多少", 不影响已有等级)
+    _pf_raw = ch.get("prof") if isinstance(ch.get("prof"), dict) else {}
+    ch["prof"] = {str(k): max(0, min(PROF_PER_LEVEL - 1, int(v or 0)))
+                  for k, v in _pf_raw.items()
+                  if str(k) in SKILL_BY_ID}
     # 老存档里的"读书路数"技能迁到新体系 (见 LEGACY_SKILL_MAP);
     # 对不上的直接退休 —— 它们本来就不属于这个江湖。
     if any(str(k) in LEGACY_SKILL_MAP for k in ch["skills"]):
@@ -478,6 +485,9 @@ def load_char() -> dict[str, Any]:
                 continue
             moved[tgt] = max(int(moved.get(tgt, 0)), int(lv or 0))
         ch["skills"] = moved
+    # 熟练度只对"这个江湖里有的功夫"有意义 —— 迁走 / 退休的技能不带走进度
+    # (注意: 0 级的功夫也算"练着", 它的熟练度必须留住, 否则下次读档就清零了)
+    ch["prof"] = {k: v for k, v in ch["prof"].items() if k in SKILL_BY_ID}
     if not isinstance(ch.get("traits"), list):
         ch["traits"] = []
     if not isinstance(ch.get("born"), dict):
@@ -558,11 +568,11 @@ def exp_needed(level: int) -> int:
 
 
 def lifetime_exp(ch: dict[str, Any]) -> int:
-    """从存档反推"一辈子挣过多少修为"。
+    """从存档反推"一辈子挣过多少修为" (累计量, 只用于展示)。
 
-    存档里的 ``exp`` 是**升级后剩下的零头**。直接拿它算技能上限, 升级反而会把上限
-    拉低 (实测: 701 点修为一升级 exp 只剩一百来点, 技能上限从 5 掉回 4, 已经练上去的
-    等级就此卡住)。技能上限应该看一辈子挣了多少, 不是看口袋里剩多少。
+    **2026-11-16 起技能上限不再看它** —— 上限改由**等级**决定 (见
+    :func:`skill_cap`)。原因: 拿"累计修为"算上限时, 等级只是一个副产品, 界面上的
+    Lv 对本事没有约束力; 而且升级消耗会把零头清掉, 上限跟着抖。
     """
     done = 0
     for lv in range(1, max(1, int(ch.get("level") or 1))):
@@ -570,20 +580,79 @@ def lifetime_exp(ch: dict[str, Any]) -> int:
     return done + max(0, int(ch.get("exp") or 0))
 
 
+def level_exp(level: int) -> int:
+    """升到 ``level`` 这一级所需的**累计**修为 (等级曲线上的台阶)。"""
+    return sum(exp_needed(x) for x in range(1, max(1, int(level))))
+
+
 def fame_needed(level: int) -> int:
     return int(level * 10)
 
 
-def skill_cap(exp: int, attr_value: int) -> int:
-    """技能等级上限 —— 侠客行原式 ``(EXP*10)^(1/3)+1`` (以 30 悟性为基准)。
+def skill_cap(level: int, attr_value: int) -> int:
+    """技能等级上限 —— **与等级挂钩**, 与"口袋里剩多少修为"无关。
 
-    悟性不足 30 就打折, 但**不是按 1/3 硬折**: 原来 ``attr // 30`` 在起步悟性 10 时
-    只剩三分之一, 一辈子修为 800 点的角色算出来上限才 7 —— 已经练上去的「基本内功
-    10 级」永远卡在上面不动, 读者看到的是"本事再也不长"。现在按
-    ``(10 + 悟性) / 40`` 折: 悟性 10 → 半折, 悟性 30 → 原值。
+    外形仍是侠客行那一条 ``(EXP*10)^(1/3)+1``, 只是 EXP 取
+    **升到这一级所需的累计修为** (``level_exp``), 于是:
+
+      · 上限只在升级时抬一格 —— 玩家一眼对上"我 12 级, 所以最高练到 14 级"
+      · 升级不再让上限回落 (旧口径拿"零头"算, 一升级零头清零, 上限反而掉)
+      · 悟性仍打折, 但按 ``(10 + 悟性) / 40`` (悟性 10 → 半折, 悟性 30 → 原值)
     """
-    base = int((max(0, exp) * 10) ** (1.0 / 3.0)) + 1
+    base = int((max(1, level_exp(level)) * 10) ** (1.0 / 3.0)) + 1
     return max(1, base * (10 + max(0, int(attr_value))) // 40)
+
+
+#: 熟练度满了就升一级。技能等级**只从这里来** (加上入门送的第一级):
+#: 每次出手、每道坎、每回判定都往这里面积分, 积满 120 升 1 级。
+#: 为什么用"熟练度"而不是"后台直接 +1 级": 后者与"你真练了什么"脱钩,
+#: 读者在战报里看到自己使了十二剑, 技能却纹丝不动 —— 那是机制在骗人。
+PROF_PER_LEVEL = 120
+
+
+def prof_of(ch: dict[str, Any], skill_id: str) -> int:
+    """某门功夫已经攒了多少熟练度 (0 .. PROF_PER_LEVEL-1)。"""
+    return max(0, int((ch.get("prof") or {}).get(str(skill_id), 0)))
+
+
+def add_practice(ch: dict[str, Any], skill_id: str, amount: int, *,
+                 cap: int | None = None) -> dict[str, Any]:
+    """给一门功夫记熟练度 (就地改 ``ch``, 调用方负责 save)。
+
+    · 只增不减; 负数 / 未知技能 → 原样返回 ``{"added": 0}``
+    · 熟练度满 ``PROF_PER_LEVEL`` 升一级, 一次可以连升 (但受上限约束)
+    · **到上限就停在满级那一格**: 多出来的熟练度不累积 —— 否则一旦升级, 一进
+      上限就"本来就快满", 读者永远看不出"还得再练"
+    """
+    sid = str(skill_id or "")
+    sk = SKILL_BY_ID.get(sid)
+    n = int(amount or 0)
+    if not sk or n <= 0:
+        return {"skill": sid, "added": 0, "level": int((ch.get("skills") or {}).get(sid, 0))}
+    limit = int(cap if cap is not None else cap_for(ch, sk))
+    skills = ch.setdefault("skills", {})
+    profs = ch.setdefault("prof", {})
+    cur = int(skills.get(sid, 0))
+    prof = prof_of(ch, sid)
+    if cur >= limit:
+        return {"skill": sid, "added": 0, "level": cur, "cap": limit,
+                "prof": prof, "blocked": "capped"}
+    prof += n
+    gained = 0
+    while prof >= PROF_PER_LEVEL and cur < limit:
+        prof -= PROF_PER_LEVEL
+        cur += 1
+        gained += 1
+    if cur >= limit:
+        prof = min(prof, PROF_PER_LEVEL - 1)
+    # 0 级 = 还没入门: 只记账, 不写进 skills —— 攒满一格才算"练成第一层"
+    # (否则人物卡里会冒出一排 Lv0 的功夫, 看着像 bug)
+    if cur > 0:
+        skills[sid] = cur
+    profs[sid] = prof
+    return {"skill": sid, "added": n, "level": cur, "leveled": gained,
+            "prof": prof, "cap": limit,
+            "pct": int(prof * 100 / PROF_PER_LEVEL)}
 
 
 def _base_attrs(ch: dict[str, Any]) -> dict[str, int]:
@@ -771,8 +840,8 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
 
 
 def cap_for(ch: dict[str, Any], sk: dict[str, Any]) -> int:
-    """某门功夫的等级上限 —— 修为/悟性决定基础值, 禀赋再加减百分比。"""
-    base = skill_cap(lifetime_exp(ch),
+    """某门功夫的等级上限 —— **等级**决定基础值 (再按悟性折), 禀赋再加减百分比。"""
+    base = skill_cap(int(ch.get("level") or 1),
                      int(effective_attrs(ch).get(sk.get("attr") or "wu", 10)))
     pct = int(trait_mods(ch).get("skill_cap_pct") or 0)
     if pct:
@@ -876,6 +945,8 @@ def derive(ch: dict[str, Any]) -> dict[str, Any]:
         "exp_needed": exp_needed(level),
         "exp_now": max(0, int(ch.get("exp") or 0)),
         "exp_total": lifetime_exp(ch),
+        # 技能等级上限 (等级 + 悟性决定; 界面与文档都读这一个数)
+        "skill_cap": skill_cap(level, a["wu"]),
         "fame_needed": fame_needed(level),
         "attrs_total": sum(a.values()),
         "attrs_cap_total": sum(x["cap"] for x in ATTRS),
@@ -1059,17 +1130,30 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
 
     skills = []
     eff_attrs = effective_attrs(ch)
-    for sid, lv in (ch.get("skills") or {}).items():
+    # 练了一点但还没入门 (0 级) 的那几门也列出来 —— 熟练度是"看得见的积累",
+    # 藏起来就等于又变回"什么都没发生"
+    _ids = list((ch.get("skills") or {}).keys())
+    for _sid in (ch.get("prof") or {}):
+        if _sid not in _ids:
+            _ids.append(_sid)
+    for sid in _ids:
+        lv = int((ch.get("skills") or {}).get(sid, 0))
         sk = SKILL_BY_ID.get(sid)
         if not sk:
             continue
         lv = int(lv)
+        cap = cap_for(ch, sk)
         row = {
             "id": sid,
             "name": sk["name"],
             "type": sk["type"],
             "attr": sk.get("attr", ""),
             "level": lv,
+            "cap": cap,
+            "prof": prof_of(ch, sid),
+            "prof_need": PROF_PER_LEVEL,
+            "prof_pct": (100 if lv >= cap else
+                         int(prof_of(ch, sid) * 100 / PROF_PER_LEVEL)),
             "desc": sk.get("desc", ""),
         }
         row["use"] = sk.get("use", "")
@@ -1082,8 +1166,6 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
                 "fail": perform_fail(ch, sk),
                 "effect": sk.get("effect", "damage"),
             })
-        else:
-            row["cap"] = cap_for(ch, sk)
         skills.append(row)
     order = {"basic": 0, "weapon": 1, "fist": 2, "qinggong": 3,
              "neigong": 4, "perform": 5, "art": 6}
@@ -1147,6 +1229,7 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
             for key in ("hp", "spirit", "neili", "jingli")
         },
         "combat": d["combat"],
+        "skill_cap": d["skill_cap"],
         "d20": d20_stats(ch),
         "fame": int(ch.get("fame") or 0),
         "fame_needed": d["fame_needed"],
@@ -1181,6 +1264,7 @@ def schema() -> dict[str, Any]:
                          perform_name=(SKILL_BY_ID.get(x.get("perform") or "") or {}).get("name", ""))
                     for x in SCHOOLS],
         "skills": SKILLS,
+        "prof_per_level": PROF_PER_LEVEL,
         "veins": VEINS,
         "ranks": RANKS,
         "wuxing": list(WUXING),
@@ -1188,7 +1272,10 @@ def schema() -> dict[str, Any]:
         "rules": [
             "六项根骨初始 10, 每项封顶 30, 总和封顶 180 —— 侠客行的老规矩。",
             "潜能点来自升级与陪读, 自由分配到六项根骨。",
-            "技能上限 = (修为×10)^(1/3)+1, 按对应根骨与 30 的比例打折 (悟性 30 = 原值)。",
+            "技能上限 = (升级所需的累计修为 × 10)^(1/3) + 1, 按悟性折 —— 也就是说"
+            "**上限只看等级**: 12 级练到 14 级, 13 级抬到 15 级, 与手里剩多少修为无关。",
+            "技能长进靠**熟练度**: 每次出手 / 每道坎 / 每回判定都攒, 满 "
+            f"{PROF_PER_LEVEL} 点升 1 级; 入门送的那一级是白给的。",
             "内力上限 = 最高内功等级 × 10 + 根骨 × 2 —— 内功练不上去, 内力就上不去。",
             "绝招三要素: 成功率 / 定身 (busy) / 反噬 (fail), 另加内力消耗。",
             "交手的命中 / 闪避 / 伤害 / 减伤, 都由根骨 + 对应技能 + 禀赋实时算出。",
