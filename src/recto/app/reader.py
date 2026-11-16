@@ -484,6 +484,9 @@ def handle(h) -> bool:
             return True
 
         if method == "GET" and not rest:
+            # 记下"这个会话打开了这本书": 打开时带的 sid 是判断"当前现场"的唯一依据
+            # (半小时前没关的旧标签页把进度写回去时, 它不是现场)。
+            rs.note_open(key, (q.get("sid") or [""])[0])
             h._json(200, _meta(key, doc))
             return True
         if method == "GET" and rest[:1] == ["chapter"] and len(rest) == 2:
@@ -559,6 +562,10 @@ def handle(h) -> bool:
                                    allow_rewind=bool(body.get("jump")))
             if out.get("skipped") == "stale-rewind":
                 # 旧会话的落后位置: 不写库, 也不推云端; 让前端跟上真正的位置
+                _log.info("忽略旧会话进度 · %s · 会话 %s 想写 %s (库里是 %s)",
+                          key, str(body.get("sid") or "?")[:24],
+                          _pct_text(float(out.get("ignored_percent") or 0.0)),
+                          _pct_text(float(out.get("cur_percent") or 0.0)))
                 out["sync"] = _sync.sync_state(key)
                 out["percent"] = float(out.get("percent") or 0.0)
                 h._json(200, {"ok": True, "stale": True, **out})

@@ -197,9 +197,19 @@ def fake_pull_local_ahead(**kw):
 
 
 sync.pull_once = fake_pull_local_ahead                                # type: ignore
+# 本地更靠前, 但**推送没成功**时也要交给读者 (2026-11-16):
+# 以前这里一律不问, 于是"读到 60%、云端还停在 31%"没人知道, 一刷新就以为丢了。
+PROG.update(percent=0.60, chapter=6, offset=100, complete=0)
+sidecar.touch_cloud(BOOK, last_push_pct=0.31)
 out = sync.peek_book(KEY, force=True)
-check("本地更靠前 → 不要选", not out.get("need_choice"), out)
+check("本地更靠前 + 没推上去 → 交给读者", out.get("need_choice") is True
+      and out.get("choice_kind") == "local-unpushed", out)
 check("照样报出云端比例", out.get("cloud_pct") == 0.31, out)
+sync._PEEK_CACHE.clear()
+sidecar.touch_cloud(BOOK, last_push_pct=0.60)      # 云端虽旧, 但本地已经推过了
+out = sync.peek_book(KEY, force=True)
+check("本地更靠前 + 已经推过 → 不打扰", not out.get("need_choice"), out)
+reset()
 
 print("\n[5] apply_cloud: 选了才写库")
 reset()

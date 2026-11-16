@@ -288,10 +288,24 @@ p = reader_state.save_progress(KEY, 0, 0, 0.01, "", sid="tab-stale", allow_rewin
 check("显式 jump 放行 (目录跳回去)", p.get("skipped") is None and p["percent"] == 0.01, p)
 
 reader_state.save_progress(KEY, 6, 100, 0.90, "", sid="tab-a", allow_rewind=True)
+# 2026-11-16 起: 跨会话回退**一格都算异常**。旧阈值 5% 放过了"读到 15.3% 放置
+# 半小时后刷新回到 14%" —— 1% 在 1MB 的书里已经是几十段正文。
 p = reader_state.save_progress(KEY, 6, 60, 0.88, "", sid="tab-b")
-check("小幅回退 (≤5%) 不算异常", p.get("skipped") is None and abs(p["percent"] - 0.88) < 1e-9, p)
+check("小幅回退也不再放行 (跨会话)", p.get("skipped") == "stale-rewind", p)
+check("挡下时库里还是 90%", abs(reader_state.get_progress(KEY)["percent"] - 0.90) < 1e-9,
+      reader_state.get_progress(KEY))
+check("旧会话没被写进库里", (reader_state.get_progress(KEY).get("sid") or "") == "tab-a",
+      reader_state.get_progress(KEY))
+
+# 例外: 这条进度之后**才打开过这本书**的会话 = 当前现场, 读者亲手往回翻就放行
+reader_state.note_open(KEY, "tab-b")
+p = reader_state.save_progress(KEY, 6, 60, 0.88, "", sid="tab-b")
+check("新会话 (打开过的现场) 往回翻放行", p.get("skipped") is None and abs(p["percent"] - 0.88) < 1e-9, p)
 check("会话 id 落库", (reader_state.get_progress(KEY).get("sid") or "") == "tab-b",
       reader_state.get_progress(KEY))
+# 另一个从没打开过书的会话, 现在也轮不到它往回写
+p = reader_state.save_progress(KEY, 0, 0, 0.01, "", sid="tab-other")
+check("没打开过书的会话仍被挡", p.get("skipped") == "stale-rewind", p)
 
 # 不带 sid 的写者 (CLI / 探针 / 同步) 不能把会话信息抹掉 ——
 # 抹掉就等于给下一个会话开了"随便回退"的口子。

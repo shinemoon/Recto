@@ -593,7 +593,46 @@ def get_progress(key: str) -> dict:
 # 只要滚动一下就会把本地进度写回 53% —— 之后每次打开都从中间开始, 而云端
 # 又因为"只前进"不会被拨回去, 两边就永久错位。同一个会话里的回退一律放行
 # (读者自己往回翻是正常的)。
-REWIND_GUARD = 0.05
+#
+# 2026-11-16 修正: 原来这里写 0.05, 只有"回退超过 5%"才拦。用户报的是
+# 「读到 15.3% 后放置半小时, 刷新回到 14%」—— 旧标签页只回退了 1.3%,
+# 从闸门缝里过去了。百分比是个太粗的尺子: 一本 1MB 的书 1% 就是几十段正文。
+# 所以判据改成**有没有回退**(`_REWIND_EPS` 只挡浮点噪声), 放行的只有两种:
+#   * 同一个会话 (读者自己往回翻 / 关页面前后同一实例);
+#   * **在这条进度之后才打开过这本书**的会话 (`note_open` 记的现场),
+#     也就是"新开的页面里读者亲手往回跳"。
+REWIND_GUARD = 0.05          # 历史值, 保留给外部引用 (已不参与判定)
+_REWIND_EPS = 1e-6
+
+# 谁在什么时候打开了这本书 (key -> {sid, at})。
+# 只用于回答一个问题: 这个会话是"当前现场"还是"半小时前没关的旧标签页"。
+_OPENED: dict[str, dict] = {}
+_OPENED_LOCK = threading.Lock()
+_OPENED_KEEP = 40            # 只留最近打开过的若干本, 防止内存长草
+
+
+def note_open(key: str, sid: str) -> None:
+    """记下"某个阅读器会话打开了这本书" (前端 boot 时带 sid 调 `/read/api/book/<key>?sid=`)。"""
+    if not key or not sid:
+        return
+    with _OPENED_LOCK:
+        _OPENED[key] = {"sid": str(sid)[:24], "at": time.time()}
+        if len(_OPENED) > _OPENED_KEEP:
+            for k in sorted(_OPENED, key=lambda x: _OPENED[x].get("at") or 0)[:-_OPENED_KEEP]:
+                _OPENED.pop(k, None)
+
+
+def _opened_after(key: str, sid: str, since: str) -> bool:
+    """这个 sid 是不是**在 `since` 之后**才打开这本书的 (即当前现场)。"""
+    with _OPENED_LOCK:
+        o = dict(_OPENED.get(key) or {})
+    if not o or o.get("sid") != sid:
+        return False
+    try:
+        t0 = datetime.fromisoformat(str(since)).timestamp()
+    except Exception:
+        return False
+    return float(o.get("at") or 0) >= t0
 
 
 def save_progress(key: str, chapter: int, offset: int, percent: float,
@@ -612,14 +651,16 @@ def save_progress(key: str, chapter: int, offset: int, percent: float,
         cur = get_progress(key)
         cur_pct = float(cur.get("percent") or 0.0)
         cur_sid = str(cur.get("sid") or "")
-        if (cur.get("updated_at") and cur_pct > 0
-                and float(percent) < cur_pct - REWIND_GUARD
-                and sid and cur_sid and sid != cur_sid):
-            out = dict(cur)
-            out.update({"skipped": "stale-rewind",
-                        "ignored_percent": float(percent),
-                        "cur_percent": cur_pct})
-            return out
+        behind = bool(cur.get("updated_at")) and cur_pct > 0 and float(percent) < cur_pct - _REWIND_EPS
+        if behind and sid and cur_sid and sid != cur_sid:
+            # 跨会话回退: 只有"在这条进度之后才打开过书"的那个会话能往回翻,
+            # 其它一律当旧标签页 —— 保留库里更靠前的进度, 让那个页面跟上。
+            if not _opened_after(key, sid, str(cur.get("updated_at") or "")):
+                out = dict(cur)
+                out.update({"skipped": "stale-rewind",
+                            "ignored_percent": float(percent),
+                            "cur_percent": cur_pct})
+                return out
     if not sid:
         # 不带 sid 的写者 (CLI / 探针 / 同步流程) 不该把"上一个阅读器会话"
         # 的信息抹掉 —— 抹掉等于给下一个会话开了"随便回退"的口子。

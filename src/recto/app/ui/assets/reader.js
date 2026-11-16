@@ -70,6 +70,11 @@
     // 没动过就不写进度: 刚打开时正文还在排版, 量到的锚点可能是恢复前的位置,
     // 写回去就会把"读到 90%"变成"停在章首" —— 这是老用户报过的现象。
     userMoved: false,
+    // 最后一次**写进库**的锚点 {ch, off, page, cur, y} 与"读者刚主动往回翻"的意图。
+    // 页表在补章 / 图片解码后会重排一瞬间, 那时 currentAnchor() 可能比已存的位置
+    // 更靠前 —— 直接存就把进度往回写了 (2026-11-16 "放置半小时后刷新跳回早先")。
+    saved: null,
+    backIntent: false,
     // 读者刚刚**主动跳**过 (目录 / 上一章 / 笔记跳转)。这一次保存要带 jump=1:
     // 「我就是想回去」的意图得让服务端的"旧会话不许回退"闸门放行,
     // 否则在新标签页里往回跳一章会被当成别处读得更远的旧页面挡下来。
@@ -709,6 +714,7 @@
     var prev = S.page;
     S.page = Math.max(0, Math.min(p, S.pageCount - 1));
     var moved = S.page !== prev;
+    if (moved && S.page < prev) S.backIntent = true;   // 读者自己往回翻, 别拦着
     // 只有"滑动"让 CSS transition 播; 其它效果把位移瞬时切到位, 再由 playFx 做入场
     var fx = (opts.instant || !moved) ? 'none' : fxMode();
     if (fx !== 'slide') root.classList.add('rv-no-anim');
@@ -927,10 +933,32 @@
     return { el: el, ch: +el.dataset.ch, off: +el.dataset.off };
   }
 
+  // 要送出去的锚点: 在 currentAnchor() 外面再套一层"别把已存的位置写回去"。
+  //
+  // 页表在补下一章 / 图片解码完之后会重排一次 (`scheduleSettle`), 那一瞬间
+  // `pageTopBlock()` 量到的可能是**重排前**那一段 —— 比已经存好的位置更靠前。
+  // 判断依据不看百分比, 看"这一下到底有没有发生导航":
+  //   翻页模式 = 页号与章号都没变; 滚动模式 = 滚动位置没动。
+  // 导航没发生, 锚点却更靠前 → 是量测的锅, 沿用上次存好的锚点。
+  // 读者主动往回翻 (`S.backIntent`) 时一律照实报, 他想回去就回去。
+  function saveAnchor() {
+    var a = currentAnchor();
+    if (!a) return null;
+    var ls = S.saved;
+    if (!ls || S.backIntent) return a;
+    var behind = (a.ch < ls.ch) || (a.ch === ls.ch && a.off < ls.off);
+    if (!behind) return a;
+    var sameNav = isPaged()
+      ? (S.page === ls.page && S.cur === ls.cur)
+      : (Math.abs(window.scrollY - (ls.y || 0)) < 6);
+    if (!sameNav) return a;
+    return { ch: ls.ch, off: ls.off, el: blockForAnchor(ls.ch, ls.off) };
+  }
+
   function saveProgress(now, opts) {
     opts = opts || {};
     if (!S.userMoved && !opts.force) return;   // 见 S.userMoved 的注释
-    var a = currentAnchor();
+    var a = saveAnchor();
     if (!a) return;
     var ch = a.ch, off = a.off;
     var pct = pctOf(ch, off);
@@ -938,6 +966,8 @@
     if (ch === S.lastCh && off === S.lastOff && !opts.force) return;
     var moved = (ch !== S.lastCh || off !== S.lastOff);
     S.lastCh = ch; S.lastOff = off;
+    S.saved = { ch: ch, off: off, page: S.page, cur: S.cur, y: window.scrollY };
+    S.backIntent = false;
     var jump = !!(opts.jump || S.jumpIntent);
     S.jumpIntent = false;
     api('/progress', {
@@ -952,6 +982,8 @@
       if (r.stale) {
         // 服务端判定"这是落后于别处的旧位置": 保留更靠前的进度, 页面跟着对齐
         toast('别处读到更后面, 已保留那边的进度', 2600);
+        S.saved = null;
+        S.backIntent = false;
         if (r.chapter != null && (+r.chapter !== ch || +r.offset !== off)) {
           S.lastCh = null; S.lastOff = null;
           jumpTo(+r.chapter, +r.offset);
@@ -1089,7 +1121,7 @@
     var cfg = (S.sync && S.sync.settings) || {};
     if (!cfg.auto || cfg.flush_on_hide === false) return;
     if (!S.userMoved) return;                  // 没动过 = 库里的位置已经是对的
-    var a = currentAnchor();
+    var a = saveAnchor();                       // 同上: 别把重排那一瞬的量测结果写回去
     if (!a) return;
     // 节流窗口里可能还有一次没推上去 —— 离开页面时补上 (服务端 flush 绕过节流)。
     // 用 keepalive fetch 而不是 sendBeacon: 同样的"页面走了还发得出去", 但
@@ -1108,20 +1140,40 @@
   // 云端比本地靠前时, 让读者自己决定: 跳过去, 还是留在本地继续读。
   // 以前是"拉进来 + 自动跳" —— 读者正等着看正文, 位置突然被拽走, 而且
   // 原来的位置已经被覆盖, 想留下都留不住。现在打开这一刻只比不写。
+  // 打开书时两边对不上就交给读者判定。两种情形共用同一条提示条:
+  //   cloud-ahead    云端读得更远 (通常是在手机/纸上读过)  → 默认建议跳过去
+  //   local-unpushed 本地读得更远, 但这次推送没成功/被闸门挡住 → 默认建议先推上去
+  // 都不自动改数据: 不选就按本地继续读, 下次打开再问。
   function askCloudChoice(r) {
     var el = $('#rv-choice');
     if (!el || S.choiceAsked) return;
     S.choiceAsked = true;
+    var kind = r.choice_kind || 'cloud-ahead';
     var cp = r.cloud_pct, lp = r.local_pct;
     var txt = $('#rv-choice-txt');
-    if (txt) {
-      txt.innerHTML =
-        '掌阅云端读到 <b>' + stampPct(cp) + '</b>（第 ' + ((+r.cloud_chapter || 0) + 1) + ' 章）' +
-        '<br>这里停在 <b>' + stampPct(lp) + '</b>';
+    var bLocal = el.querySelector('[data-c="local"]');
+    var bCloud = el.querySelector('[data-c="cloud"]');
+    if (kind === 'local-unpushed') {
+      if (txt) {
+        txt.innerHTML =
+          '这里读到 <b>' + stampPct(lp) + '</b>（第 ' + (S.cur + 1) + ' 章）' +
+          '<br>掌阅云端还停在 <b>' + stampPct(cp) + '</b> —— 这次的进度没推上去';
+      }
+      if (bLocal) { bLocal.textContent = '用本地覆盖云端'; bLocal.className = 'primary'; }
+      if (bCloud) { bCloud.textContent = '采用云端'; bCloud.className = ''; }
+    } else {
+      if (txt) {
+        txt.innerHTML =
+          '掌阅云端读到 <b>' + stampPct(cp) + '</b>（第 ' + ((+r.cloud_chapter || 0) + 1) + ' 章）' +
+          '<br>这里停在 <b>' + stampPct(lp) + '</b>';
+      }
+      if (bLocal) { bLocal.textContent = '留在本地'; bLocal.className = ''; }
+      if (bCloud) { bCloud.textContent = '跳到云端'; bCloud.className = 'primary'; }
     }
+    S.choiceKind = kind;
     el.hidden = false;
     clearTimeout(S.choiceT);
-    S.choiceT = setTimeout(hideChoice, 12000);
+    S.choiceT = setTimeout(hideChoice, kind === 'local-unpushed' ? 20000 : 12000);
   }
 
   function hideChoice() {
@@ -1161,7 +1213,8 @@
     api('/sync').then(function (r) {
       if (!r) return;
       if (r.state) { S.sync.state = r.state; renderStamp(r.state); }
-      if (r.need_choice && r.anchor) { askCloudChoice(r); return; }
+      // cloud-ahead 带 anchor (跳转目标); local-unpushed 只报云端那条百分比
+      if (r.need_choice) { askCloudChoice(r); return; }
       if (r.skipped === 'local-ahead') queueSave(true);
     }).catch(function () { /* 离线: 按本地位置读 */ });
   }
@@ -1494,7 +1547,9 @@
   }
 
   function reloadNotes() {
-    api('').then(function (m) {
+    // 打开时把页面的会话 id 带上: 服务端据此判断"谁才是当前现场" ——
+  // 半小时前没关的旧标签页写的进度会被它挡下 (见 reader_state.note_open)。
+  api('?sid=' + encodeURIComponent(S.sid)).then(function (m) {
       if (!m) return;
       S.notes = m.notes || [];
       S.marks = m.bookmarks || [];
@@ -2077,6 +2132,7 @@
 
   function jumpTo(ch, off) {
     S.jumpIntent = true;          // 读者主动跳转: 允许把进度写回/覆写云端
+    S.backIntent = true;          // 也绕开前端"别把已存位置写回去"的兜底
     if (isPaged()) {
       if (S.loaded[ch] && blockForAnchor(ch, off)) {
         S.cur = ch; markToc();
@@ -2778,7 +2834,11 @@
   function pageStep(dir) {
     var p = S.page + dir;
     if (p < 0) {
-      if (S.cur > 0) { S.jumpIntent = true; openChapter(S.cur - 1, { tail: true }); return; }
+      if (S.cur > 0) {
+        S.jumpIntent = true; S.backIntent = true;
+        openChapter(S.cur - 1, { tail: true });
+        return;
+      }
       p = 0;
     }
     if (p > S.pageCount - 1) {

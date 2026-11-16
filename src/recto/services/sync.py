@@ -1542,6 +1542,7 @@ def peek_book(key: str, *, force: bool = False) -> dict:
         ch, off = int(det.get("chapter") or 0), int(det.get("offset") or 0)
         out.update({
             "need_choice": True,
+            "choice_kind": "cloud-ahead",
             "cloud_pct": det.get("pct"),
             "cloud_chapter": ch,
             "cloud_offset": off,
@@ -1553,9 +1554,45 @@ def peek_book(key: str, *, force: bool = False) -> dict:
                  geometry.format_pct(det.get("pct"), nbytes),
                  geometry.format_pct(prog.get("percent"), nbytes))
     elif det.get("skipped") == "local-ahead":
-        out["cloud_pct"] = det.get("cloud")
+        cloud_pct = float(det.get("cloud") or 0.0)
+        out["cloud_pct"] = cloud_pct
+        # 本地靠前, 不等于"云端已经知道"。推送可能被闸门挡下 (云端更靠前一条
+        # 被手机回写过 / 已标读完 / 网络失败), 于是两边差着一截却谁也没提醒。
+        # 差得够多就问读者一句 —— 不自动推, 也不自动拉。
+        gap = _choice_gap(nbytes)
+        local_pct = float(out["local_pct"] or 0.0)
+        unpushed = _unpushed_bytes(row, local_pct, nbytes)
+        if gap and (local_pct - cloud_pct) * nbytes >= gap and unpushed >= gap:
+            out.update({"need_choice": True, "choice_kind": "local-unpushed"})
+            log.info("本地靠前但尚未推上去 · %s · 本地 %s · 云端 %s · 等读者选择",
+                     row["title"], geometry.format_pct(local_pct, nbytes),
+                     geometry.format_pct(cloud_pct, nbytes))
     _PEEK_CACHE[key] = {"at": now, "res": out}
     return out
+
+
+def _choice_gap(nbytes: int) -> int:
+    """"差得够多了" 的门槛 (字节)。
+
+    用字节而不是百分比, 因为百分比对大小书不公平: 1MB 的书 1% 是几十段正文,
+    42MB 的书 1% 是两章。取 8KB (约几页正文) 打底, 小书按 2% 封顶。
+    """
+    n = max(0, int(nbytes or 0))
+    if not n:
+        return 4096
+    return max(1024, min(8192, int(n * 0.02)))
+
+
+def _unpushed_bytes(row: dict, local_pct: float, nbytes: int) -> int:
+    """本地位置比"我们上次推上去的那一条"多出多少字节 (没推过 = 全部)。"""
+    try:
+        cloud = (sidecar.read(row.get("path") or "") or {}).get("cloud") or {}
+    except Exception:  # noqa: BLE001 — 边车读不到就当"没推过", 宁可多问一句
+        cloud = {}
+    last = cloud.get("last_push_pct")
+    if last is None:
+        return int(abs(local_pct) * max(0, int(nbytes or 0)))
+    return int(abs(local_pct - float(last)) * max(0, int(nbytes or 0)))
 
 
 def apply_cloud(key: str) -> dict:
