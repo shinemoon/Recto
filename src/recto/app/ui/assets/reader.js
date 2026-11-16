@@ -968,6 +968,7 @@
     S.lastCh = ch; S.lastOff = off;
     S.saved = { ch: ch, off: off, page: S.page, cur: S.cur, y: window.scrollY };
     S.backIntent = false;
+    posSeenWrite(ch, off, pct);
     var jump = !!(opts.jump || S.jumpIntent);
     S.jumpIntent = false;
     api('/progress', {
@@ -1176,6 +1177,61 @@
     S.choiceT = setTimeout(hideChoice, kind === 'local-unpushed' ? 20000 : 12000);
   }
 
+  // ---------- "这台设备上次读到这里" 的兜底 ----------
+  // 服务端那边可能因为任何原因只剩一个更早的位置 (旧标签页写回 / 数据被覆盖 /
+  // 同步回拨)。浏览器自己记一份"我最后读到哪", 打开时发现库里明显更靠前就问一句,
+  // 而不是默默把读者送回去重读。
+  function posSeenRead() {
+    try {
+      var v = JSON.parse(localStorage.getItem('recto.pos.' + S.key) || 'null');
+      return (v && typeof v.ch === 'number' && typeof v.pct === 'number') ? v : null;
+    } catch (e) { return null; }
+  }
+
+  function posSeenWrite(ch, off, pct) {
+    try {
+      localStorage.setItem('recto.pos.' + S.key,
+        JSON.stringify({ ch: ch, off: off, pct: pct, at: Date.now() }));
+    } catch (e) { /* 隐私模式忽略 */ }
+  }
+
+  // 与服务端同一个门槛口径: 差 max(1KB, min(8KB, 全书 2%)) 才算"明显区别"
+  function gapBytes() {
+    var n = +S.bytes || 0;
+    if (!n) return 4096;
+    return Math.max(1024, Math.min(8192, Math.round(n * 0.02)));
+  }
+
+  function askRemembered(seen, curPct) {
+    var el = $('#rv-choice');
+    if (!el || S.choiceAsked) return;
+    S.choiceAsked = true;
+    S.choiceKind = 'local-remembered';
+    var txt = $('#rv-choice-txt');
+    if (txt) {
+      txt.innerHTML =
+        '这台设备上次读到 <b>' + stampPct(seen.pct) + '</b>（第 ' + ((+seen.ch || 0) + 1) + ' 章）' +
+        '<br>库里只记得 <b>' + stampPct(curPct) + '</b> —— 要回到上次那里吗';
+    }
+    var bLocal = el.querySelector('[data-c="local"]');
+    var bCloud = el.querySelector('[data-c="cloud"]');
+    if (bLocal) { bLocal.textContent = '回到上次位置'; bLocal.className = 'primary'; }
+    if (bCloud) { bCloud.textContent = '从当前开始'; bCloud.className = ''; }
+    el.hidden = false;
+    clearTimeout(S.choiceT);
+    S.choiceT = setTimeout(hideChoice, 25000);
+  }
+
+  function maybeAskRemembered(prog) {
+    var seen = posSeenRead();
+    if (!seen) return;
+    var cur = +prog.percent || 0;
+    if (!(seen.pct > cur)) return;
+    var gap = gapBytes();
+    if ((seen.pct - cur) * (+S.bytes || 0) < gap) return;      // 差得不够多, 不打扰
+    askRemembered(seen, cur);
+  }
+
   function hideChoice() {
     clearTimeout(S.choiceT);
     var el = $('#rv-choice');
@@ -1206,6 +1262,23 @@
     }).catch(function () { toast('同步失败, 稍后自动重试', 2200); });
   }
 
+  function chooseRemembered(which) {
+    hideChoice();
+    var seen = posSeenRead();
+    if (which === 'local' && seen) {
+      S.lastCh = null; S.lastOff = null;
+      S.jumpIntent = true; S.backIntent = true;
+      jumpTo(+seen.ch || 0, +seen.off || 0);
+      posSeenWrite(+seen.ch || 0, +seen.off || 0, +seen.pct || 0);
+      toast('已回到上次的位置 · ' + stampPct(seen.pct), 2400);
+    } else {
+      // 从当前开始: 把本地记录拉回服务端位置, 免得每次打开都问一遍
+      var b = S.bootP || {};
+      posSeenWrite(+b.chapter || 0, +b.offset || 0, +b.percent || 0);
+      toast('从库里的位置继续读', 2000);
+    }
+  }
+
   // 打开一本书时先跟云端对一次: 云端更靠前 → 问读者; 本地更靠前 → 说明该推。
   function autoPull() {
     var cfg = (S.sync && S.sync.settings) || {};
@@ -1225,8 +1298,11 @@
     var b = t && t.closest ? t.closest('#rv-choice [data-c]') : null;
     if (!b) return;
     e.preventDefault();
-    chooseCloud(b.getAttribute('data-c'));
+    var which = b.getAttribute('data-c');
+    if (S.choiceKind === 'local-remembered') { chooseRemembered(which); return; }
+    chooseCloud(which);
   });
+
 
   function syncBoot(cfg) {
     S.sync = cfg || S.sync || {};
@@ -3452,6 +3528,7 @@
     renderLists();
     kmLoad();
     var p = meta.progress || {};
+    S.bootP = p;                     // 打开那一刻库里的位置 (选「从当前开始」时用它回填本地记忆)
     var startCh = Math.max(0, Math.min(+p.chapter || 0, S.chapters.length - 1));
     S.cur = startCh;
     $('#rv-title').textContent = meta.title;
@@ -3469,6 +3546,7 @@
       timeStart();
       queueSave(true);
       syncProg();
+      maybeAskRemembered(p);
       // 从上次位置恢复后的那一次跳转不算"下滑阅读" —— 落地时顶栏应当可见
       lastY = window.scrollY;
       setBar(false);

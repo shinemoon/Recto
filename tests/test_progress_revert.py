@@ -178,5 +178,20 @@ py = (ROOT / "src/recto/app/reader.py").read_text(encoding="utf-8")
 check("meta 请求里记 open 的 sid", "rs.note_open(key," in py)
 check("旧会话被挡时留一条日志", "忽略旧会话进度" in py)
 
+print("\n[6] 浏览器自己记得上次读到哪 (最后一道兜底)")
+check("记本地记忆 posSeenWrite", "function posSeenWrite(" in js)
+check("保存时写下本地记忆", "posSeenWrite(ch, off, pct);" in js)
+check("打开时比对本地记忆", "maybeAskRemembered(p);" in js)
+check("门槛跟服务端同一口径", "function gapBytes()" in js and "0.02" in js)
+check("第三种情形有独立文案", "local-remembered" in js and "这台设备上次读到" in js)
+check("可以回到上次位置", "回到上次位置" in js)
+check("可以从当前开始", "从当前开始" in js)
+check("两条路都实现", "function chooseRemembered(" in js
+      and "jumpTo(+seen.ch || 0" in js)
+check("选择条按情形分派", "S.choiceKind === 'local-remembered'" in js)
+check("boot 记下库里的位置", "S.bootP = p;" in js)
+probe = ROOT / "tools/probe_reader_remembered.mjs"
+check("有端到端探针", probe.exists())
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
