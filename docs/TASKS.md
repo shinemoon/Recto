@@ -267,3 +267,26 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 - 上限随等级抬一格: 1 级 2 / 6 级 8 / 12 级 14 / 24 级 21 / 48 级 30（悟性 18 时）
 
 **没做**：判定的二次影响（掷出来的结果仍不改当晚剧情走向）；熟练度的"退步"（一律不扣）。
+
+## T9 § 进度回退：跨会话闸门 + 未推送时交给读者（2026-11-16）
+
+**症状**：web 往后读几页、放置半小时、刷新又回到早先的在线进度（用户报过两次）。
+
+**两条真因**
+
+1. 跨会话回退闸门是 `REWIND_GUARD = 0.05`（只挡回退 > 5%）。日志实锤 17:45:54 推 15.3% → 17:46:33 被写成 14%（1.3% 从缝里过去）。
+2. `flushProgress()`（pagehide / visibilitychange）撞上"补下一章 / 图片解码导致的页表重排"，`pageTopBlock()` 指回上一段 → 把已存位置写回去。
+
+**改法**
+
+| 位置 | 内容 |
+|---|---|
+| `services/reader_state.py` | 闸门从"回退 > 5%"改成**回退一格都挡**（`_REWIND_EPS`）；放行只有两种：同一会话（sid 相同）、或 `note_open(key, sid)` 记的"这条进度**之后**才打开本书"的会话（`_opened_after`）。`REWIND_GUARD` 保留但不再参与判定 |
+| `app/reader.py` | `GET /read/api/book/<key>?sid=` 调 `rs.note_open(key, sid)`；`stale-rewind` 时落一条 `忽略旧会话进度 …` |
+| `services/sync.py` | `peek_book` 新增 `choice_kind`：`cloud-ahead`（原有）/ `local-unpushed`（本地更靠前但**没推上去**，差 ≥ `max(1KB, min(8KB, 全书 2%))`，且与边车 `last_push_pct` 也差这么多）。`_choice_gap` / `_unpushed_bytes` |
+| `ui/assets/reader.js` | ① `saveAnchor()`：没发生导航（翻页看 page+cur，滚动看 scrollY）却量出比 `S.saved` 更靠前的锚点 → 沿用 `S.saved`；`S.backIntent` 在往回翻 / 上一章 / `jumpTo` 时置位，明确"就是要回去"；② 提示条三种情形（含 `local-remembered`：`localStorage['recto.pos.<key>']` 记得更远 →「回到上次位置」/「从当前开始」）；③ boot 带 `?sid=` |
+| `tests/test_progress_revert.py`（新 48 项） | 闸门 / 现场判定 / 门槛 / `peek_book` 三种结局 / 前端契约 |
+| `tools/probe_progress_revert.mjs` / `probe_reader_remembered.mjs` | 真浏览器：旧会话回退被挡、同会话放行、两种提示条的文案与按钮、`从当前开始` 之后不再问 |
+
+**边界**：三条提示**都不自动改数据**；不选就按本地继续读，下次打开再问。
+跨设备"最后写入者胜"不变：另一个设备**在这条进度之后**打开过书，它回翻就是合法的。
