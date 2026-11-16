@@ -807,3 +807,49 @@
   .rc-pet .adv-hero .adv-echo { padding: 7px 8px; }
   .rc-pet .adv-echo-books li { font-size: 11.5px; }
 }
+
+/* ── 行囊与银钱 (药 / 吃食 / 兵器 / 护具 / 佩物) ──
+   直角口径 (radius_scale=0): 这里一律不写圆角。
+   一条一条排开, 名字 / 效果 / 动作三段 —— 手机上动作那段落第二行。 */
+.rc-pet .bag-slots { display: grid; gap: 6px; margin: 10px 0 12px; }
+.rc-pet .bag-slot {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+  padding: 7px 10px;
+  background: color-mix(in oklab, var(--rc-fg) 5%, transparent);
+}
+.rc-pet .bag-slot.empty { color: var(--rc-mute); }
+.rc-pet .bag-slot .bs-l {
+  font-size: 10.5px; letter-spacing: .12em; color: var(--rc-mute); min-width: 2.2em;
+}
+.rc-pet .bag-slot .bs-n { font-size: 13px; font-weight: 600; }
+.rc-pet .bag-slot .bs-e {
+  font-size: 11.5px; color: var(--rc-mute); font-variant-numeric: tabular-nums;
+}
+.rc-pet .bag-slot .mini { margin-left: auto; }
+.rc-pet .bag-list { display: grid; gap: 2px; padding-bottom: 10px; }
+.rc-pet .bag-row {
+  display: grid; grid-template-columns: minmax(7em, 1fr) 2.2fr auto;
+  align-items: baseline; gap: 4px 10px;
+  padding: 7px 8px;
+  border-top: 1px solid var(--rc-outline-variant, var(--line));
+}
+.rc-pet .bag-row:first-child { border-top: 0; }
+.rc-pet .bag-row[data-kind="medicine"] .bag-kind,
+.rc-pet .bag-row[data-kind="food"] .bag-kind { color: var(--rc-primary, var(--rc-accent)); }
+.rc-pet .bag-nm {
+  font-size: 12.5px; font-weight: 600;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px;
+}
+.rc-pet .bag-kind {
+  font-size: 10px; letter-spacing: .1em; color: var(--rc-mute); font-weight: 400;
+}
+.rc-pet .bag-main { display: flex; flex-wrap: wrap; gap: 2px 8px; min-width: 0; }
+.rc-pet .bag-eff { font-size: 11.5px; color: var(--rc-fg); font-variant-numeric: tabular-nums; }
+.rc-pet .bag-desc { font-size: 11px; color: var(--rc-mute); }
+.rc-pet .bag-ops { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.rc-pet .bag-ops .mini { font-size: 11px; padding: 3px 8px; }
+.rc-pet .bag-empty { font-size: 12px; color: var(--rc-mute); padding: 8px 2px; }
+@media (max-width: 640px) {
+  .rc-pet .bag-row { grid-template-columns: minmax(0, 1fr); }
+  .rc-pet .bag-ops { justify-content: flex-start; }
+}

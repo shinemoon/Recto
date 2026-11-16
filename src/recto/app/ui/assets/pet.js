@@ -55,6 +55,106 @@ async function api(url, opts) {
   return data;
 }
 
+/* ───────────────── 行囊与银钱 (药 / 吃食 / 兵器 / 护具 / 佩物) ───────────────── */
+
+function bagRow(r, mode) {
+  const eff = r.effect ? '<span class="bag-eff">' + esc(r.effect) + '</span>' : '';
+  const desc = r.desc ? '<span class="bag-desc">' + esc(r.desc) + '</span>' : '';
+  const ops = [];
+  if (mode === 'bag') {
+    if (r.usable) ops.push('<button class="mini" data-bag-act="use" data-item="' + esc(r.id) + '">用</button>');
+    if (r.wearable) ops.push('<button class="mini" data-bag-act="wear" data-item="' + esc(r.id) + '">带上</button>');
+    ops.push('<button class="mini" data-bag-act="sell" data-item="' + esc(r.id) + '">卖 ' + r.sell + ' 文</button>');
+  } else {
+    ops.push('<button class="mini" data-bag-act="buy" data-item="' + esc(r.id) + '"' +
+      (r.afford ? '' : ' disabled') + '>买 ' + r.price + ' 文</button>');
+  }
+  return '<div class="bag-row" data-kind="' + esc(r.kind) + '">' +
+    '<span class="bag-nm">' + esc(r.name) + (mode === 'bag' ? ' ×' + r.count : '') +
+    '<span class="bag-kind">' + esc(r.kind_cn) + '</span></span>' +
+    '<span class="bag-main">' + eff + desc + '</span>' +
+    '<span class="bag-ops">' + ops.join('') + '</span></div>';
+}
+
+function renderGear(g) {
+  if (!g) return;
+  const pill = $('#bag-money');
+  if (pill) { pill.className = 'pill'; pill.textContent = g.money_text || (g.money + ' 文'); }
+
+  const mods = $('#bag-mods');
+  if (mods) {
+    const rows = [];
+    rows.push(['银钱', (g.money_text || '') + ' · 伤了先吃药, 没药就打坐, 钱是路上挣的']);
+    rows.push(['身上', g.mods_text || '—']);
+    rows.push(['医馆', (g.clinic ? g.clinic.name + ' ' + g.clinic.price + ' 文 (' + g.clinic.heal + ')' : '—') +
+      ' · 客栈 ' + (g.inn ? g.inn.price + ' 文' : '—')]);
+    mods.innerHTML = rows.map((r) => '<div class="cs-meta-row"><span class="cs-meta-l">' +
+      esc(r[0]) + '</span><span class="cs-meta-v">' + esc(r[1]) + '</span></div>').join('');
+  }
+
+  const slots = $('#bag-slots');
+  if (slots) {
+    slots.innerHTML = (g.slots || []).map(function (s) {
+      if (!s.name) {
+        return '<div class="bag-slot empty"><span class="bs-l">' + esc(s.slot_cn) +
+          '</span><span class="bs-n">空着</span></div>';
+      }
+      return '<div class="bag-slot"><span class="bs-l">' + esc(s.slot_cn) +
+        '</span><span class="bs-n">' + esc(s.name) + '</span>' +
+        (s.effect ? '<span class="bs-e">' + esc(s.effect) + '</span>' : '') +
+        '<button class="mini" data-bag-act="unwear" data-slot="' + esc(s.slot) + '">卸下</button></div>';
+    }).join('');
+  }
+
+  const list = $('#bag-list');
+  if (list) {
+    const rows = g.bag || [];
+    list.innerHTML = rows.length
+      ? rows.map((r) => bagRow(r, 'bag')).join('')
+      : '<div class="bag-empty">行囊是空的 —— 去铺子里添点东西。</div>';
+  }
+  const sum = $('#bag-sum');
+  if (sum) sum.textContent = (g.bag_count || 0) + ' 件';
+
+  const shop = $('#shop-list');
+  if (shop) {
+    shop.innerHTML = (g.shop || []).map((r) => bagRow(r, 'shop')).join('');
+  }
+  const ssum = $('#shop-sum');
+  if (ssum) ssum.textContent = (g.shop || []).length + ' 样 · 钱袋 ' + (g.money || 0) + ' 文';
+}
+
+document.addEventListener('click', function (e) {
+  const btn = e.target.closest('[data-bag-act]');
+  if (!btn) return;
+  const act = btn.dataset.bagAct;
+  const item = btn.dataset.item || '';
+  const payload = act === 'unwear'
+    ? { slot: btn.dataset.slot || '' }
+    : (act === 'buy' ? { item: item, count: 1 } : { item: item });
+
+  btn.disabled = true;
+  api('/api/gear/' + act, { method: 'POST', body: JSON.stringify(payload) })
+    .then(function (r) {
+      if (r.char) renderChar(r.char);
+      else if (r.gear) renderGear(r.gear);
+      const msg = ({
+        buy: '买了 ' + (r.name || '') + ' (' + (r.cost || 0) + ' 文)',
+        use: '用了 ' + (r.name || '') + ' · ' +
+          (Object.keys(r.healed || {}).length ? '状态见状态条' : '没什么用'),
+        sell: '卖了 ' + (r.name || '') + ' (' + (r.gain || 0) + ' 文)',
+        wear: '带上 ' + (r.name || ''),
+        unwear: '卸下 ' + (r.name || ''),
+      })[act] || '完成';
+      setStatus($('#bag-tip'), msg, 'ok');
+      window.setTimeout(function () { if (state.char) setStatus($('#bag-tip'), '', ''); }, 4000);
+    })
+    .catch(function (err) {
+      btn.disabled = false;
+      setStatus($('#bag-tip'), err.message, 'err');
+    });
+});
+
 /* ───────────────────────── 人物面板 (武侠) ───────────────────────── */
 
 const TYPE_CN = { basic: '基本功', weapon: '兵器', fist: '拳脚', qinggong: '轻功',
@@ -129,6 +229,7 @@ function renderChar(ch) {
   }
   renderBar(ch);
   renderLife(ch.life);
+  renderGear(ch.gear);
 
   // 状态条
   const st = $('#char-stats');

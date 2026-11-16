@@ -415,8 +415,20 @@ def _pet_root() -> Path:
 CHAR_PATH = _pet_root() / "char.json"
 
 
+def _starter_gear() -> tuple[int, dict[str, int], dict[str, str]]:
+    """起步的行囊 —— 归 ``gear`` 管, 这里只借用 (免得两处各写一份数字)。"""
+    try:
+        from recto.pet import gear
+
+        return int(gear.START_MONEY), dict(gear.START_BAG), dict(gear.START_EQUIP)
+    except Exception:  # noqa: BLE001 — 单独跑本模块时也要能造出人物
+        return 60, {"jinchuangyao": 2, "ganliang": 3}, {
+            "weapon": "tiejian", "armor": "buyi", "charm": ""}
+
+
 def new_char(name: str = "小墨") -> dict[str, Any]:
     """一只刚出生的书宠 (12 岁出江湖)。"""
+    _money, _bag, _equip = _starter_gear()
     return {
         "version": 1,
         "name": name or "小墨",
@@ -436,6 +448,12 @@ def new_char(name: str = "小墨") -> dict[str, Any]:
         "wish": 0,                     # 觉醒点
         "minutes": 0,                  # 累计陪读分钟 (已折算进修为的那部分)
         "credited_minutes": 0,         # 已从阅读时长折算过的分钟 (幂等锚点)
+        # ── 行囊 (见 recto.pet.gear): 江湖上的人是靠这些东西活下来的。
+        #    钱与物件是**账**, 要落盘; 装具加成是**派生**, 永远实时算。
+        "money": int(_money),          # 文
+        "bag": dict(_bag),
+        "equip": dict(_equip),
+
         # 复位/转生那一刻, 阅读器那边的累计时长是多少 —— 作为新的零点。
         # 没有它, 复位后下一轮心跳会立刻把**全部历史时长**重新折算回来,
         # 复位等于没发生 (真踩过: 756 分钟立刻回到 12 岁第 127 日)。
@@ -492,6 +510,16 @@ def load_char() -> dict[str, Any]:
         ch["traits"] = []
     if not isinstance(ch.get("born"), dict):
         ch["born"] = {}
+    # 行囊 / 银钱 (老存档没有这几栏 → 留在 new_char 铺的起步那一份上)
+    try:
+        from recto.pet import gear as _gear
+
+        ch["money"] = max(0, min(int(_gear.MAX_MONEY),
+                                 int(ch.get("money") if "money" in raw else _gear.START_MONEY)))
+        ch["bag"] = _gear.bag(ch)
+        ch["equip"] = _gear.equip(ch)
+    except Exception:  # noqa: BLE001 — gear 不可用也不该让人物读不出来
+        pass
     # 时序 / 传承 (老存档没有这几栏)
     if not isinstance(ch.get("life"), dict):
         ch["life"] = {"stage": "growing"}
@@ -732,6 +760,22 @@ def trait_mods(ch: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def gear_mods(ch: dict[str, Any]) -> dict[str, Any]:
+    """身上带的东西带来的加值 (兵器骰 / 命中 / 护体 / 卸力 / 先攻 / 上限)。
+
+    **派生, 不入库** —— 换一件兵器, 面板与战报同时变, 不需要迁移存档。
+    ``recto.pet.gear`` 管物件表, 这里只是"读它"的唯一入口 (别处不要再各算一遍)。
+    """
+    try:
+        from recto.pet import gear
+
+        return gear.mods(ch)
+    except Exception:  # noqa: BLE001 — 行囊坏了不该让交手用不了
+        return {"attack": 0, "ac": 0, "init": 0, "crit": 0, "pierce": 0,
+                "damage": 0, "hp_pct": 0, "neili_pct": 0, "dice": None,
+                "parts": []}
+
+
 def skill_level(ch: dict[str, Any], sid: str) -> int:
     return int((ch.get("skills") or {}).get(sid) or 0)
 
@@ -760,17 +804,21 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
     都照它展示 —— 这样"为什么这一下中了"能追溯到根骨与技能。
 
     口径 (与 ``derive()`` 那套数并存, 各管各的):
-      · 护体 AC = 10 + 根骨加值 + 基本招架 + 轻功的一小截 + 禀赋招架
-      · 命中加值 = 主修对应根骨的加值 + 主修技能加值 + 禀赋命中
-      · 伤害 = 兵刃骰 + 臂力加值×2 + 主修技能加值×2 + 8; 卸力 = 防御 // 3
-      · 先攻 = 身法加值 + 轻功的一半 + 禀赋先手
+      · 护体 AC = 10 + 根骨加值 + 基本招架 + 轻功的一小截 + 禀赋招架 + 护具
+      · 命中加值 = 主修对应根骨的加值 + 主修技能加值 + 禀赋命中 + 兵器
+      · 伤害 = 兵刃骰 + 臂力加值×2 + 主修技能加值×2 + 8; 卸力 = 防御 // 3 + 护具
+      · 先攻 = 身法加值 + 轻功的一半 + 禀赋先手 + 佩物
       · 豁免 = 根骨 / 定力 / 身法 (各带对应基本功)
       · 绝招加值 = 绝招对应根骨的加值 + 招式等级 + 内力档次 (最多 +3)
+
+    **行囊里那三件东西** (兵器 / 护具 / 佩物) 走 ``gear_mods()``, 加成单列
+    ``src="gear"`` —— 所以"换一把好刀"看得见, 也不是凭空多出来的。
     """
     from recto.pet import d20
 
     a = effective_attrs(ch)
     tm = trait_mods(ch)
+    gm = gear_mods(ch)
     main = main_skill(ch)
     derived = derive(ch)
     combat = derived["combat"]
@@ -778,12 +826,14 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
     zhaojia = skill_level(ch, "jibenzhaojia")
     qg = skill_level(ch, "qinggong") + skill_level(ch, "jibenshenfa")
     parry_mod = d20.attr_mod(a["gen"]) + d20.skill_mod(zhaojia) + int(tm.get("parry") or 0) // 4
-    ac = 10 + parry_mod + d20.skill_mod(qg) // 3
+    ac = 10 + parry_mod + d20.skill_mod(qg) // 3 + int(gm.get("ac") or 0)
     ac_parts = d20.mods_of(
         ("根骨 " + str(a["gen"]), d20.attr_mod(a["gen"]), "attr"),
         ("基本招架 " + str(zhaojia) + " 级", d20.skill_mod(zhaojia), "skill"),
         ("禀赋招架", int(tm.get("parry") or 0) // 4, "trait"),
         ("轻功 " + str(qg) + " 级", d20.skill_mod(qg) // 3, "skill"),
+        ((gm.get("armor") or {}).get("name") or "",
+         int(gm.get("ac") or 0), "gear"),
     )
 
     main_lv = int(main["level"]) if main else 0
@@ -793,18 +843,21 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
         ((main["name"] + " " + str(main_lv) + " 级") if main else "主修 无",
          d20.skill_mod(main_lv), "skill"),
         ("禀赋命中", int(tm.get("hit") or 0) // 3, "trait"),
+        ((gm.get("weapon") or {}).get("name") or "", int(gm.get("attack") or 0), "gear"),
     )
     attack = sum(int(m["value"]) for m in attack_parts)
 
-    dice = WEAPON_DICE.get(str(main["id"]) if main else "", DEFAULT_DICE)
+    # 手上有兵器就用它的骰 (木剑 1d6 / 铁剑 1d8 / 雁翎刀 1d10 …); 空手才按主修的兵刃骰
+    dice = gm.get("dice") or WEAPON_DICE.get(str(main["id"]) if main else "", DEFAULT_DICE)
     flat = (8 + d20.attr_mod(a["li"]) * 2 + d20.skill_mod(main_lv) * 2
-            + int(tm.get("damage") or 0) // 2)
-    pierce = int(combat.get("defense") or 0) // 3
+            + int(tm.get("damage") or 0) // 2 + int(gm.get("damage") or 0))
+    pierce = int(combat.get("defense") or 0) // 3 + int(gm.get("pierce") or 0)
 
     init_parts = d20.mods_of(
         ("身法 " + str(a["shen"]), d20.attr_mod(a["shen"]), "attr"),
         ("轻功 " + str(qg) + " 级", d20.skill_mod(qg) // 2, "skill"),
         ("禀赋先手", int(tm.get("speed") or 0) // 4, "trait"),
+        ((gm.get("charm") or {}).get("name") or "", int(gm.get("init") or 0), "gear"),
     )
     neili_tier = min(3, int(derived["neili_max"]) // 40)
 
@@ -824,7 +877,8 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
         "attack_parts": attack_parts,
         "damage": {"count": int(dice[0]), "sides": int(dice[1]), "flat": int(flat),
                    "text": str(dice[0]) + "d" + str(dice[1]) + "+" + str(flat),
-                   "weapon": (main["name"] if main else "空手")},
+                   "weapon": ((gm.get("weapon") or {}).get("name")
+                              or (main["name"] if main else "空手"))},
         "pierce": int(pierce),
         "init": {"total": sum(int(m["value"]) for m in init_parts), "parts": init_parts},
         "saves": {
@@ -834,7 +888,11 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
         },
         "perform": {"neili_tier": int(neili_tier),
                     "note": "绝招加值 = 招式对应根骨 + 招式等级 + 内力档次"},
-        "crit_range": int(20 - min(3, int(combat.get("crit") or 0) // 5)),
+        "crit_range": int(20 - min(3, (int(combat.get("crit") or 0)
+                                       + int(gm.get("crit") or 0)) // 5)),
+        "gear": {"weapon": (gm.get("weapon") or {}).get("name") or "",
+                 "armor": (gm.get("armor") or {}).get("name") or "",
+                 "charm": (gm.get("charm") or {}).get("name") or ""},
         "main": dict(main) if main else None,
     }
 
@@ -890,6 +948,7 @@ def derive(ch: dict[str, Any]) -> dict[str, Any]:
     vein_bonus = sum(1 for v in VEINS[:vein] if v["idx"] == 3)  # 第 3 层加六项
 
     tm = trait_mods(ch)
+    gm = gear_mods(ch)
     hp_max = 20 + a["gen"] * 3 + level * 2 + ng + vein_bonus * 2
     spirit_max = 20 + a["ding"] * 3 + a["wu"] * 2
     jingli_max = a["gen"] * 5 + a["na"] * 5
@@ -898,6 +957,11 @@ def derive(ch: dict[str, Any]) -> dict[str, Any]:
         hp_max = hp_max * (100 + int(tm["hp_pct"])) / 100.0
     if tm.get("neili_pct"):
         neili_max = neili_max * (100 + int(tm["neili_pct"])) / 100.0
+    # 佩物 (护身的东西) 也能抬上限 —— 与禀赋同一套百分比口径
+    if gm.get("hp_pct"):
+        hp_max = hp_max * (100 + int(gm["hp_pct"])) / 100.0
+    if gm.get("neili_pct"):
+        neili_max = neili_max * (100 + int(gm["neili_pct"])) / 100.0
 
     # ── 交手数值 (故事里的"遭遇"读的就是这几个数)
     main = main_skill(ch)
@@ -1096,6 +1160,16 @@ def set_name(ch: dict[str, Any], name: str) -> tuple[int, dict]:
 
 # ------------------------------------------------------------------ 对外视图
 
+def _gear_view(ch: dict[str, Any]) -> dict[str, Any]:
+    """行囊视图 —— 借 ``gear.view()``; 行囊坏了也不该让人物面板整页读不出来。"""
+    try:
+        from recto.pet import gear
+
+        return gear.view(ch)
+    except Exception:  # noqa: BLE001
+        return {"money": 0, "slots": [], "bag": [], "shop": [], "bag_count": 0}
+
+
 def view(ch: dict[str, Any]) -> dict[str, Any]:
     """给前端 / 阅读器用的完整人物面板。"""
     d = derive(ch)
@@ -1229,6 +1303,8 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
             for key in ("hp", "spirit", "neili", "jingli")
         },
         "combat": d["combat"],
+        # 行囊与银钱 —— 药要钱, 钱要挣; 装具加成已并进上面的 d20 拆账
+        "gear": _gear_view(ch),
         "skill_cap": d["skill_cap"],
         "d20": d20_stats(ch),
         "fame": int(ch.get("fame") or 0),

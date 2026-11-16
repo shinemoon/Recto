@@ -96,6 +96,16 @@ def _mods_for(ch: dict[str, Any], tpl: dict[str, Any]) -> list[dict[str, Any]]:
             val = abs(raw) // 4
             if val:
                 pairs.append(("禀赋", val, "trait"))
+    # 行囊里的杂用物件 (火折子照夜路 / 麻绳渡水 / 名帖递门) —— 真带着才算
+    try:
+        from recto.pet import gear
+
+        cat = "road" if tpl in ROAD_TEMPLATES else "person"
+        bonus = gear.check_bonus(ch, cat)
+        if bonus:
+            pairs.append(("行囊里的物件", int(bonus), "gear"))
+    except Exception:  # noqa: BLE001 — 行囊坏了不该让判定掷不出来
+        pass
     return D.mods_of(*pairs)
 
 
@@ -174,6 +184,9 @@ def plan(ch: dict[str, Any], terms: list[dict[str, Any]] | None = None,
             "retry": not red,
             "tries": tries,
             "what": str(tpl["what"]),
+            # 这道坎用的是哪门功夫 —— 练熟度按它记账 (growth.practice_from 读它)。
+            # 2026-11-16 之前这里漏了这一栏, 于是"过坎"从来没长过本事。
+            "skill": str(tpl.get("skill") or ""),
             "ok": str(tpl["ok"]),
             "no": str(tpl["no"]),
             "dc": _dc_for(tpl, red),

@@ -290,3 +290,30 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 
 **边界**：三条提示**都不自动改数据**；不选就按本地继续读，下次打开再问。
 跨设备"最后写入者胜"不变：另一个设备**在这条进度之后**打开过书，它回翻就是合法的。
+
+## T10 § 行囊与银钱：受伤之后能自己活下来（2026-11-16）
+
+**症状**：书宠的气血**永远停在 20/97**（实测两天），故事里每回都带伤 —— 出场一次伤一次，
+永远不会好。旧代码只在回合末尾回 18%，追不上"一刀砍掉半条命"。
+
+**做法**（`src/recto/pet/gear.py` 新模块 + `charsheet` / `chronicle` / `checks` / 页面接线）
+
+| 位置 | 内容 |
+|---|---|
+| `pet/gear.py`（新） | 物件表 28 样（药 / 吃食 / 兵器 / 护具 / 佩物 / 杂用）+ 银钱账；`selfcare`（先吃药 → 伤重就医馆/客栈 → 没钱打坐）+ `aftermath`（赏钱 / 脚钱 / 谢礼 / 纸墨钱 / 战利品）+ 买卖装卸 + `mods()` / `check_bonus()` |
+| `pet/charsheet.py` | 存档加 `money` / `bag` / `equip`（老存档补起步那一份）；`gear_mods()` 是装具加成唯一入口；`d20_stats()` 的护体 / 命中 / 兵刃骰 / 先攻 / 暴击各多一行 `src="gear"`；`derive()` 的 `hp_max` / `neili_max` 吃佩物百分比 |
+| `pet/chronicle.py` | 出门前 `selfcare` + 战后 `selfcare` + 路上 `aftermath`；`_gear_brief` 进 payload；**核正文** `_gear_need` / `_gear_in_body`（用了药没写 → 重写一次 → 仍漏记 `gear_omitted`） |
+| `pet/checks.py` | 行囊里的杂用（火折子 / 麻绳 / 名帖）给对应的坎 +1（封顶 +2）；**顺带修**：`plan()` 漏了 `skill` 一栏，导致"过坎长功夫"从来没记过账 |
+| `app/pet.py` | `GET /api/gear` + `POST /api/gear/{buy,use,sell,wear,unwear}` |
+| `ui/assets/pet.*` | 人物面板第二张卡「行囊与银钱」：钱袋徽标 / 三个装具槽 / 行囊（用·带上·卖）/ 药铺铁匠铺（买） |
+| `pet/skills/adventure.md` | 新增「照实写这一趟的钱与药」整节 + 输入里加 `gear` 示例 |
+| `docs/PET_ITEMS.md` | 新文档：恢复路径 / 钱从哪来 / 物件表 / 装具口径 / 故事侧闸门 / 边界 |
+
+**实测**（生产 5015，2026-11-16 18:59 第十九回）
+
+- 出门前「用了金创药, 气血 +34；用了金创药, 气血 +34」→ 气血 20 → 97；行囊里的两份药真扣掉
+- 那一趟是「走了一趟远路」：脚钱 +10 文，钱袋 60 → 70 文
+- 页面上钱袋 / 三个装具槽 / 行囊 2 行 / 铺子 28 样都在
+
+**测试**：`tests/test_pet_gear.py`（104 项）+ `tests/test_pet_gear_narr.py`（19 项，含重写与漏项记账）
++ `tools/probe_pet_gear.mjs`（23 项真浏览器）；全套 66 个测试文件通过。

@@ -569,6 +569,41 @@ def _checks_brief(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _gear_need(brief: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """这一回**必须写进正文**的钱与药 —— 后端真扣过的东西, 故事不能装作没发生。
+
+    只挑"有就一定要提"的: 用了药 / 进了医馆客栈 / 打了坐 / 真拿到一件东西。
+    纯赏钱与脚钱不强制 (写成"替人捎带东西"也说得通, 不必报数)。
+    """
+    brief = brief or {}
+    texts: list[str] = []
+    for side in ("before", "after"):
+        texts.extend(str(x) for x in ((brief.get(side) or {}).get("notes") or []))
+    blob = "".join(texts)
+    need: list[dict[str, Any]] = []
+    if any(w in blob for w in ("药", "医馆", "客栈")):
+        need.append({"key": "med", "what": "用了药 / 找过郎中",
+                     "words": ["药", "敷", "服下", "服了", "郎中", "医馆", "包了",
+                               "扎了", "住店", "客栈", "上药", "药末", "汤药"]})
+    if "打坐" in blob:
+        need.append({"key": "rest", "what": "打坐调息过",
+                     "words": ["打坐", "调息", "静坐", "运息", "坐了一夜"]})
+    # 战利品**不强制**: 捡到一把刀没写进正文, 不至于整篇重写 (提了更好, 见契约)。
+    # 强制的是"它真花在自己身上的那些" —— 药 / 郎中 / 打坐, 那是它活下来的账。
+    return need
+
+
+def _gear_in_body(body: str, need: list[dict[str, Any]]) -> bool:
+    """正文里有没有把那些钱与药写出来 (按关键词, 不认模型自报的旗标)。"""
+    if not need:
+        return True
+    text = str(body or "")
+    for group in need:
+        if not any(w and w in text for w in (group.get("words") or [])):
+            return False
+    return True
+
+
 def _chapter_label_of(path: str, spine: int) -> str:
     """篇下标 → 目录里的章名 (「第七章 琢磨」)。取不到就空串, 不猜。"""
     if not path:
@@ -687,6 +722,95 @@ def _world_brief() -> dict[str, Any]:
         return {}
 
 
+def _gear_money(ch: dict[str, Any]) -> int:
+    try:
+        from recto.pet import gear
+
+        return gear.money(ch)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _gear_bag_n(ch: dict[str, Any]) -> int:
+    try:
+        from recto.pet import gear
+
+        return sum(gear.bag(ch).values())
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _gear_brief(g: dict[str, Any] | None, ch: dict[str, Any]) -> dict[str, Any]:
+    """这一趟的"钱与药" —— 给故事照写, 不给它改数的余地。
+
+    含三块: 出门前怎么料理的伤 (用了什么药 / 花了什么钱 / 打坐)、
+    路上挣的与花的 (赏钱 / 脚钱 / 纸墨)、回来之后又敷了什么。
+    页面上也读这一份 (「行囊」卡的账目行)。
+    """
+    g = g or {}
+    eq: dict[str, Any] = {}
+    try:
+        from recto.pet import gear
+
+        v = gear.view(ch)
+        eq = {s["slot"]: {"slot": s["slot_cn"], "name": s["name"],
+                          "effect": s["effect"]} for s in v["slots"] if s["name"]}
+        money_now = int(v.get("money") or 0)
+    except Exception:  # noqa: BLE001
+        money_now = _gear_money(ch)
+
+    def _acts(row: dict[str, Any]) -> list[str]:
+        out: list[str] = []
+        for a in (row.get("acts") or []):
+            name = str(a.get("name") or "")
+            if a.get("kind") == "pay":
+                out.append(f"{name}花了 {a.get('cost')} 文")
+            elif a.get("kind") == "rest":
+                out.append("打坐调息")
+            else:
+                out.append(f"用了{name}")
+        return out
+
+    after = g.get("aftermath") or {}
+    return {
+        "money": money_now,
+        "equipped": eq,
+        "before": {"when": "出门前", "notes": (g.get("before") or {}).get("notes") or [],
+                   "acts": _acts(g.get("before") or {}),
+                   "hp": (g.get("before") or {}).get("hp") or {}},
+        "after": {"when": "战后", "notes": (g.get("after") or {}).get("notes") or [],
+                  "acts": _acts(g.get("after") or {}),
+                  "hp": (g.get("after") or {}).get("hp") or {}},
+        "aftermath": {
+            "money": after.get("money") or {},
+            "gained": after.get("gained") or [],
+            "spends": after.get("spends") or [],
+            "items": [{"name": r.get("name"), "why": r.get("why")}
+                      for r in (after.get("items") or [])],
+            "notes": after.get("notes") or [],
+        },
+    }
+
+
+def _gear_summary(g: dict[str, Any] | None) -> dict[str, Any]:
+    """落库用的紧凑版 (往期故事卡上那一行"这一趟的开销")。"""
+    g = g or {}
+
+    def _mini(row: dict[str, Any] | None) -> dict[str, Any]:
+        row = row or {}
+        return {"acts": [str(a.get("name") or "") for a in (row.get("acts") or [])],
+                "notes": [str(x) for x in (row.get("notes") or [])]}
+
+    after = g.get("aftermath") or {}
+    return {
+        "before": _mini(g.get("before")),
+        "after": _mini(g.get("after")),
+        "money": after.get("money") or {},
+        "notes": [str(x) for x in (after.get("notes") or [])],
+        "items": [str(r.get("name") or "") for r in (after.get("items") or [])],
+    }
+
+
 def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
                        gain: dict[str, Any], prev: dict[str, Any] | None,
                        change: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -708,6 +832,8 @@ def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
                        "shape": enc.get("shape") or ""} if enc else {}),
         "duel": _duel_brief(gain.get("duel") or None),
         "checks": _checks_brief(gain.get("checks") or []),
+        # 这一趟的钱与药: 出门前怎么料理的伤、路上挣了多少花在哪、回来又敷了什么
+        "gear": _gear_brief(gain.get("gear") or {}, ch),
         "growth": {"exp": gain.get("exp"), "fame": gain.get("fame"),
                    "levels": gain.get("levels"), "pot": gain.get("pot"),
                    "vein": (change or {}).get("vein"),
@@ -758,15 +884,25 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
     #    两样一起判: 它们都是"已经发生的事", 少写一样, 故事就跟账本对不上。
     duel_req = payload.get("duel") or None
     checks_req = payload.get("checks") or []
+    gear_req = payload.get("gear") or {}
+    gear_need = _gear_need(gear_req)
     duel_ok = _duel_in_body(body, duel_req, data)
     checks_ok = (not checks_req) or bool((data or {}).get("checks_shown"))
+    gear_ok = _gear_in_body(body, gear_need)
     missing: list[str] = []
     if duel_req and not duel_ok:
         missing.append("交手")
     if checks_req and not checks_ok:
         missing.append("路上的坎")
+    if gear_need and not gear_ok:
+        missing.append("钱与药")
     if missing and body:
         notes = [_contract_note("duel", duel_req, checks_req, missing)]
+        if gear_need and not gear_ok:
+            notes.append("这一回它**真花过**这些: "
+                         + "、".join(str(g.get("what") or "") for g in gear_need)
+                         + "。正文里要照实写出来 (敷药 / 看郎中 / 打坐 / 拿到那件东西), "
+                           "一两句就够, 不要报账, 也不许改数额。")
         log.info("游历 · 上一稿漏了%s, 重写一次", "与".join(missing))
         payload["contract_note"] = "\n".join(n for n in notes if n)
         user2 = ("按 %s.md 的契约重写这一回。只输出 JSON。\n\n" % guide
@@ -776,13 +912,18 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         if body2:
             duel_ok2 = _duel_in_body(body2, duel_req, data2)
             checks_ok2 = (not checks_req) or bool((data2 or {}).get("checks_shown"))
-            if (not duel_req or duel_ok2) and (not checks_req or checks_ok2):
-                data, body, duel_ok, checks_ok = data2, body2, duel_ok2, checks_ok2
+            gear_ok2 = _gear_in_body(body2, gear_need)
+            if (not duel_req or duel_ok2) and (not checks_req or checks_ok2) \
+                    and (not gear_need or gear_ok2):
+                data, body = data2, body2
+                duel_ok, checks_ok, gear_ok = duel_ok2, checks_ok2, gear_ok2
         payload.pop("contract_note", None)
-        if (duel_req and not duel_ok) or (checks_req and not checks_ok):
+        if ((duel_req and not duel_ok) or (checks_req and not checks_ok)
+                or (gear_need and not gear_ok)):
             log.warning("游历 · 重写后仍缺%s —— 这一回按缺项记",
                         "与".join(x for x, bad in (("交手", duel_req and not duel_ok),
-                                                   ("路上的坎", checks_req and not checks_ok))
+                                                   ("路上的坎", checks_req and not checks_ok),
+                                                   ("钱与药", gear_need and not gear_ok))
                                   if bad))
 
     hits = proper.check(body) if body else []
@@ -829,6 +970,8 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         # (闸门那边仍按"没交手视为满足"处理, 两件事分开)
         "duel_shown": bool(duel_req) and bool(duel_ok),
         "checks_shown": bool(checks_ok) if checks_req else bool(data.get("checks_shown")),
+        # 钱与药是**核过正文**的, 不是听模型自报
+        "gear_shown": bool(gear_ok) if gear_need else True,
         "days": jsonout.as_int(data.get("days"), 1, 1, 5),
     }
     if data.get("_sanitized"):
@@ -837,6 +980,8 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         story["duel_omitted"] = True
     if checks_req and not story["checks_shown"]:
         story["checks_omitted"] = True
+    if gear_need and not story["gear_shown"]:
+        story["gear_omitted"] = True
     if guide == "legacy":
         h = data.get("heir") if isinstance(data.get("heir"), dict) else {}
         kind = str(h.get("type") or "").strip()
@@ -974,6 +1119,24 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                 "window": ev["window"], "reading": len(ev["reading"])}
     st.pop("waiting_note", None)
 
+    # ── 出门前先料理自己: 有伤上药, 伤重就医, 什么都没有就打坐。
+    #    **这一步是"气血不再永远停在 20/97"的唯一原因** —— 交手是拿血换的,
+    #    旧代码里只在回合末尾回 18%, 追不上"一刀砍掉半条命"。
+    #    钱与药都是从账上真扣的, 故事只照写 (不许自己在正文里敷药)。
+    #    预演 (dry) 在副本上算, 不花真钱。
+    probe_ch = json.loads(json.dumps(ch, ensure_ascii=False)) if dry else ch
+    care_seed = zlib.crc32(
+        f"{ch.get('name')}|{life.story_day(ch)}|care".encode("utf-8")) & 0x7FFFFFFF
+    care_before: dict[str, Any] = {}
+    try:
+        from recto.pet import gear as _gear
+
+        care_before = _gear.selfcare(probe_ch, seed=care_seed, when="出门前")
+        if care_before.get("note"):
+            log.info("推演 · 出门前%s", care_before["note"])
+    except Exception as e:  # noqa: BLE001 — 行囊结算失败不该挡住这一回
+        log.warning("推演 · 出门前自理失败: %s", e)
+
     # ── 这一趟是什么事 (斗 / 会 / 观 / 学 / 救 / 行) —— 由这段时间的阅读纹理决定。
     #    交手只是其中一类: 没有语料就不打架, 带着伤不再往刀口上撞,
     #    上一回斗过这一回先换个过法。种子取 (名字|故事日|语料), 同一天重跑一致。
@@ -983,7 +1146,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
         f"{ch.get('name')}|{life.story_day(ch)}|{tag}".encode("utf-8")
     ) & 0x7FFFFFFF
     ev["seed"] = seed
-    ev["encounter"] = kinds.choose(ev, ch, st, seed=seed)
+    ev["encounter"] = kinds.choose(ev, probe_ch, st, seed=seed)
     log.info("推演 · 这一趟是「%s」 · %s",
              ev["encounter"]["label"], ev["encounter"]["why"])
 
@@ -1013,7 +1176,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     #    现在: 先掷 (用出发时的本事), 判成长时照着"这一趟吃了什么亏"给, 故事最后照写。
     retiring = life.ready_to_retire(ch)
     # 预演 (dry) 在副本上掷, 不污染存档; 真跑才动 ch (会被吃掉气血/内力)
-    probe_ch = json.loads(json.dumps(ch, ensure_ascii=False)) if dry else ch
+    # probe_ch 已在"出门前自理"那里建好 (药与钱也是在那时结的)。
     duel_out: dict[str, Any] | None = None
     checks_out: list[dict[str, Any]] = []
     if not retiring and ev["encounter"]["kind"] == "fight":
@@ -1041,6 +1204,30 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001 — 这一回只写打斗
             log.warning("推演 · 路上的判定失败 (这一回只写打斗): %s", e)
 
+    # ── 路上的账与本趟之后的伤: 赏钱 / 脚钱 / 谢礼 / 纸墨钱, 以及"回来先上药"。
+    #    这一层让"带伤出下一趟"变成偶发, 而不是常态 —— 旧口径里气血只会往下掉。
+    loot: dict[str, Any] = {}
+    care_after: dict[str, Any] = {}
+    try:
+        from recto.pet import gear as _gear
+
+        loot = _gear.aftermath(probe_ch, kind=str(ev["encounter"].get("kind") or ""),
+                              duel=duel_out, seed=seed)
+        if loot.get("note"):
+            log.info("推演 · 路上的账: %s", loot["note"])
+    except Exception as e:  # noqa: BLE001 — 记不上账也不该拖垮这一回
+        log.warning("推演 · 路上的账结算失败: %s", e)
+    try:
+        from recto.pet import gear as _gear2
+
+        care_after = _gear2.selfcare(probe_ch, seed=care_seed + 1, when="战后")
+        if care_after.get("note"):
+            log.info("推演 · 回来之后%s", care_after["note"])
+    except Exception as e:  # noqa: BLE001
+        log.warning("推演 · 战后自理失败: %s", e)
+    gear_out = {"before": care_before, "after": care_after, "aftermath": loot,
+                "money": _gear_money(probe_ch), "bag": _gear_bag_n(probe_ch)}
+
     before = json.loads(json.dumps(ch, ensure_ascii=False))   # 落地前快照 (算变化清单)
     j = judge(ev, ch, this_duel=duel_out, this_checks=checks_out)
     ev["judgement_reason"] = (j.get("growth") or {}).get("reason") or ""
@@ -1060,6 +1247,7 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                 "days": ev["days"], "reading": ev["reading"], "judgement": j,
                 "encounter": ev["encounter"], "practice": preview,
                 "duel": duel_out, "checks": checks_out,
+                "gear": _gear_brief(gear_out, probe_ch),
                 "fallback": bool(j.get("_fallback")),
                 "fallback_why": str(j.get("_fallback_why") or ""),
                 "skill_version": guidance.version("chronicle"),
@@ -1097,6 +1285,8 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                  (duel_out.get("foe") or {}).get("name"), duel_out.get("result_cn"),
                  duel_out["hp"]["to"], duel_out["hp"]["max"])
     applied["checks"] = checks_out
+    # 钱与药也在这一趟里动过 —— 故事要照写 (不许它自己敷药、自己捡钱)
+    applied["gear"] = gear_out
 
     # ── 走一趟 (到岁数了这一趟就是"退隐 + 传承")
     prev_row = _last_adventure()
@@ -1147,8 +1337,11 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                          "duel_shown": bool(story.get("duel_shown")),
                          "duel_omitted": bool(story.get("duel_omitted")),
                          "checks_omitted": bool(story.get("checks_omitted")),
+                         "gear_shown": bool(story.get("gear_shown")),
+                         "gear_omitted": bool(story.get("gear_omitted")),
                          "duel": duel_out,
                          "checks": checks_out,
+                         "gear": _gear_summary(gear_out),
                          "days": int(ev.get("days") or 0),
                          "story_day": life.story_day(ch),
                          "age": life.age_years(ch),

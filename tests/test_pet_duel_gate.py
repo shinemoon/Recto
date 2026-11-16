@@ -167,12 +167,14 @@ def fake_chat(system, user, **kw):
         if omit > 0:
             CALLS["omit_left"] = omit - 1
             CALLS["modes"].append("story-omit")
-            body = "小墨在雾里走了很多天。" * 12
+            # 提一句药: 这一套测的是"交手"那道闸, 别让"钱与药"那道闸顶上来
+            body = "小墨在雾里走了很多天, 夜里敷了药才睡着。" * 12
         else:
             CALLS["modes"].append("story-fight")
             body = ("他剑锋递出, 一式极朴的直刺。%s 侧身一闪, 刀锋擦过衣角。"
                     "两人交手十余合, 他一掌拍在对方腕上, 血顺着刃口淌下。"
-                    "最后 %s 退开半步, 收手不打了。稿次 %d。"
+                    "最后 %s 退开半步, 收手不打了。收场后他寻了处墙根, 敷了药。"
+                    "稿次 %d。"
                     % (foe, foe, CALLS["n"])) * 3
         return json.dumps({"title": "第一回 · 试剑", "place": "雾隐城",
                            "body": body, "seeds_used": [], "traces_used": [],

@@ -20,6 +20,7 @@ from recto.pet import charsheet as cs
 from recto.pet import chronicle as chronicle_mod
 from recto.pet import companion as companion_mod
 from recto.pet import config as petcfg
+from recto.pet import gear as gear_mod
 from recto.pet import growth as growth_mod
 from recto.pet import life as life_mod
 from recto.pet import lore as lore_mod
@@ -190,6 +191,36 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
             return 405, {"error": "method not allowed"}
         ch = cs.load_char()
         return cs.set_name(ch, str(_body(h).get("name") or ""))
+
+    # ── 行囊与银钱 (见 recto.pet.gear) ────────────────
+    #  买 / 用 / 装 / 卸 / 卖 —— 四个动作都要落盘 (钱与物件是账, 不是派生值)
+    if path == "/gear":
+        return 200, gear_mod.view(cs.load_char())
+
+    if path in ("/gear/buy", "/gear/use", "/gear/sell", "/gear/wear", "/gear/unwear"):
+        if method != "POST":
+            return 405, {"error": "method not allowed"}
+        body = _body(h)
+        ch = cs.load_char()
+        item = str(body.get("item") or "")
+        try:
+            count = max(1, int(body.get("count") or 1))
+        except (TypeError, ValueError):
+            count = 1
+        if path == "/gear/buy":
+            out = gear_mod.buy(ch, item, count)
+        elif path == "/gear/use":
+            out = gear_mod.use(ch, item)
+        elif path == "/gear/sell":
+            out = gear_mod.sell(ch, item, count)
+        elif path == "/gear/wear":
+            out = gear_mod.wear(ch, item)
+        else:
+            out = gear_mod.unwear(ch, str(body.get("slot") or ""))
+        if not out.get("ok"):
+            return 400, {**out, "gear": gear_mod.view(ch)}
+        cs.save_char(ch)
+        return 200, {**out, "gear": gear_mod.view(ch), "char": cs.view(ch)}
 
     # 成长接口 (陪读 → 修为/等级/潜能/经脉)。现在还没接阅读器, 手动喂分钟即可验。
     if path == "/char/grow":
