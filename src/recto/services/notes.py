@@ -201,6 +201,17 @@ def text_of_span(epub_path: str, pos_s: str, pos_e: str = "",
     end = b[1] if (b and b[0] == ch) else start
     lo = max(0, min(start, len(raw)))
     hi = max(lo, min(end, len(raw)))
+    # 位置落在标签内部时 (云端偶尔给的是标签中间的字节偏移), 从下一个 '>' 之后起算 ——
+    # 否则切出来的正文会带 `class="calibre7">` 这种标签残渣
+    if lo > 0 and raw.rfind(b"<", 0, lo) > raw.rfind(b">", 0, lo):
+        nxt = raw.find(b">", lo)
+        if 0 <= nxt < hi:
+            lo = nxt + 1
+    # 落点不在字符边界上 → 往后挪到边界, 免得开头出现 U+FFFD
+    while lo < len(raw) and (raw[lo] & 0xC0) == 0x80:
+        lo += 1
+    if hi < lo:
+        hi = lo
     if end_inclusive and hi > lo:
         n = _utf8_char_len(raw, hi)
         if n:
@@ -222,7 +233,11 @@ def text_of_span(epub_path: str, pos_s: str, pos_e: str = "",
         seg = raw[lo:hi].decode("utf-8", "replace")
     txt = html.unescape(_TAG_RE.sub("", seg))
     txt = re.sub(r"<[^>]*$", "", txt)
+    # 切点落在标签中间时, 残余的 `xxx">` 尾巴也要去掉 (没有开头的 '<')
+    txt = re.sub(r'^[^<>"\s]{0,40}">', "", txt)
     txt = re.sub(r"\s+", " ", txt).strip()
+    # 残留的替换字符 (半个 UTF-8 字节) 不该出现在摘录里
+    txt = txt.strip("\ufffd").strip()
     return txt[:200]
 
 

@@ -738,11 +738,27 @@ def _book_meta(key: str) -> tuple[str, str]:
     return str(row["title"] or ""), str(row["author"] or "")
 
 
+def find_note(key: str, chapter: int, start_off: int, end_off: int) -> dict | None:
+    """按「书 + 章 + 起止字节」找已有划线。
+
+    同一个人在同一段文字上划两次, 本来就是同一条划线 —— 所以这是**幂等键**:
+    网络抖动重发、或先「只划线」再补笔记, 都该落在同一行。
+    """
+    if end_off < start_off:
+        start_off, end_off = end_off, start_off
+    c = conn()
+    row = c.execute("""SELECT * FROM rnote
+                        WHERE book=? AND chapter=? AND start_off=? AND end_off=?
+                        ORDER BY id LIMIT 1""",
+                    (key, int(chapter), int(start_off), int(end_off))).fetchone()
+    return dict(row) if row else None
+
+
 def add_note(key: str, chapter: int, start_off: int, end_off: int,
              summary: str, remark: str = "", color: str = "",
              anchors: str = "", *, chapter_label: str = "",
              pct: float = -1.0) -> dict:
-    """新建划线。
+    """新建划线 (同段重复提交 = 同一条, 幂等)。
 
     `chapter_label` / `pct` 是**入库时的快照**: 读者以后删掉本地书, 就没有目录
     可查、没有字节可量, 摘录只能靠自己身上这几个字段说话。
@@ -750,6 +766,13 @@ def add_note(key: str, chapter: int, start_off: int, end_off: int,
     c = conn()
     if end_off < start_off:
         start_off, end_off = end_off, start_off
+    # 幂等: 同一段已经划过 → 不新增。带了新批注 (先划线、后补笔记) 就补上去。
+    dup = find_note(key, chapter, start_off, end_off)
+    if dup:
+        if remark and remark != (dup.get("remark") or ""):
+            return update_note(int(dup["id"]), remark=remark,
+                               color=color or None) or dup
+        return dup
     title, author = _book_meta(key)
     c.execute("""INSERT INTO rnote(book,chapter,start_off,end_off,summary,remark,color,anchors,
                  created_at,updated_at,src,chapter_label,pct,book_title,book_author)

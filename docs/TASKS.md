@@ -170,6 +170,32 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 
 ---
 
+## T6 · 划线/笔记保存偶发 "fetch failed" — `done` (2026-11-16)
+
+**病例**：公网隧道上写「划线 + 笔记」偶尔提示 `Failed to fetch`，而「只划线」看起来正常。
+
+**结论**：这是**网络级**失败（请求没走完），不是服务端拒收。证据：服务端
+`data/recto.log` 一次 `database is locked`（那是另一回事，15s 后返 500）；而库里存在
+用户"报失败"那几次留下的行 —— 部分请求其实**落库成功**，只是响应在回程丢了。
+带 body 的 POST 浏览器不会自动重试，所以前端必须自己补，而补之前要先让重发安全。
+
+| 位置 | 内容 |
+|---|---|
+| `services/reader_state.py` | 新增 `find_note()`；`add_note()` 按 **(书 + 章 + 起止字节) 幂等**（同段重复提交只留一行，先划线后补笔记落在同一行并补上批注） |
+| `app/reader.py` | `POST /note` 返回 `dupe` 标记；新增 `POST /read/api/client-error`（前端网络级失败上报，落 `recto.log`） |
+| `ui/assets/reader.js` | `isNetErr` / `reportClientError` / `apiRetry(path, opts, 2)`：只在 `TypeError` 时退 500ms 重发一次；划线、书签（新增/删除）、笔记（更新/删除）都走 `apiRetry`；保存后按 id 去重；提示语分流（`网络中断…已重试` vs `保存失败: HTTP 500`） |
+| `services/notes.py` | `text_of_span` 跳过落在标签内部的偏移 + 对齐 UTF-8 边界 ⇒ 云端正文字段不再带 `class="calibre7">` 前缀与 U+FFFD |
+| `tests/test_note_resilience.py` | 42 项：服务层幂等 / `dupe` 标记 / 上报端点 / 前端契约 / 文本切点清洗 |
+| `docs/READER.md` §6.6 | 排查口诀（先 `grep '阅读器前端报错'`，没有就是"其实落库了"） |
+
+**顺带清理的污染**：本轮之前的探针把约 50 条测试划线推进了 掌阅云端的《九诗心》
+（同步日志有 `推划线 · 划线 72 / 49 / 52`）。已按"本地删 → `notes push` 差集删云端"
+清掉，云端回到 5 条；本地留一份备份 `~/.backup/reader.sqlite.bak-*-probeclean`。
+**教训**：`tick_notes` 会把本地测试数据推上云端 —— 在真实账号上做探针必须
+先 `notes push` 停掉 / 或把测试写进临时书，不能写进真书。
+
+---
+
 ## 约定
 
 - 分支：日常在 `pet` 分支工作。**`master` 上还没有 pet 模块**（书宠 / 其页面 / 其测试整套

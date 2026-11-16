@@ -115,6 +115,44 @@
     } catch (e) { /* ignore */ }
   }
 
+  // ---------- 网络级失败: 重试一次 + 上报 ----------
+  // fetch 抛 TypeError ("Failed to fetch") 说明**请求根本没走完** (连接被中间层
+  // 掐断 / 手机切网 / 隧道超时), 服务端可能收到了也可能没收。带 body 的 POST
+  // 浏览器不会自动重试, 只能我们自己再发一次 —— 服务端的 /note 按
+  // (书+章+起止字节) 幂等, 所以重发不会产生重复划线。
+  function isNetErr(e) {
+    return !!(e && (e.name === 'TypeError' ||
+      /Failed to fetch|NetworkError|Load failed|网络连接/i.test(e.message || '')));
+  }
+
+  function reportClientError(path, e, tries) {
+    try {
+      var body = JSON.stringify({
+        path: path, msg: (e && (e.name + ': ' + e.message)) || String(e),
+        tries: tries || 1, ua: navigator.userAgent,
+        online: (navigator.onLine ? 1 : 0)
+      });
+      // 用裸 fetch: 上报本身失败也不能再触发重试链路
+      fetch(API + '/client-error', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: body, keepalive: true
+      }).catch(function () { });
+    } catch (e2) { /* ignore */ }
+  }
+
+  function apiRetry(path, opts, tries) {
+    tries = tries || 2;
+    return api(path, opts).catch(function (e) {
+      if (!isNetErr(e) || tries <= 1) {
+        if (isNetErr(e)) reportClientError(path, e, tries);
+        throw e;
+      }
+      // 等一下再发: 立刻重发大概率还落在同一条死连接上
+      return new Promise(function (r) { setTimeout(r, 500); })
+        .then(function () { return apiRetry(path, opts, tries - 1); });
+    });
+  }
+
   function bytesOf(str) { return enc.encode(str || '').length; }
 
   function pctOf(ch, off) {
@@ -1279,7 +1317,7 @@
     if (act === 'save') {
       var remark = $('#rv-noteedit-t').value.trim();
       if (pending && pending.existing) {
-        api('/note', { method: 'POST', body: { action: 'update', id: pending.existing.id, remark: remark } })
+        apiRetry('/note', { method: 'POST', body: { action: 'update', id: pending.existing.id, remark: remark } }, 2)
           .then(function () { closeNoteEdit(); reloadNotes(); });
       } else if (pending) {
         saveNote(pending.info, remark, 'yellow');
@@ -1288,15 +1326,17 @@
   });
 
   function saveNote(info, remark, color) {
-    api('/note', {
+    apiRetry('/note', {
       method: 'POST',
       body: {
         chapter: info.chapter, start: info.start, end: info.end,
         summary: info.text.slice(0, 1000), remark: remark || '',
         color: color || 'yellow', anchors: info.anchors
       }
-    }).then(function (r) {
+    }, 2).then(function (r) {
       if (r && r.note) {
+        // 幂等重发 / 先划线后补笔记都会命中同一行 —— 按 id 去重, 别叠两份
+        S.notes = S.notes.filter(function (x) { return x.id !== r.note.id; });
         S.notes.push(r.note);
         paintHighlights(info.chapter);
         toast(remark ? '已保存笔记' : '已划线');
@@ -1305,7 +1345,10 @@
       $('#rv-noteedit-t').value = '';
       closeNoteEdit();
       window.getSelection && window.getSelection().removeAllRanges();
-    }).catch(function (e) { toast('保存失败: ' + e.message); });
+    }).catch(function (e) {
+      // 网络中断 (重试过) 与"服务端明确报错"要说清楚, 否则读者不知道该不该再存一次
+      toast(isNetErr(e) ? '网络中断，划线没存上（已重试）' : '保存失败: ' + e.message, 3600);
+    });
   }
 
   function reloadNotes() {
@@ -1719,7 +1762,7 @@
   $('#rv-marks').addEventListener('click', function (ev) {
     var t = ev.target;
     if (t.dataset.delmark) {
-      api('/bookmark', { method: 'POST', body: { action: 'delete', id: +t.dataset.delmark } })
+      apiRetry('/bookmark', { method: 'POST', body: { action: 'delete', id: +t.dataset.delmark } }, 2)
         .then(function () { return api(''); })
         .then(function (m) { if (m) { S.marks = m.bookmarks; S.notes = m.notes; renderLists(); } });
       return;
@@ -1734,7 +1777,7 @@
   $('#rv-notes').addEventListener('click', function (ev) {
     var t = ev.target;
     if (t.dataset.delnote) {
-      api('/note', { method: 'POST', body: { action: 'delete', id: +t.dataset.delnote } })
+      apiRetry('/note', { method: 'POST', body: { action: 'delete', id: +t.dataset.delnote } }, 2)
         .then(function () { reloadNotes(); });
       return;
     }
@@ -2873,7 +2916,7 @@
     if (!a) return;
     var el = a.el;
     var text = (el.textContent || '').trim().slice(0, 80);
-    api('/bookmark', { method: 'POST', body: { chapter: a.ch, offset: a.off, summary: text } })
+    apiRetry('/bookmark', { method: 'POST', body: { chapter: a.ch, offset: a.off, summary: text } }, 2)
       .then(function (r) {
         if (r && r.bookmark) { S.marks.push(r.bookmark); renderMarkList(); toast('已加书签'); }
       }).catch(function (e) { toast('书签保存失败: ' + e.message); });

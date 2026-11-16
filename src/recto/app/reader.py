@@ -441,6 +441,19 @@ def handle(h) -> bool:
             return True
 
         parts = [p for p in path[len("/read/api/"):].split("/") if p]
+
+        if method == "POST" and parts == ["client-error"]:
+            # 浏览器侧的网络级失败上报 (fetch 抛 TypeError 时前端自己也没法解释)。
+            # 落进 recto.log, 这样"保存失败"不再只能靠用户描述。
+            p = _read_json(h)
+            ip = (h.client_address or ["?"])[0]
+            _log.warning("阅读器前端报错 · %s · %s · %s · %s",
+                         str(p.get("path") or "?")[:60],
+                         str(p.get("msg") or "?")[:160],
+                         str(p.get("ua") or "")[:120],
+                         f"ip={ip} online={p.get('online')} tries={p.get('tries')}")
+            h._json(200, {"ok": True})
+            return True
         # book/<key>...
         if not parts or parts[0] != "book" or len(parts) < 2:
             h._json(404, {"error": "not found"})
@@ -589,12 +602,15 @@ def handle(h) -> bool:
             e_off = max(0, int(body.get("end") or s_off))
             summary = str(body.get("summary") or "")
             anchors = json.dumps(body.get("anchors") or {}, ensure_ascii=False)
+            # 同一段重复提交 (网络重发 / 先划线后补笔记) 走同一行 —— 前端据此
+            # 把"重试成功"也当成成功, 不产生重复划线。
+            dup = rs.find_note(key, ch, s_off, e_off)
             row = rs.add_note(key, ch, s_off, e_off, summary,
                               str(body.get("remark") or ""),
                               str(body.get("color") or ""), anchors,
                               chapter_label=doc.chapters[ch].title,
                               pct=float(doc.percent(ch, s_off)) * 100.0)
-            h._json(200, {"ok": True, "note": row})
+            h._json(200, {"ok": True, "note": row, "dupe": bool(dup)})
             return True
 
         if method == "POST" and rest[:1] == ["session"]:
