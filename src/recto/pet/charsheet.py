@@ -547,8 +547,27 @@ def save_char(ch: dict[str, Any]) -> None:
 # ------------------------------------------------------------------ 公式
 
 def exp_needed(level: int) -> int:
-    """升到下一级需要的修为。MUD 那边是经验 + 声望 + 存款三样, 这里留两样。"""
-    return max(100, int(level * level * 100))
+    """升到下一级需要的修为。MUD 那边是经验 + 声望 + 存款三样, 这里留两样。
+
+    **2026-11-16 改口径**: 原来是 ``100 * level^2`` (4 级就要 1600), 而一回合推演
+    只给十几到几十点 —— 实测连读十三回、修为涨了两百多, 等级纹丝不动, 读者
+    看到的就是"机制没在长"。现在按"一回合 (十来分钟阅读) 进度条要动、三五回升一级"
+    定标: ``24 + 10 * (level-1)``。等级越高越慢, 但每一回都看得见。
+    """
+    return max(24, 24 + 10 * int(level - 1))
+
+
+def lifetime_exp(ch: dict[str, Any]) -> int:
+    """从存档反推"一辈子挣过多少修为"。
+
+    存档里的 ``exp`` 是**升级后剩下的零头**。直接拿它算技能上限, 升级反而会把上限
+    拉低 (实测: 701 点修为一升级 exp 只剩一百来点, 技能上限从 5 掉回 4, 已经练上去的
+    等级就此卡住)。技能上限应该看一辈子挣了多少, 不是看口袋里剩多少。
+    """
+    done = 0
+    for lv in range(1, max(1, int(ch.get("level") or 1))):
+        done += exp_needed(lv)
+    return done + max(0, int(ch.get("exp") or 0))
 
 
 def fame_needed(level: int) -> int:
@@ -558,10 +577,13 @@ def fame_needed(level: int) -> int:
 def skill_cap(exp: int, attr_value: int) -> int:
     """技能等级上限 —— 侠客行原式 ``(EXP*10)^(1/3)+1`` (以 30 悟性为基准)。
 
-    悟性不足 30 就按比例打折 (30 悟性 = 原值)。
+    悟性不足 30 就打折, 但**不是按 1/3 硬折**: 原来 ``attr // 30`` 在起步悟性 10 时
+    只剩三分之一, 一辈子修为 800 点的角色算出来上限才 7 —— 已经练上去的「基本内功
+    10 级」永远卡在上面不动, 读者看到的是"本事再也不长"。现在按
+    ``(10 + 悟性) / 40`` 折: 悟性 10 → 半折, 悟性 30 → 原值。
     """
     base = int((max(0, exp) * 10) ** (1.0 / 3.0)) + 1
-    return max(1, base * max(0, int(attr_value)) // 30)
+    return max(1, base * (10 + max(0, int(attr_value))) // 40)
 
 
 def _base_attrs(ch: dict[str, Any]) -> dict[str, int]:
@@ -750,7 +772,7 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
 
 def cap_for(ch: dict[str, Any], sk: dict[str, Any]) -> int:
     """某门功夫的等级上限 —— 修为/悟性决定基础值, 禀赋再加减百分比。"""
-    base = skill_cap(int(ch.get("exp") or 0),
+    base = skill_cap(lifetime_exp(ch),
                      int(effective_attrs(ch).get(sk.get("attr") or "wu", 10)))
     pct = int(trait_mods(ch).get("skill_cap_pct") or 0)
     if pct:
@@ -852,6 +874,8 @@ def derive(ch: dict[str, Any]) -> dict[str, Any]:
         "wuxing": wuxing,
         "school_bonus": bonus,
         "exp_needed": exp_needed(level),
+        "exp_now": max(0, int(ch.get("exp") or 0)),
+        "exp_total": lifetime_exp(ch),
         "fame_needed": fame_needed(level),
         "attrs_total": sum(a.values()),
         "attrs_cap_total": sum(x["cap"] for x in ATTRS),
@@ -1098,6 +1122,12 @@ def view(ch: dict[str, Any]) -> dict[str, Any]:
         "level": int(ch.get("level") or 1),
         "exp": int(ch.get("exp") or 0),
         "exp_needed": d["exp_needed"],
+        # 界面上那条修为进度条直接读这两个 (不用前端再算一遍, 免得两边口径不一)
+        "exp_left": max(0, int(d["exp_needed"]) - int(ch.get("exp") or 0)),
+        "exp_pct": (0 if int(d["exp_needed"]) <= 0 else
+                    max(0, min(100, int(int(ch.get("exp") or 0) * 100 /
+                                        int(d["exp_needed"]))))),
+        "exp_total": d["exp_total"],
         "pot": int(ch.get("pot") or 0),
         "rank": rank["name"],
         "school": {

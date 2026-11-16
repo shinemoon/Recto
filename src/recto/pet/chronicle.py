@@ -331,8 +331,15 @@ def clamp(j: dict[str, Any], ev: dict[str, Any]) -> dict[str, Any]:
     return j
 
 
-def judge(ev: dict[str, Any], ch: dict[str, Any]) -> dict[str, Any]:
-    """交给模型判断成长; 失败 → 保底规则。"""
+def judge(ev: dict[str, Any], ch: dict[str, Any], *,
+          this_duel: dict[str, Any] | None = None,
+          this_checks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """交给模型判断成长; 失败 → 保底规则。
+
+    ``this_duel`` / ``this_checks`` 是**这一趟**刚掷出来的交手与坎 (不是上一趟)。
+    顺序改成"先掷骰, 再判成长"就是为了让它们进得来 —— 否则"这一趟吃了亏"只能等到
+    下一回才影响成长, 读者看到的是判定与故事对得上、与"长了什么"永远差一拍。
+    """
     payload = {
         "window": ev["window"],
         "char": _char_brief(ch),
@@ -352,6 +359,10 @@ def judge(ev: dict[str, Any], ch: dict[str, Any]) -> dict[str, Any]:
         "last_duel": ev.get("last_duel") or {},
         # 上一回路上没过的那几道坎 —— "该练什么"的第一手依据之一
         "last_checks": ev.get("last_checks") or [],
+        # **这一趟**刚掷出来的 (先掷后判, 2026-11-16): 判词要照着它们写,
+        # 而不是照着上一趟。没有交手 / 没有判定时是 None / 空表。
+        "this_duel": _duel_brief(this_duel),
+        "this_checks": _checks_brief(this_checks or []),
         # 上一趟是什么事 (斗 / 会 / 观 / 学 / 救 / 行) —— 连着两回不重样,
         # 判成长时也该知道"它上回是见人, 不是打架"。
         "last_kind": ev.get("last_kind") or "",
@@ -995,38 +1006,53 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                 if r.get("lore"):
                     r["lore"] = lore.card(r["book"], chapters=3)
 
+    # ── 这一趟的判定与遭遇**先掷**, 再判成长 (2026-11-16 改顺序)。
+    #    旧顺序是"判完成长再掷骰", 于是这一趟路上没过的那道坎 / 打输的那一场,
+    #    要等**下一回**才影响成长 —— 读者看到判定与故事对得上,
+    #    与"长了什么"却永远差一拍, 三件事像互不相干。
+    #    现在: 先掷 (用出发时的本事), 判成长时照着"这一趟吃了什么亏"给, 故事最后照写。
+    retiring = life.ready_to_retire(ch)
+    # 预演 (dry) 在副本上掷, 不污染存档; 真跑才动 ch (会被吃掉气血/内力)
+    probe_ch = json.loads(json.dumps(ch, ensure_ascii=False)) if dry else ch
+    duel_out: dict[str, Any] | None = None
+    checks_out: list[dict[str, Any]] = []
+    if not retiring and ev["encounter"]["kind"] == "fight":
+        try:
+            from recto.pet import duel as _duel
+
+            duel_out = _duel.resolve(probe_ch, terms=terms_all, seed=seed)
+            if dry:
+                log.info("推演 · 预演遭遇 %s · %s",
+                         (duel_out.get("foe") or {}).get("name"),
+                         duel_out.get("result_cn"))
+        except Exception as e:  # noqa: BLE001 — 打不起来不该拖垮这一回
+            log.warning("推演 · 遭遇结算失败 (这一回只写游历): %s", e)
+    if not retiring:
+        try:
+            from recto.pet import checks as _checks
+
+            got = _checks.resolve(probe_ch, terms_all, seed=seed,
+                                  memory=dict(st.get("check_memory") or {}),
+                                  prefer=str(ev["encounter"].get("checks") or "any"))
+            checks_out = got["checks"]
+            if not dry:
+                st["check_memory"] = got["memory"]    # 白检定的"再试"账
+            log.info("推演 · 路上的坎 %s", _checks.brief(checks_out))
+        except Exception as e:  # noqa: BLE001 — 这一回只写打斗
+            log.warning("推演 · 路上的判定失败 (这一回只写打斗): %s", e)
+
     before = json.loads(json.dumps(ch, ensure_ascii=False))   # 落地前快照 (算变化清单)
-    j = judge(ev, ch)
+    j = judge(ev, ch, this_duel=duel_out, this_checks=checks_out)
     ev["judgement_reason"] = (j.get("growth") or {}).get("reason") or ""
     gain = dict(j.get("growth") or {})
 
     if dry:
-        # 预演: 在**副本**上走一遍, 让"先会怎么判"也能看到大概会撞上谁 (不落盘)。
-        # 「斗」才预演交手, 其余几类只预演这一趟该有的判定。
-        preview = None
-        if not life.ready_to_retire(ch) and ev["encounter"]["kind"] == "fight":
-            try:
-                from recto.pet import duel as _duel
-
-                preview = _duel.resolve(json.loads(json.dumps(ch)),
-                                        terms=terms_all, seed=seed)
-            except Exception as e:  # noqa: BLE001
-                log.warning("推演 · 预演遭遇失败: %s", e)
-        preview_checks: list[dict[str, Any]] = []
-        if not life.ready_to_retire(ch):
-            try:
-                from recto.pet import checks as _checks
-
-                preview_checks = _checks.resolve(
-                    json.loads(json.dumps(ch)), terms_all, seed=seed,
-                    memory=st.get("check_memory") or {},
-                    prefer=str(ev["encounter"].get("checks") or "any"))["checks"]
-            except Exception as e:  # noqa: BLE001
-                log.warning("推演 · 预演判定失败: %s", e)
+        # 预演: 判定与遭遇已在上面**副本**上掷过 (不落盘), 这里只把判词一起回出去,
+        # 让"先会怎么判"能看到"这一趟撞上谁、路上哪道坎没过、因此长了什么"。
         return {**ctx, "status": "dry", "window": ev["window"], "minutes": minutes,
                 "days": ev["days"], "reading": ev["reading"], "judgement": j,
                 "encounter": ev["encounter"],
-                "duel": preview, "checks": preview_checks,
+                "duel": duel_out, "checks": checks_out,
                 "fallback": bool(j.get("_fallback")),
                 "fallback_why": str(j.get("_fallback_why") or ""),
                 "skill_version": guidance.version("chronicle"),
@@ -1048,38 +1074,14 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
             trait_gained = tid
     change = _change_brief(before, ch)
 
-    # ── 遭遇: 这一趟路上会撞上谁、打不打得过 —— 由 duel 算, 故事只负责照写。
-    #    种子取 (名字|故事日|这段时间见过的词), 同一天重跑结果一致 (可复现)。
-    retiring = life.ready_to_retire(ch)
-    duel_out: dict[str, Any] | None = None
-    if not retiring and ev["encounter"]["kind"] == "fight":
-        try:
-            from recto.pet import duel as _duel
-
-            duel_out = _duel.resolve(ch, terms=terms_all, seed=seed)
-            applied["duel"] = duel_out
-            log.info("推演 · 遭遇 %s · %s · 气血 %s/%s",
-                     (duel_out.get("foe") or {}).get("name"), duel_out.get("result_cn"),
-                     duel_out["hp"]["to"], duel_out["hp"]["max"])
-        except Exception as e:  # noqa: BLE001 — 打不起来不该拖垮这一回
-            log.warning("推演 · 遭遇结算失败 (这一回只写游历): %s", e)
-
-    # -- 路上的坎: 不打斗的那些判定 (白检定可再试 / 红检定一次定生死)。
-    #    技能与禀赋在非战斗场面也真被掷到, 不只在打人的时候才算数。
-    checks_out: list[dict[str, Any]] = []
-    if not retiring:
-        try:
-            from recto.pet import checks as _checks
-
-            got = _checks.resolve(ch, terms_all, seed=seed,
-                                  memory=st.get("check_memory") or {},
-                                  prefer=str(ev["encounter"].get("checks") or "any"))
-            checks_out = got["checks"]
-            st["check_memory"] = got["memory"]      # 白检定的"再试"账
-            applied["checks"] = checks_out
-            log.info("推演 · 路上的坎 %s", _checks.brief(checks_out))
-        except Exception as e:  # noqa: BLE001
-            log.warning("推演 · 路上的判定失败 (这一回只写打斗): %s", e)
+    # ── 遭遇与坎: 已在上面掷完 (顺序: 掷骰 → 判成长 → 写故事)。
+    #    这里只把它们并进"这一回发生了什么", 交给写故事的那道工序照写。
+    if duel_out:
+        applied["duel"] = duel_out
+        log.info("推演 · 遭遇 %s · %s · 气血 %s/%s",
+                 (duel_out.get("foe") or {}).get("name"), duel_out.get("result_cn"),
+                 duel_out["hp"]["to"], duel_out["hp"]["max"])
+    applied["checks"] = checks_out
 
     # ── 走一趟 (到岁数了这一趟就是"退隐 + 传承")
     prev_row = _last_adventure()

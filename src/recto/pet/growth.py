@@ -48,9 +48,11 @@ AUTO_SKILL = "jibenneigong"
 AUTO_SKILL_MINUTES_PER_LEVEL = 300
 #: 判定口径的技能限速: 每 N 个**故事内**天, 最多由判定长 1 级
 #: (自动「基本内功」不占这条, 它自己按 300 分钟一级走)
-#: 800 个故事日 × 0.6 分钟/天 = 480 分钟 ≈ 8 小时阅读一级 —— 时间流速每变一次
-#: 都按现实口径折算过, 不是随手放大。
-SKILL_DAYS_PER_LEVEL = 800
+#: 300 个故事日 × 0.6 分钟/天 = 180 分钟 = 3 小时阅读一级。
+#: 2026-11-16 从 800 收到 300: 800 是"8 小时阅读一级", 折算下来要读几十趟才动一格,
+#: 读者连续十几回看不到本事长 —— 慢成长是对的, 但慢到看不出就是坏了。
+#: 时间流速每变一次都按现实口径折算, 不是随手放大。
+SKILL_DAYS_PER_LEVEL = 300
 
 #: 先天属性: 每升 N 级 +1。
 #: 为什么要有这一条: 光靠潜能点, 属性永远不动 —— 故事里也就写不出"人变了"。
@@ -288,6 +290,33 @@ def credit_reading_minutes(ch: dict[str, Any], total_minutes: int, *,
             "total_minutes": int(ch.get("minutes") or 0)}
 
 
+def settle_levels(ch: dict[str, Any]) -> dict[str, Any]:
+    """把口袋里攒着的修为兑现成等级 (就地改 ``ch``)。
+
+    为什么要有这一步: 升级循环一直只跑在"这一回合新给了多少修为"里。换算曲线一改
+    (2026-11-16 从 ``100*level^2`` 改成 ``24+10*(level-1)``), 存量修为就悬在半空 ——
+    界面上写着"修为 701 / 升级需 54", 等级却还是 4。这里是幂等的兑现入口:
+    够了就升, 顺带补潜能/声望/先天属性, 不够就一个数都不动。
+    """
+    lvl_before = int(ch.get("level") or 1)
+    levels = 0
+    while True:
+        need = cs.exp_needed(int(ch.get("level") or 1))
+        if int(ch.get("exp") or 0) < need:
+            break
+        ch["exp"] = int(ch.get("exp") or 0) - need
+        ch["level"] = int(ch.get("level") or 1) + 1
+        levels += 1
+    if not levels:
+        return {"levels": 0, "level": lvl_before, "pot": 0, "fame": 0, "born": {}}
+    ch["pot"] = int(ch.get("pot") or 0) + POT_PER_LEVEL * levels
+    ch["fame"] = int(ch.get("fame") or 0) + FAME_PER_LEVEL * levels
+    born = _apply_born(ch, lvl_before)
+    return {"levels": levels, "level": int(ch["level"]),
+            "pot": POT_PER_LEVEL * levels, "fame": FAME_PER_LEVEL * levels,
+            "born": born}
+
+
 def skill_boost(ch: dict[str, Any], skill_id: str, levels: int = 1) -> dict[str, Any]:
     """手动长一门功夫 (研讨用)。等级不许超过当前上限。"""
     sk = cs.SKILL_BY_ID.get(skill_id or "")
@@ -298,7 +327,7 @@ def skill_boost(ch: dict[str, Any], skill_id: str, levels: int = 1) -> dict[str,
     skills = ch.get("skills") or {}
     cur = int(skills.get(skill_id, 0))
     cap = min(int(sk.get("cap", 30)),
-              cs.skill_cap(int(ch.get("exp") or 0),
+              cs.skill_cap(cs.lifetime_exp(ch),
                            cs.effective_attrs(ch).get(sk.get("attr", "wu"), 10)))
     if cur + levels > cap:
         return {"ok": False, "error": f"{sk['name']} 已达上限 {cap}"}

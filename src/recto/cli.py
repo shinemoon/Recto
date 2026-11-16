@@ -327,6 +327,17 @@ def cmd_pet(args) -> int:
         out = {"story": chronicle.repair_adventure(no) if no else None}
         if not no:
             out["error"] = "rewrite 要 --no <第几回>"
+    elif act == "settle":
+        # 换算曲线改过之后 (2026-11-16) 存量修为会悬在半空: 界面上写着
+        # "修为 700 / 升级需 54", 等级还是 4。这一步幂等地把它兑现成等级。
+        from recto.pet import charsheet as cs
+        from recto.pet import growth
+
+        ch = cs.load_char()
+        got = growth.settle_levels(ch)
+        if got["levels"]:
+            cs.save_char(ch)
+        out = {"settle": got, "char": cs.view(ch)}
     elif act == "adventures":
         out = {"adventures": chronicle.adventures(limit=args.limit)}
     elif act == "cycles":
@@ -453,7 +464,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pet = sub.add_parser("pet", help="书宠: 后台推演 / 游历 / 书籍底细 / 语料遭遇")
     p_pet.add_argument("action", choices=("state", "run", "story", "rewrite", "adventures",
                                           "cycles", "world", "reborn", "proper",
-                                          "encounters", "lore"))
+                                          "encounters", "lore", "settle"))
     p_pet.add_argument("--dry-run", action="store_true", help="run 用: 只判不落地")
     p_pet.add_argument("--force", action="store_true", help="run 用: 无视最小分钟")
     p_pet.add_argument("--limit", type=int, default=10)

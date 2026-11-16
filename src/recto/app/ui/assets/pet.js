@@ -126,7 +126,11 @@ function renderChar(ch) {
   const meta = $('#char-meta');
   if (meta) {
     const rows = [];
-    rows.push(['修为', ch.exp + ' / ' + ch.exp_needed]);
+    // 修为: 写"还差多少"而不只是两个数 —— 读者想知道的是"离下一级还有多远"
+    rows.push(['修为', (ch.exp || 0) + ' / ' + (ch.exp_needed || 0) +
+      ' (' + (ch.exp_pct != null ? ch.exp_pct : 0) + '%)' +
+      (ch.exp_left ? ' · 还差 ' + ch.exp_left : ' · 已可升级')]);
+    rows.push(['累计修为', (ch.exp_total || 0) + ' (技能上限看它)']);
     rows.push(['声望', ch.fame + ' / ' + ch.fame_needed]);
     rows.push(['门忠', ch.loyalty || 0]);
     rows.push(['心性', ch.morality || 0]);
@@ -193,7 +197,11 @@ function renderChar(ch) {
   const pot = $('#attr-pot');
   if (pot) {
     pot.className = 'pill ' + (ch.pot > 0 ? 'warn' : 'mute');
-    pot.textContent = '潜能 ' + (ch.pot || 0);
+    pot.textContent = '潜能 ' + (ch.pot || 0) + (ch.pot > 0 ? ' · 待分配' : '');
+    // 有潜能没花掉时, 提示怎么花 —— 不加这句, 读者只会看见一个数字
+    pot.title = ch.pot > 0
+      ? '点下面的「+」分配到六项根骨 (每项封顶 30, 六项合计封顶 180)'
+      : '升级时获得, 可分配到六项根骨';
   }
   const tb = $('#attr-rows');
   if (tb) {

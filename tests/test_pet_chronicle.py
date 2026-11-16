@@ -173,8 +173,13 @@ be = int(cu["exp"])
 aw = g.award_judged(cu, {"exp": 250, "pot": 1, "fame": 6, "morality": -2,
                          "skills": {"jianfa": 1, "bogus": 1}}, max_exp=300)
 ok(aw["exp"] == 250, f"修为按判定落地 got {aw['exp']}")
-ok(int(cu["level"]) == 2 and int(cu["exp"]) == be + 250 - 100,
-   f"升级把修为吃掉 (lvl={cu['level']} exp={cu['exp']})")
+# 升级把修为吃掉: 按当前曲线重放一遍升级循环, 不写死"一级 100"
+_lv, _ex = 1, be + 250
+while _ex >= cs.exp_needed(_lv):
+    _ex -= cs.exp_needed(_lv)
+    _lv += 1
+ok(int(cu["level"]) == _lv and int(cu["exp"]) == _ex,
+   f"升级把修为吃掉 (lvl={cu['level']} exp={cu['exp']} 期望 {_lv}/{_ex})")
 ok(aw["skills"] == {"jianfa": 1}, f"技能只落白名单 got {aw['skills']}")
 ok(int(cu["morality"]) == -2, "心性可负 (但不超 5)")
 aw2 = g.award_judged(cu, {"exp": 500, "pot": 0, "fame": 0}, max_exp=100)

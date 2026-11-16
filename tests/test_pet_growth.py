@@ -108,7 +108,7 @@ g.award_minutes(ch3, 300)   # 累计 630 → 第三层 (540)
 ok(ch3["vein"] == 3, f"630 分钟 → 通 3 层 got {ch3['vein']}")
 
 # ── 技能限速: 每 SKILL_DAYS_PER_LEVEL 个故事日 += 1 ─────────
-ok(g.SKILL_DAYS_PER_LEVEL == 800, "技能 800 个故事日一级 (0.6 分钟一天, 现实约 8 小时)")
+ok(g.SKILL_DAYS_PER_LEVEL == 300, "技能 300 个故事日一级 (0.6 分钟一天, 现实约 3 小时)")
 cg = cs.new_char()
 cg["minutes"] = 2                 # 故事内第 3 天 (0.6 分钟一天)
 aw_g1 = g.award_judged(cg, {"exp": 100, "skills": {"jibenneigong": 1}}, max_exp=200)
@@ -127,9 +127,13 @@ cb = cs.new_char()
 cb["minutes"] = 60000
 g.award_minutes(cb, g.MAX_MINUTES_PER_CALL)      # 480 分钟 → 960 修为 → 3 级
 ok(int(cb["level"]) >= 3, f"升到 3 级以上 got Lv.{cb['level']}")
-ok(int((cb["born"] or {}).get("wu") or 0) == 1, f"3 级得悟性先天 +1 got {cb.get('born')}")
+# 先天按"每 3 级 +1 / 每 6 级 +1"累计 —— 具体涨多少取决于升了几级,
+# 所以不写死 "刚好 +1", 按当前等级算 (曲线一改, 写死的数字就会假红)。
+_lv = int(cb["level"])
+ok(int((cb["born"] or {}).get("wu") or 0) == _lv // 3,
+   f"悟性先天 = Lv//3 got {cb.get('born')} (Lv.{_lv})")
 eff = cs.effective_attrs(cb)
-ok(eff["wu"] == 11, f"先天进实际值 (10+1) got {eff['wu']}")
+ok(eff["wu"] == 10 + _lv // 3, f"先天进实际值 (10+{_lv // 3}) got {eff['wu']}")
 before_eff = cs.effective_attrs(cb)
 cb["exp"] = 900000
 cb2 = cs.new_char()
