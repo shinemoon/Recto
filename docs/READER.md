@@ -111,6 +111,7 @@ python3 tools/audit_progress.py 剑来  # 逐条列出云端每份记录 (32/64/
 | GET | `/read/api/book/<key>` | 元信息 + 章列表 + 进度 + 书签 + 划线 + 时长 |
 | GET | `/read/api/book/<key>/chapter/<i>` | 章节块（每块 `off`/`tag`/`html`/`text`） |
 | GET | `/read/api/book/<key>/asset?p=` | 书内图片/字体 |
+| GET | `/read/api/book/<key>/lookup?q=` | 查词（选区工具条「查询」；服务端转发开放词典接口，结果缓存 12h） |
 | POST | `/read/api/book/<key>/progress` | 写进度 `{chapter, offset}` |
 | POST | `/read/api/book/<key>/bookmark` | 加/删书签 |
 | POST | `/read/api/book/<key>/note` | 加/改/删划线笔记 |
@@ -671,6 +672,31 @@ node tools/probe_reader_notes.mjs      # 28 项：标记不撑行 / 三种形态
 自检：
 ```bash
 python3 tests/test_note_resilience.py   # 42 项：幂等 / dupe 标记 / 上报 / 前端契约 / 切点清洗
+```
+
+## 6.7 选区与划线（查询 / 搜索 / 就地管理）
+
+选中正文后的工具条有六个动作：**划线 / 划线 + 笔记 / 复制 / 查询 / 搜索 / ×**
+（手机上收窄字号挤成一行；`width: max-content` 是因为 `position: fixed; left: 50%`
+时"收缩到刚好"的可用宽只有半屏，六个按钮会被折成三行）。
+
+| 动作 | 做什么 | 口径 |
+|---|---|---|
+| 查询 | 打开查词卡片（词条 / 拼音或音标 / 释义 / 例句 / 释义出处） | 服务端 `GET .../lookup?q=` → `recto.services.dict`：有道开放 JSON 接口 `jsonapi`（汉语给拼音+词性+释义+例句，英汉给音标+释义+双语例句），空则退 `suggest`；**不需要 key**。结果缓存 12h，查不到的**不缓存**。选区先清洗（去首尾标点/引号、压空白），超过 40 字直接建议用搜索 |
+| 网页搜索 | 新标签页打开 `cn.bing.com/search?q=<选中文字>` | 用隐形 `<a target=_blank rel=noopener>` 触发：点击仍在用户手势里，不会被弹窗拦截；**不能**靠 `window.open` 的返回值判断成败 —— 带 `noopener` 时规范上它总是返回 `null`，按返回值兜底会把当前页导航走（踩过） |
+| 点划线 | 就地弹出管理卡：被划的文字 / 批注 / 时间·章名·来源 / 「编辑笔记」（无批注时显示「补写笔记」）/「删除」 | 划线是用 CSS Custom Highlight 画的，**没有对应的 DOM 元素**，所以没有"点它"的事件。做法是把点击坐标换成章节内的**字节偏移**（和存划线同一套口径），再看落没落进某条划线的 `[start_off, end_off]`；交叠取最短那条。不支持 Highlight API 时划线是 `<mark>`，直接认元素更快 |
+| 再点同一条 | 收起管理卡 | 免得"点了没反应" |
+| 笔记抽屉 | **从新到旧**（`created_at` 倒序，同秒按 id），每行带时间；位置顺序交给"点一下跳过去" | 排序用 `S.notes.slice()`，不就地改数组（数组顺序还被画高亮用） |
+
+两处交互边界：
+- 有选区的点击不算"点划线"（否则想复制一段时会被卡片挡住）。
+- 左右翻页模式下点划线**不翻页**：翻页热区只占两侧约 23%，正文列内点击照常命中。
+
+自检：
+```bash
+python3 tests/test_dict.py                  # 33 项：汉语/英汉解析、降级、缓存、边界
+python3 tests/test_reader_note_ux.py        # 32 项：静态契约（排序/点划线的口径/查询通道）
+node tools/probe_reader_note_ux.mjs         # 44 项真浏览器：倒序、点划线增删改、查询/搜索、手机、翻页模式
 ```
 
 ## 7. 已知边界

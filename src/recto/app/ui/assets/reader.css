@@ -610,7 +610,12 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
 .rv-sel {
   position: fixed; left: 50%; bottom: max(1.4rem, env(safe-area-inset-bottom));
   transform: translateX(-50%); z-index: 50;
-  display: flex; gap: .2rem; padding: .3rem; border-radius: var(--rv-radius-lg);
+  display: flex; flex-wrap: wrap; justify-content: center; gap: .2rem; padding: .3rem;
+  /* fixed + left:50% 时, "收缩到刚好" 的可用宽只有半屏 → 6 个按钮会被折成三行。
+     width:max-content 让它在整屏范围内收放, 超过才换行。 */
+  width: max-content;
+  max-width: calc(100vw - 1.2rem); box-sizing: border-box;
+  border-radius: var(--rv-radius-lg);
   background: color-mix(in srgb, var(--rv-panel) 96%, transparent);
   box-shadow: 0 6px 24px rgba(0,0,0,.18); border: 1px solid var(--rv-line);
 }
@@ -619,6 +624,84 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
   background: transparent; color: var(--rv-fg); cursor: pointer;
 }
 .rv-sel button:hover { background: color-mix(in srgb, var(--rv-accent) 14%, transparent); color: var(--rv-accent); }
+/* 手机: 六个按钮挤一行 (两行会吃掉小屏的正文高度) */
+@media (max-width: 620px) {
+  .rv-sel { gap: .1rem; padding: .25rem; }
+  .rv-sel button { font-size: .76rem; padding: .32rem .46rem; }
+}
+
+/* ---- 查词卡片 (选区工具条「查询」) ----
+   桌面浮在工具条上方; 手机上也是一张底部卡片 (拇指够得到), 不盖住选区那一段。 */
+.rv-lookup {
+  position: fixed; left: 50%; bottom: 5.6rem; z-index: 60;
+  width: min(26rem, 92vw); max-height: 52vh;
+  display: flex; flex-direction: column; text-align: left;
+  background: var(--rv-panel); color: var(--rv-fg);
+  border: 1px solid var(--rv-line); border-radius: var(--rv-radius-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);
+  font-size: .86rem; line-height: 1.7;
+  transform: translateX(-50%) translateY(4px);
+  opacity: 0; transition: opacity .16s ease, transform .16s ease;
+}
+.rv-lookup.is-on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.rv-lookup[hidden] { display: none !important; }
+.rv-lk-h { display: flex; align-items: center; justify-content: space-between; gap: .6rem;
+  padding: .5rem .85rem .35rem; border-bottom: 1px solid var(--rv-line); }
+.rv-lk-q { font-size: .95rem; font-weight: 600; }
+.rv-lk-h button { border: 0; background: transparent; color: var(--rv-dim);
+  font-size: 1rem; line-height: 1; padding: 0 .15rem; cursor: pointer; }
+.rv-lk-body { padding: .45rem .85rem .5rem; overflow-y: auto; }
+.rv-lk-e { padding: .28rem 0; }
+.rv-lk-e + .rv-lk-e { border-top: 1px dashed var(--rv-line); }
+.rv-lk-e.is-sub { font-size: .82rem; opacity: .85; }
+.rv-lk-w { font-weight: 600; }
+.rv-lk-ph { font-weight: 400; color: var(--rv-dim); font-size: .8rem; margin-left: .3rem; }
+.rv-lk-cat { color: var(--rv-accent); font-size: .74rem; margin-left: .3rem; }
+.rv-lk-def { color: var(--rv-fg); }
+.rv-lk-ex { color: var(--rv-dim); font-size: .8rem; margin-top: .16rem; }
+.rv-lk-dim { color: var(--rv-dim); padding: .2rem 0; line-height: 1.6; }
+.rv-lk-b { display: flex; align-items: center; gap: .5rem;
+  padding: .45rem .85rem .6rem; border-top: 1px solid var(--rv-line); }
+.rv-lk-b button { font: inherit; font-size: .8rem; padding: .28rem .8rem; cursor: pointer;
+  border: 1px solid var(--rv-line); border-radius: var(--rv-radius-pill);
+  background: transparent; color: var(--rv-fg); }
+.rv-lk-b button.primary { background: var(--rv-accent); border-color: var(--rv-accent); color: #fff; }
+.rv-lk-src { margin-left: auto; color: var(--rv-dim); font-size: .72rem; }
+
+/* ---- 点划线的就地管理卡 ---- */
+.rv-nmanage {
+  position: fixed; z-index: 60; width: min(22rem, 88vw);
+  padding: .5rem .85rem .65rem; text-align: left;
+  background: var(--rv-panel); color: var(--rv-fg);
+  border: 1px solid var(--rv-line); border-radius: var(--rv-radius-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);
+  font-size: .84rem; line-height: 1.6;
+  opacity: 0; transform: translateY(4px);
+  transition: opacity .16s ease, transform .16s ease;
+}
+.rv-nmanage.is-on { opacity: 1; transform: none; }
+.rv-nmanage[hidden] { display: none !important; }
+.rv-nm-h { display: flex; align-items: center; justify-content: space-between;
+  color: var(--rv-dim); font-size: .74rem; letter-spacing: .04em; }
+.rv-nm-h b { font-weight: 600; }
+.rv-nm-h button { border: 0; background: transparent; color: var(--rv-dim);
+  font-size: 1rem; line-height: 1; padding: 0 .15rem; cursor: pointer; }
+.rv-nm-q { margin-top: .25rem; max-height: 8.4em; overflow: hidden; }
+.rv-nm-r { margin-top: .35rem; white-space: pre-wrap;
+  border-left: 2px solid var(--rv-accent); padding-left: .5rem; }
+.rv-nm-m { margin-top: .3rem; color: var(--rv-dim); font-size: .72rem; }
+.rv-nm-b { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .5rem; }
+.rv-nm-b button { font: inherit; font-size: .78rem; padding: .26rem .8rem; cursor: pointer;
+  border: 1px solid var(--rv-line); border-radius: var(--rv-radius-pill);
+  background: transparent; color: var(--rv-fg); }
+.rv-nm-b button.danger { color: var(--rc-err, #b3261e);
+  border-color: color-mix(in srgb, var(--rc-err, #b3261e) 42%, var(--rv-line)); }
+/* 手机: 从底部升起, 不用贴到点击处 (手指会挡住) */
+.rv-nmanage.is-sheet {
+  left: .6rem; right: .6rem; top: auto; bottom: .6rem; width: auto;
+  max-height: 60vh; overflow-y: auto; transform: translateY(8px);
+}
+.rv-nmanage.is-sheet.is-on { transform: none; }
 
 /* ---- 笔记编辑 ---- */
 .rv-noteedit {

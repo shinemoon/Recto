@@ -1278,9 +1278,148 @@
       saveNote(info, '', '');
     } else if (act === 'note') {
       openNoteEdit(info);
+    } else if (act === 'dict') {
+      // 查询: 收掉工具条与选区 (否则系统选区长按菜单会盖在查词卡片上)
+      var word = info.text;
+      S.sel = null;
+      selBar.hidden = true;
+      if (window.getSelection) window.getSelection().removeAllRanges();
+      doLookup(word);
+      return;
+    } else if (act === 'web') {
+      var text = info.text;
+      S.sel = null;
+      selBar.hidden = true;
+      if (window.getSelection) window.getSelection().removeAllRanges();
+      webSearch(text);
+      return;
     }
     selBar.hidden = true;
   });
+
+  // ---------- 查词 / 网页搜索 ----------
+  // 「查询」走自家后端的词典转发 (有道开放 JSON 接口, 无需 key) —— 前端不直连
+  // 第三方: 手机上的页面是跨域, 各站对 Referer/UA 也挑; 转发后只吃自家 JSON。
+  // 「搜索」直接把选中的一段丢给搜索引擎 (新标签页, 不打断阅读)。
+  var SEARCH_URL = 'https://cn.bing.com/search?q=';
+  var lookupEl = null;
+
+  function webSearch(text) {
+    var q = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!q) return;
+    var url = SEARCH_URL + encodeURIComponent(q);
+    // 用一个隐形 <a target=_blank rel=noopener> 触发: 点击仍在用户手势里,
+    // 不会被弹窗拦截; 也不要靠 window.open 的返回值判断成败 —— 带 noopener 时
+    // 规范上它**总是返回 null**, 按返回值兜底会把当前页导航走 (踩过)。
+    try {
+      var a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { if (a.parentNode) a.parentNode.removeChild(a); }, 0);
+      return;
+    } catch (e) { /* 落到下面 */ }
+    location.href = url;                // 极端情况下至少能用
+  }
+
+  function copyText(t) {
+    var s = String(t || '');
+    if (!s) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(function () { toast('已复制'); },
+          function () { toast('这个浏览器不让写剪贴板，长按选择吧'); });
+        return;
+      }
+    } catch (e) { /* 落到下面 */ }
+    toast('这个浏览器不让写剪贴板，长按选择吧');
+  }
+
+  function lookupNode() {
+    if (lookupEl) return lookupEl;
+    lookupEl = document.createElement('div');
+    lookupEl.className = 'rv-lookup';
+    lookupEl.hidden = true;
+    lookupEl.setAttribute('role', 'dialog');
+    lookupEl.innerHTML = '<div class="rv-lk-h"><b class="rv-lk-q"></b>' +
+      '<button type="button" data-lk="close" aria-label="关闭">×</button></div>' +
+      '<div class="rv-lk-body"></div>' +
+      '<div class="rv-lk-b">' +
+        '<button type="button" class="primary" data-lk="web">网页搜索</button>' +
+        '<button type="button" data-lk="copy">复制</button>' +
+        '<span class="rv-lk-src"></span>' +
+      '</div>';
+    (root || document.body).appendChild(lookupEl);
+    lookupEl.addEventListener('click', function (ev) {
+      var act = ev.target && ev.target.dataset && ev.target.dataset.lk;
+      if (!act) return;
+      if (act === 'close') { closeLookup(); return; }
+      var w = lookupEl.dataset.word || '';
+      if (act === 'web') webSearch(w);
+      else if (act === 'copy') copyText(w);
+    });
+    return lookupEl;
+  }
+
+  function closeLookup() {
+    if (!lookupEl || lookupEl.hidden) return;
+    lookupEl.hidden = true;
+    lookupEl.classList.remove('is-on');
+  }
+
+  function renderLookup(el, d) {
+    var body = el.querySelector('.rv-lk-body');
+    if (!d || !d.ok) {
+      body.innerHTML = '<div class="rv-lk-dim">' +
+        escapeHtml((d && d.error) || '词典里没查到这个说法') +
+        '<br>下面的「网页搜索」还能再试一次。</div>';
+      el.querySelector('.rv-lk-src').textContent = '';
+      return;
+    }
+    var out = [];
+    (d.entries || []).forEach(function (e, i) {
+      var head = escapeHtml(e.word || '') +
+        (e.phone ? ' <span class="rv-lk-ph">' + escapeHtml(e.phone) + '</span>' : '') +
+        (e.cat ? ' <span class="rv-lk-cat">' + escapeHtml(e.cat) + '</span>' : '');
+      var defs = (e.defs || []).map(function (t) {
+        return '<div class="rv-lk-def">' + escapeHtml(t) + '</div>';
+      }).join('');
+      var ex = (e.examples || []).map(function (t) {
+        return '<div class="rv-lk-ex">' + escapeHtml(t) + '</div>';
+      }).join('');
+      if (!head && !defs) return;
+      out.push('<div class="rv-lk-e' + (i ? ' is-sub' : '') + '">' +
+        (head ? '<div class="rv-lk-w">' + head + '</div>' : '') + defs + ex + '</div>');
+    });
+    body.innerHTML = out.join('') || '<div class="rv-lk-dim">没有释义</div>';
+    var src = d.source || '';
+    el.querySelector('.rv-lk-src').textContent = src ? '释义来自 ' + src : '';
+  }
+
+  function doLookup(text) {
+    var el = lookupNode();
+    var word = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!word) return;
+    el.dataset.word = word;
+    el.querySelector('.rv-lk-q').textContent = word;
+    el.querySelector('.rv-lk-src').textContent = '';
+    el.querySelector('.rv-lk-body').innerHTML = '<div class="rv-lk-dim">查询中…</div>';
+    el.hidden = false;
+    el.classList.add('is-on');
+    var mine = word;
+    api('/lookup?q=' + encodeURIComponent(word)).then(function (d) {
+      if (!lookupEl || lookupEl.hidden || lookupEl.dataset.word !== mine) return;
+      renderLookup(lookupEl, d);
+    }).catch(function (e) {
+      if (!lookupEl || lookupEl.hidden || lookupEl.dataset.word !== mine) return;
+      lookupEl.querySelector('.rv-lk-body').innerHTML =
+        '<div class="rv-lk-dim">查询失败：' + escapeHtml(e.message || '网络问题') +
+        '<br>可以点下面的「网页搜索」。</div>';
+    });
+  }
 
   // ---------- 笔记编辑 ----------
   var noteEdit = $('#rv-noteedit');
@@ -1318,7 +1457,10 @@
       var remark = $('#rv-noteedit-t').value.trim();
       if (pending && pending.existing) {
         apiRetry('/note', { method: 'POST', body: { action: 'update', id: pending.existing.id, remark: remark } }, 2)
-          .then(function () { closeNoteEdit(); reloadNotes(); });
+          .then(function () { closeNoteEdit(); reloadNotes(); toast('已保存笔记'); })
+          .catch(function (e) {
+            toast(isNetErr(e) ? '网络中断，批注没存上（已重试）' : '保存失败: ' + e.message, 3200);
+          });
       } else if (pending) {
         saveNote(pending.info, remark, 'yellow');
       }
@@ -1475,6 +1617,138 @@
         } catch (e) { /* 跨节点选择在不支持 Range API 时跳过 */ }
       }
     });
+  }
+
+  // ---------- 点划线 → 就地看 / 删这条笔记 ----------
+  // 划线用 CSS Custom Highlight 画, **不是一个 DOM 元素**, 所以没有"点它"的事件。
+  // 做法: 把点击坐标换成章节内的**字节偏移** (和存划线时同一套口径), 再看落没落在
+  // 某条划线的 [start_off, end_off] 里。交叠时取最短的那条 (后划的通常更精确)。
+  var noteManage = null;
+  var NM = { id: 0, rect: null };
+
+  function caretRangeAt(x, y) {
+    if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
+    if (document.caretPositionFromPoint) {
+      var p = document.caretPositionFromPoint(x, y);
+      if (!p) return null;
+      var r = document.createRange();
+      try { r.setStart(p.offsetNode, p.offset); r.collapse(true); } catch (e) { return null; }
+      return r;
+    }
+    return null;
+  }
+
+  function byteAtPoint(x, y) {
+    var r = caretRangeAt(x, y);
+    if (!r) return -1;
+    var blk = blockOf(r.startContainer);
+    if (!blk || blk.dataset.off == null) return -1;
+    return +blk.dataset.off + bytesOf(textPrefix(blk, r.startContainer, r.startOffset));
+  }
+
+  function noteAtPoint(x, y, ch) {
+    var b = byteAtPoint(x, y);
+    if (b < 0) return null;
+    var best = null;
+    S.notes.forEach(function (n) {
+      if (ch != null && +n.chapter !== +ch) return;
+      var s = +n.start_off, e = +n.end_off;
+      if (b < s || b > e) return;
+      if (!best || (e - s) < (+best.end_off - +best.start_off)) best = n;
+    });
+    return best;
+  }
+
+  function noteManageEl() {
+    if (noteManage) return noteManage;
+    noteManage = document.createElement('div');
+    noteManage.className = 'rv-nmanage';
+    noteManage.hidden = true;
+    noteManage.setAttribute('role', 'dialog');
+    noteManage.innerHTML = '<div class="rv-nm-h"><b></b>' +
+      '<button type="button" data-nm="close" aria-label="关闭">×</button></div>' +
+      '<div class="rv-nm-q"></div>' +
+      '<div class="rv-nm-r" hidden></div>' +
+      '<div class="rv-nm-m"></div>' +
+      '<div class="rv-nm-b">' +
+        '<button type="button" data-nm="edit">编辑笔记</button>' +
+        '<button type="button" data-nm="del" class="danger">删除</button>' +
+      '</div>';
+    (root || document.body).appendChild(noteManage);
+    noteManage.addEventListener('click', function (ev) {
+      var act = ev.target && ev.target.dataset && ev.target.dataset.nm;
+      if (!act) return;
+      var id = +NM.id;
+      var note = S.notes.filter(function (x) { return x.id === id; })[0];
+      if (act === 'close') { closeNoteManage(); return; }
+      if (act === 'edit') {
+        if (note) { closeNoteManage(); openNoteEdit(null, note); }
+        return;
+      }
+      if (act === 'del') {
+        if (!note) { closeNoteManage(); return; }
+        closeNoteManage();
+        apiRetry('/note', { method: 'POST', body: { action: 'delete', id: +note.id } }, 2)
+          .then(function () { toast('已删除'); reloadNotes(); })
+          .catch(function (e) {
+            toast(isNetErr(e) ? '网络中断，没删掉（已重试）' : '删除失败: ' + e.message, 3200);
+          });
+      }
+    });
+    return noteManage;
+  }
+
+  function closeNoteManage() {
+    if (!noteManage || noteManage.hidden) return;
+    noteManage.hidden = true;
+    noteManage.classList.remove('is-on', 'is-sheet');
+    NM.id = 0;
+    NM.rect = null;
+  }
+
+  function whenText(t) {
+    var s = String(t || '');
+    if (!s) return '';
+    return s.length >= 16 ? s.slice(0, 16).replace('T', ' ') : s;
+  }
+
+  function openNoteManage(note, rect) {
+    var el = noteManageEl();
+    NM.id = +note.id;
+    NM.rect = rect || null;
+    el.querySelector('.rv-nm-h b').textContent = note.remark ? '笔记' : '划线';
+    el.querySelector('.rv-nm-q').textContent = note.summary || '（没有正文）';
+    var rBox = el.querySelector('.rv-nm-r');
+    rBox.textContent = note.remark || '';
+    rBox.hidden = !note.remark;
+    var bits = [];
+    if (note.created_at) bits.push(whenText(note.created_at));
+    if (note.chapter_label) bits.push(String(note.chapter_label));
+    if (String(note.src || '') === 'cloud') bits.push('来自掌阅');
+    el.querySelector('.rv-nm-m').textContent = bits.join(' · ');
+    el.querySelector('[data-nm="edit"]').textContent = note.remark ? '编辑笔记' : '补写笔记';
+    el.hidden = false;
+    el.classList.add('is-on');
+    var narrow = window.innerWidth < 620;
+    el.classList.toggle('is-sheet', narrow);
+    if (!narrow && rect) {
+      var box = el.getBoundingClientRect();
+      var left = Math.min(Math.max(8, rect.left + rect.width / 2 - box.width / 2),
+                          Math.max(8, window.innerWidth - box.width - 8));
+      var top = rect.top - box.height - 10;
+      if (top < 8) top = Math.min(window.innerHeight - box.height - 8, rect.bottom + 10);
+      el.style.left = Math.round(left) + 'px';
+      el.style.top = Math.round(top) + 'px';
+    } else {
+      el.style.left = '';
+      el.style.top = '';
+    }
+  }
+
+  function showNoteManageAt(note, rect) {
+    // 再点同一条 → 收起 (免得"点了没反应")
+    if (noteManage && !noteManage.hidden && NM.id === +note.id) { closeNoteManage(); return; }
+    openNoteManage(note, rect);
   }
 
   // ---------- 关键词高亮 (语料滤镜) ----------
@@ -1742,12 +2016,20 @@
     var n = S.notes.length;
     $('#rv-notes-cnt').textContent = n ? n + ' 条' : '';
     if (!n) { box.innerHTML = '<div class="rv-empty">还没有划线或笔记</div>'; return; }
-    box.innerHTML = S.notes.map(function (x) {
+    // 从新到旧: 最近划的/写的先看到。created_at 是本地时间串 (逐字可比),
+    // 同秒的用 id 兜底 (自增, 大的更新)。位置顺序交给「点一下跳过去」。
+    var list = S.notes.slice().sort(function (a, b) {
+      var ta = String(a.created_at || ''), tb = String(b.created_at || '');
+      if (ta !== tb) return ta < tb ? 1 : -1;
+      return (+b.id || 0) - (+a.id || 0);
+    });
+    box.innerHTML = list.map(function (x) {
       return '<div class="rv-note-item" data-jump="' + x.chapter + '" data-off="' + x.start_off + '">' +
         '<div class="q"><span class="dot" style="background:' + colorHex(x.color) + '"></span> ' +
         escapeHtml(x.summary || '') + '</div>' +
         (x.remark ? '<div class="r">' + escapeHtml(x.remark) + '</div>' : '') +
-        '<div class="m"><span>' + (x.remark ? '笔记' : '划线') + '</span>' +
+        '<div class="m"><span>' + (x.remark ? '笔记' : '划线') +
+        (x.created_at ? ' · ' + escapeHtml(whenText(x.created_at)) : '') + '</span>' +
         '<button data-editnote="' + x.id + '">编辑</button>' +
         '<button data-delnote="' + x.id + '">删除</button></div></div>';
     }).join('');
@@ -1843,6 +2125,8 @@
     if (typoEl && !typoEl.hidden) { hideTypo(); hit = true; }
     if (notePop && !notePop.hidden) { closeNotePop(); hit = true; }
     if (notePanel && !notePanel.hidden) { closeNotePanel(); hit = true; }
+    if (lookupEl && !lookupEl.hidden) { closeLookup(); hit = true; }
+    if (noteManage && !noteManage.hidden) { closeNoteManage(); hit = true; }
     return hit;
   }
 
@@ -2595,7 +2879,26 @@
     if (fnHit) { openNote(fnHit); return; }   // 注释标记: 别顺手把顶栏切了
     var sel = window.getSelection();
     if (sel && String(sel).length) return;
+    // 点在划线上 → 就地看/删这条笔记 (划线的颜色就用它的 color)。
+    // 不支持 Highlight API 时划线是 <mark>, 直接认元素更快。
+    var markHit = ev.target.closest && ev.target.closest('mark.rv-mark');
+    if (markHit && markHit.dataset.note) {
+      var byId = S.notes.filter(function (x) { return x.id === +markHit.dataset.note; })[0];
+      if (byId) { showNoteManageAt(byId, markHit.getBoundingClientRect()); return; }
+    }
+    var hit = noteAtPoint(ev.clientX, ev.clientY);
+    if (hit) {
+      var rect = null;
+      try {
+        var rg = rangeFor(hit);
+        rect = rg ? rg.getBoundingClientRect() : null;
+      } catch (e0) { rect = null; }
+      showNoteManageAt(hit, rect || { left: ev.clientX, top: ev.clientY,
+                                       width: 0, height: 0, bottom: ev.clientY });
+      return;
+    }
     if (dismissPopups()) return;
+
     if (wasSelBar) return;
     setBar(!barHidden);
   });

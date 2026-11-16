@@ -277,6 +277,8 @@ _READER_HTML = """
     <button type="button" data-sel="hl">划线</button>
     <button type="button" data-sel="note">划线 + 笔记</button>
     <button type="button" data-sel="copy">复制</button>
+    <button type="button" data-sel="dict">查询</button>
+    <button type="button" data-sel="web">搜索</button>
     <button type="button" data-sel="cancel">×</button>
   </div>
 
@@ -497,6 +499,13 @@ def handle(h) -> bool:
             return True
         if method == "GET" and rest[:1] == ["sync-state"] and len(rest) == 1:
             h._json(200, _sync.sync_state(key))
+            return True
+        if method == "GET" and rest[:1] == ["lookup"] and len(rest) == 1:
+            # 查词 (选区工具条的「查询」)。服务端转发外部词典接口:
+            # 前端只吃自家 JSON, 阅读内容也不进第三方 URL 的历史/日志。
+            from recto.services import dict as _dict
+
+            h._json(200, _dict.lookup((q.get("q") or [""])[0]))
             return True
         if method == "GET" and rest[:1] == ["mark"] and len(rest) == 1:
             # 关键词高亮: 语料 (keywords.json) → 词表 + 每类样式。
