@@ -172,11 +172,20 @@ def fake_chat(system, user, **kw):
 
 
 _real_chat = lore.chat
+_real_spark = None
 lore.chat = fake_chat
 try:
+    from recto.pet import spark as _spk
+
+    _real_spark = _spk.build
+    # 化身 (spark) 也要过一次模型 —— 本文件验的是"专名重写"的调用次数,
+    # 把化身钉成空 (这一回没有来处), 次数才回到 2。
+    _spk.build = lambda ev, **kw: {}
     story = ch.compose(ev, ch_now, {"duel": None, "checks": []}, None, None)
 finally:
     lore.chat = _real_chat
+    if _real_spark is not None:
+        _spk.build = _real_spark
 ok(story is not None, "写出了一回")
 ok(calls["n"] == 2, f"命中专名后重写一次 (共 {calls['n']} 次调用)")
 ok("泥瓶巷" not in story["body"], "重写后不再出现别人的地名")
@@ -197,9 +206,14 @@ def fake_dirty(system, user, **kw):
 
 lore.chat = fake_dirty
 try:
+    from recto.pet import spark as _spk2
+
+    _keep = _spk2.build
+    _spk2.build = lambda ev, **kw: {}
     dirty = ch.compose(ev, ch_now, {"duel": None, "checks": []}, None, None)
 finally:
     lore.chat = _real_chat
+    _spk2.build = _keep
 ok(dirty is not None and "泥瓶巷" not in dirty["body"],
    f"两次都脏 → 兜底替换 got {(dirty or {}).get('body', '')[:20]}")
 ok(dirty.get("sanitized"), "替换过的故事带 sanitized 标记")

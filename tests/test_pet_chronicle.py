@@ -297,8 +297,8 @@ ok("chattiness" not in js, "书宠不再有「话痨程度」(它不说话)")
 # ── 10. guidance ────────────────────────────────────
 ok(guidance.version("chronicle") and len(guidance.version()) == 8, "skill 版本 8 位")
 specs = guidance.all_specs()
-ok([s["name"] for s in specs] == ["lore", "chronicle", "adventure", "legacy"],
-   f"四份 skill got {[s['name'] for s in specs]}")
+ok([s["name"] for s in specs] == ["lore", "chronicle", "spark", "adventure", "legacy"],
+   f"五份 skill got {[s['name'] for s in specs]}")
 ok("账房 + 教习" in guidance.load("chronicle"), "chronicle skill 可读")
 ok("说书人" in guidance.load("adventure"), "adventure skill 可读")
 ok("传承" in guidance.load("legacy"), "legacy skill 可读")

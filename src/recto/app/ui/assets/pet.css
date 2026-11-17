@@ -853,3 +853,24 @@
   .rc-pet .bag-row { grid-template-columns: minmax(0, 1fr); }
   .rc-pet .bag-ops { justify-content: flex-start; }
 }
+
+/* 「这一趟的来处」→「化成了」: 读到的东西在它世界里的样子 */
+.adv-echo-spark { margin-top: .5rem; }
+.echo-spark-list { list-style: none; margin: .25rem 0 0; padding: 0; }
+.echo-spark-list li {
+  display: grid; grid-template-columns: auto 1fr; gap: .1rem .5rem;
+  padding: .3rem 0; border-top: 1px solid var(--rc-outline-variant, rgba(0,0,0,.08));
+  font-size: .9rem; line-height: 1.55;
+}
+.echo-spark-list li:first-child { border-top: 0; }
+.echo-cat {
+  display: inline-block; min-width: 1.6rem; text-align: center;
+  padding: 0 .3rem; border-radius: 3px; font-size: .74rem; line-height: 1.5;
+  color: var(--rc-on-surface-variant, #555);
+  background: var(--rc-surface-variant, rgba(0,0,0,.05));
+}
+.echo-trace { color: var(--rc-fg, inherit); }
+.echo-img {
+  grid-column: 2; color: var(--rc-mute, #777); font-size: .84rem;
+}
+.echo-img::before { content: "· "; }

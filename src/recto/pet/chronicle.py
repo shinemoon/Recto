@@ -719,6 +719,13 @@ def _echo(ev: dict[str, Any], enc: dict[str, Any] | None = None) -> dict[str, An
         # 所以页面上要把天数写出来, 不能让人以为这些词都出在同一本书里。
         "terms_days": int(enc_all.get("days") or 0),
         "cats": {str(k): int(v or 0) for k, v in (enc_all.get("cats") or {}).items()},
+        # **这一趟的来处变成了什么** —— 读到的东西在它世界里的化身。
+        # 页面上要能看出"故事里的那个人/那处地是从哪儿长出来的", 这是
+        # "关联淡"最直接的解药: 光给模型看没用, 得让读者也看得见。
+        "spark": [{"cat": str(e.get("cat") or ""), "trace": str(e.get("trace") or ""),
+                   "image": str(e.get("image") or "")}
+                  for e in ((ev.get("_spark") or {}).get("echo") or [])],
+        "twists": [str(t) for t in ((ev.get("_spark") or {}).get("twists") or [])],
     }
 
 
@@ -751,6 +758,32 @@ def _reading_brief(r: dict[str, Any]) -> dict[str, Any]:
         # 老卡没有 seeds → 主题词本身就是抽象的, 直接当母题用
         out["seeds"] = {"motif": list(card.get("themes") or [])[:6], "image": []}
     return out
+
+
+def _spark_brief(ev: dict[str, Any]) -> dict[str, Any]:
+    """这一回的化身 (读到的书与语料 → 它世界里的人 / 地 / 物 / 事)。"""
+    sp = ev.get("_spark") or {}
+    if not sp:
+        return {}
+    return {"echo": sp.get("echo") or [], "twists": sp.get("twists") or [],
+            "scene": sp.get("scene") or {}}
+
+
+def _spark_in_body(body: str, sp: dict[str, Any], data: dict[str, Any] | None) -> bool:
+    """故事有没有真把来处写进去 (至少两条 echo 落地)。
+
+    模型自报 (``spark_shown``) 只当参考 —— 2026-11-13 那次实测, 自报在整段
+    留空的情况下仍有三回具足, 反过来也一样。所以判据是正文里那几个 key 词。
+    """
+    from recto.pet import spark as _spk
+
+    if not (sp or {}).get("echo"):
+        return True
+    got = _spk.cover(body, sp)
+    if got["enough"]:
+        return True
+    # 一条都没落地的情形: 自报也不认, 直接判没写
+    return False
 
 
 def _traces(ev: dict[str, Any], limit: int = 8) -> list[dict[str, Any]]:
@@ -868,6 +901,13 @@ def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
                        gain: dict[str, Any], prev: dict[str, Any] | None,
                        change: dict[str, Any] | None = None) -> dict[str, Any]:
     seeds: list[dict[str, Any]] = []
+    _sp = ev.get("_spark") or {}
+    if _sp.get("motif") or _sp.get("image"):
+        seeds.insert(0, {"motif": list(_sp.get("motif") or [])[:5],
+                         "image": list(_sp.get("image") or [])[:5],
+                         "weather": (_sp.get("scene") or {}).get("weather") or "",
+                         "texture": (_sp.get("scene") or {}).get("texture") or "",
+                         "conflict": ""})
     for r in ev["reading"][:4]:
         card = r.get("lore") or {}
         sd = card.get("seeds") if isinstance(card.get("seeds"), dict) else {}
@@ -902,7 +942,11 @@ def _adventure_payload(ev: dict[str, Any], ch: dict[str, Any],
         "world": _world_brief(),
         # 书只借"意": 母题 / 意象 / 气韵 / 质地 / 冲突, 一个专名都没有
         "seeds": seeds,
-        # 语料只给类别密度, 不给词
+        # 这一回的**化身**: 这段时间读到的书与撞见的语料, 已经在上一道工序
+        # 化成这个世界里的人 / 地 / 物 / 事 (见 spark.py)。故事从它长出来,
+        # 不是从"类别计数"长出来 —— 后者只说明"这一路读得多"。
+        "spark": _spark_brief(ev),
+        # 语料只给类别密度, 不给词 (背景用, 具体的东西看 spark)
         "traces": _traces(ev),
         "previous": prev or {},
         "window": ev["window"],
@@ -924,6 +968,19 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
 
     ``guide="legacy"`` 时走「退隐 + 传承」那道工序 (多返回一个 ``heir`` 提议)。
     """
+    # ── 化身 (2026-11-17): 把这段时间读到的书与撞见的语料, 化成它世界里的
+    #    人 / 地 / 物 / 事。这一步才是"发散联想"本身 —— 缺了它, 故事只吃整本书
+    #    的抽象母题, 跟"这段时间真读到什么"没有关系。
+    if "_spark" not in ev:
+        try:
+            from recto.pet import spark as _spk
+
+            ev["_spark"] = _spk.build(ev)
+        except Exception as e:  # noqa: BLE001 — 化身不成也把这一回走完
+            log.warning("游历 · 化身失败 (按无化身继续): %s", e)
+            ev["_spark"] = {}
+    from recto.pet import spark as _sparkmod
+
     payload = _adventure_payload(ev, ch, gain, prev, change)
     if guide == "legacy":
         payload["char"] = life.legacy_brief(ch)
@@ -943,6 +1000,8 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
     moves_ok = _moves_in_body(body, duel_req)
     checks_ok = (not checks_req) or bool((data or {}).get("checks_shown"))
     gear_ok = _gear_in_body(body, gear_need)
+    spark_req = payload.get("spark") or {}
+    spark_ok = _spark_in_body(body, spark_req, data)
     missing: list[str] = []
     if duel_req and not duel_ok:
         missing.append("交手")
@@ -952,8 +1011,17 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         missing.append("路上的坎")
     if gear_need and not gear_ok:
         missing.append("钱与药")
+    if spark_req and not spark_ok:
+        missing.append("来处")
     if missing and body:
         notes = [_contract_note("duel", duel_req, checks_req, missing)]
+        if spark_req and not spark_ok:
+            notes.append(
+                "这一回缺了**来处**: 输入里的 spark.echo 是读者这段时间读到的东西"
+                "在这个世界里的化身, 每一条都该在正文里成为一个人 / 一处地 / 一件物。"
+                "下面这几条一条都没落地 (正文里找不到它们的关键词): "
+                + "；".join("「%s」" % (e.get("trace") or "") for e in (spark_req.get("echo") or [])[:4])
+                + "。挑两条写进去 —— 不要照抄句子, 让它们以你世界里的人和物出场。")
         if gear_need and not gear_ok:
             notes.append("这一回它**真花过**这些: "
                          + "、".join(str(g.get("what") or "") for g in gear_need)
@@ -970,20 +1038,25 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
             moves_ok2 = _moves_in_body(body2, duel_req)
             checks_ok2 = (not checks_req) or bool((data2 or {}).get("checks_shown"))
             gear_ok2 = _gear_in_body(body2, gear_need)
+            spark_ok2 = _spark_in_body(body2, spark_req, data2)
             if (not duel_req or (duel_ok2 and moves_ok2)) \
                     and (not checks_req or checks_ok2) \
-                    and (not gear_need or gear_ok2):
+                    and (not gear_need or gear_ok2) \
+                    and (not spark_req or spark_ok2):
                 data, body = data2, body2
                 duel_ok, moves_ok, checks_ok, gear_ok = duel_ok2, moves_ok2, checks_ok2, gear_ok2
+                spark_ok = spark_ok2
         payload.pop("contract_note", None)
         if ((duel_req and not (duel_ok and moves_ok))
                 or (checks_req and not checks_ok)
-                or (gear_need and not gear_ok)):
+                or (gear_need and not gear_ok)
+                or (spark_req and not spark_ok)):
             log.warning("游历 · 重写后仍缺%s —— 这一回按缺项记",
                         "与".join(x for x, bad in (("交手", duel_req and not duel_ok),
                                                    ("招式名", duel_req and not moves_ok),
                                                    ("路上的坎", checks_req and not checks_ok),
-                                                   ("钱与药", gear_need and not gear_ok))
+                                                   ("钱与药", gear_need and not gear_ok),
+                                                   ("来处", spark_req and not spark_ok))
                                   if bad))
 
     hits = proper.check(body) if body else []
@@ -1033,6 +1106,9 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         # 钱与药是**核过正文**的, 不是听模型自报
         "gear_shown": bool(gear_ok) if gear_need else True,
         "days": jsonout.as_int(data.get("days"), 1, 1, 5),
+        # 来处: 这一回的故事跟"读到的书与撞到的语料"有没有关系 —— 核过正文
+        "spark_shown": bool(spark_ok) if spark_req else True,
+        "spark_used": (_sparkmod.cover(body, spark_req) if spark_req else {}),
     }
     if data.get("_sanitized"):
         story["sanitized"] = list(data["_sanitized"])
@@ -1042,6 +1118,8 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         story["checks_omitted"] = True
     if gear_need and not story["gear_shown"]:
         story["gear_omitted"] = True
+    if spark_req and not story["spark_shown"]:
+        story["spark_omitted"] = True
     if guide == "legacy":
         h = data.get("heir") if isinstance(data.get("heir"), dict) else {}
         kind = str(h.get("type") or "").strip()
@@ -1415,6 +1493,10 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
                          "checks_omitted": bool(story.get("checks_omitted")),
                          "gear_shown": bool(story.get("gear_shown")),
                          "gear_omitted": bool(story.get("gear_omitted")),
+                         # 来处: 故事有没有真从"读到的东西"里长出来 (核过正文)
+                         "spark_shown": bool(story.get("spark_shown")),
+                         "spark_used": story.get("spark_used") or {},
+                         "spark_omitted": bool(story.get("spark_omitted")),
                          "duel": duel_out,
                          "checks": checks_out,
                          "gear": _gear_summary(gear_out),
@@ -1614,6 +1696,8 @@ def backfill_adventure(cycle_id: int | None = None) -> dict[str, Any] | None:
          json.dumps({"exp": gain.get("exp"), "backfill": True,
                      "duel_shown": bool(story.get("duel_shown")),
                      "duel_omitted": bool(story.get("duel_omitted")),
+                     "spark_shown": bool(story.get("spark_shown")),
+                     "spark_used": story.get("spark_used") or {},
                      "checks_omitted": bool(story.get("checks_omitted")),
                      "duel": gain.get("duel"), "checks": gain.get("checks") or [],
                      "days": int((_jdict(row.get("evidence")) or {}).get("days") or 0),
@@ -1726,6 +1810,7 @@ def repair_adventure(no: int) -> dict[str, Any] | None:
         "checks_shown": bool(story.get("checks_shown")),
         "duel_shown": bool(story.get("duel_shown")),
         "duel_omitted": bool(story.get("duel_omitted")),
+        "spark_shown": bool(story.get("spark_shown")),
         "checks_omitted": bool(story.get("checks_omitted")),
         "rewritten_at": clock.iso_local(),
     })

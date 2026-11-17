@@ -104,6 +104,12 @@ CREATE TABLE IF NOT EXISTS adventure (
     created_at  TEXT DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS spark (
+    sig         TEXT PRIMARY KEY,    -- 材料指纹 (书 + 进度 + 章 + 语料)
+    at          TEXT DEFAULT '',
+    payload     TEXT DEFAULT '{}'    -- JSON: echo / twists / scene / motif / image
+);
+
 CREATE INDEX IF NOT EXISTS ix_encounter_day ON encounter(day);
 CREATE INDEX IF NOT EXISTS ix_encounter_book ON encounter(book);
 CREATE INDEX IF NOT EXISTS ix_adventure_no ON adventure(no);

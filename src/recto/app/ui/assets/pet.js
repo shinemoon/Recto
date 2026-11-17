@@ -1036,7 +1036,8 @@ function duelRound(r, i) {
 /** 这一回真打的那一场 (后端按 d20 算出来的战报, 不是编的) */
 // 这一趟的来处: 读的是哪一本、哪一章、撞见哪些语料。全部来自账本, 不是模型编的。
 function echoBlock(e) {
-  if (!e || (!(e.books || []).length && !(e.terms || []).length)) return '';
+  if (!e || (!(e.books || []).length && !(e.terms || []).length
+    && !(e.spark || []).length)) return '';
   const books = (e.books || []).map(function (b) {
     const bits = [];
     if (b.chapter_label) bits.push('读到 ' + b.chapter_label);
@@ -1061,12 +1062,23 @@ function echoBlock(e) {
     return '<span class="adv-chip echo-term">' + esc(t.term) +
       (t.count ? ' <b>' + t.count + '</b>' : '') + '</span>';
   }).join('');
+  // 读到的东西化成了什么 —— 这一层是给读者看的: 故事里的那个人、那处地、
+  // 那件物, 都是从这段时间的阅读里长出来的 (见 pet/spark.py)。
+  const CAT_CN = {person: '人', place: '地', object: '物', org: '势力',
+                  event: '事', work: '书文', term: '名目', time: '时节'};
+  const spark = (e.spark || []).map(function (x) {
+    return '<li><span class="echo-cat">' + esc(CAT_CN[x.cat] || x.cat || '') + '</span>' +
+      '<span class="echo-trace">' + esc(x.trace || '') + '</span>' +
+      (x.image ? '<span class="echo-img">' + esc(x.image) + '</span>' : '') + '</li>';
+  }).join('');
   return '<div class="adv-echo"><div class="adv-echo-h">这一趟的来处' +
     (e.minutes ? '<span class="adv-echo-m">这段日子读了 ' + e.minutes + ' 分钟</span>' : '') +
     '</div>' + (books ? '<ul class="adv-echo-books">' + books + '</ul>' : '') +
     (terms ? '<div class="adv-echo-terms"><span class="adv-echo-l">' +
       (e.terms_days ? '近 ' + e.terms_days + ' 天撞见' : '撞见') + '</span>' +
       terms + '</div>' : '') +
+    (spark ? '<div class="adv-echo-spark"><span class="adv-echo-l">化成了</span>' +
+      '<ul class="echo-spark-list">' + spark + '</ul></div>' : '') +
     '</div>';
 }
 
