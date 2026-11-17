@@ -80,12 +80,12 @@ def _make_epub(path: Path) -> Path:
 
 
 print("== 1. 身份换算 ==")
-check(notes.wire_key(f"{MD5}_{POS_A}{POS_B}") == f"{MD5.lower()}_{POS_A}{POS_B}",
-      "wire_key: bookid 前缀转小写, 位置原样")
+check(notes.wire_key(f"{MD5.lower()}_{POS_A}{POS_B}") == f"{MD5}_{POS_A}{POS_B}",
+      "wire_key: bookid 前缀转大写, 位置原样")
 check(notes.norm_key(f"{MD5.lower()}_{POS_A}{POS_B}") == f"{MD5}_{POS_A}{POS_B}",
       "norm_key: 内部归一为大写")
-check(notes.app_id(MD5) == MD5.lower(), "app_id: 32hex → 小写")
-check(notes.app_id(MD5.lower()) == MD5.lower(), "app_id 幂等")
+check(notes.app_id(MD5) == MD5, "app_id: 32hex → 大写")
+check(notes.app_id(MD5.lower()) == MD5, "app_id 幂等 (输小写也归一到大写)")
 
 print("== 2. 造书 + 一条本地划线 ==")
 epub = _make_epub(TMP / "library" / "测试书.epub")
@@ -121,11 +121,11 @@ res = notes.push()
 notes.upload = real_upload
 check(res["errors"] == [], "push 无错误")
 bb = seen_payload.get("bookbase") or {}
-check(bb.get("bookid") == MD5.lower(), f"bookbase.bookid 是小写 (实得 {bb.get('bookid')})")
+check(bb.get("bookid") == MD5, f"bookbase.bookid 是大写 (实得 {bb.get('bookid')})")
 item = (seen_payload.get("booknotes") or [{}])[0]
 uc = item.get("uniquecheck") or ""
-check(uc.startswith(MD5.lower()), "uniquecheck 前缀是小写身份")
-check(MD5.lower() in uc and MD5 not in uc, "uniquecheck 全串不含大写身份")
+check(uc.startswith(MD5), "uniquecheck 前缀是大写身份")
+check(MD5 in uc and MD5.lower() not in uc, "uniquecheck 全串不含小写身份")
 check(str(item.get("positionstart") or "").endswith("##$")
       and "$##3-0-" in str(item.get("positionstart") or ""),
       f"位置字段格式未受影响 (实得 {item.get('positionstart')})")
@@ -137,7 +137,7 @@ check(row["zy_key"].startswith(MD5), f"zy_key 内部保持大写 (实得 {row['z
 res2 = notes.push(dry_run=True)
 check(res2["pushed"] == 0, "再推 dry-run 无待推 (不会重复写云端)")
 
-print("== 5. 删除: 发给云端的 key 也是小写 ==")
+print("== 5. 删除: 发给云端的 key 也是大写 ==")
 del_got = {}
 real_del = notes.delete_items
 
@@ -153,9 +153,9 @@ with reader_state.conn() as c:
     c.commit()
 notes.push()
 notes.delete_items = real_del
-check(del_got.get("book") == MD5.lower(), "删除请求的 bookid 是小写")
+check(del_got.get("book") == MD5, "删除请求的 bookid 是大写")
 k0 = (del_got.get("keys") or [""])[0]
-check(k0.startswith(MD5.lower()), f"删除请求的 key 是小写 (实得 {k0[:8]})")
+check(k0.startswith(MD5), f"删除请求的 key 是大写 (实得 {k0[:8]})")
 
 print("== 6. 读回来的仍然归一为大写 (合并大小写两套) ==")
 notes.data_ver = lambda bid: ({"bookid": bid,
