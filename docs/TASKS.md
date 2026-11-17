@@ -317,3 +317,29 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 
 **测试**：`tests/test_pet_gear.py`（104 项）+ `tests/test_pet_gear_narr.py`（19 项，含重写与漏项记账）
 + `tools/probe_pet_gear.mjs`（23 项真浏览器）；全套 66 个测试文件通过。
+
+## T11 § 点划线看笔记：按章匹配 + 划线不再被别章抹掉 — `done` (2026-11-17)
+
+**症状**：在「建安二十二年的瘟疫」（第 10 篇）**第一页点普通正文**，弹出的却是
+第 8 篇「人背负着世界的恶意生活」那条笔记（1555~1945）—— 看起来像"点击位置算错了"。
+
+**两个真根因**
+
+1. **章内字节偏移脱章比较**：`start_off / end_off` 是章内偏移，各章都从 0 起算。
+   `noteAtPoint` 在没传章时扫全书，第 10 篇第一页的偏移正好落在第 8 篇那条的区间里。
+2. **划线被别章抹掉**（顺带查出）：`CSS.highlights` 是全局注册表，旧 `paintHighlights`
+   每次先删掉全部 `rv-hl-*` 再只装当前章 → 预取的下一章一画，前一章划线全消失。
+   所以"点划线看笔记"在很多章上根本点不中（高亮也被抹了）。
+
+**改法**
+
+| 位置 | 内容 |
+|---|---|
+| `ui/assets/reader.js` | 新增 `pointAt(x,y)` → `{ch, byte}`（取 `.rv-blk[data-ch]`）；`noteAtPoint` 缺章时用点到那块的章，认不出章就**不弹**，逐条 `+n.chapter !== +ch` 过滤 |
+| `ui/assets/reader.js` | 划线高亮加**按章登记表** `HLREG` + `hlCommit()` / `hlForget(ch)`：只摘本章旧区间、按全量重建；换章清空 DOM 时连登记表一起清 |
+| `tests/test_reader_note_click.py`（新 20 项） | 源码契约：带出章 / 缺章不猜 / 按章过滤 / 无旧写法 / 登记表与 rebuild |
+| `tools/probe_reader_note_click.mjs`（新 11 项） | 真浏览器：第 10 篇点正文不弹 / 第 8 篇点中划线弹出且章名对 / 点空白不弹 / 0 JS 报错（带进度快照还原） |
+| `docs/READER.md` §6.7 | 点划线口径补"按章匹配"与两条坑 |
+
+**验证**：旧代码复现失败（第 10 篇弹出「屈原：时间的焦虑」那条）；修后探针 11/11、
+全套 67 个测试文件通过、`probe_reader_notes` 28/28。

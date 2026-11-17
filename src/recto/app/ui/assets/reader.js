@@ -422,6 +422,10 @@
       content.innerHTML = '';
       content.appendChild(box);
       S.loaded = {};        // 换章 = 之前那些 DOM 已经不在页面上了
+      Object.keys(HLREG).forEach(function (n) {   // 划线登记表同步清空 (Range 已成游离节点)
+        delete HLREG[n];
+        try { CSS.highlights.delete(n); } catch (e) { /* noop */ }
+      });
     }
     S.loaded[data.i] = box;
     S.blocks[data.i] = data.blocks;
@@ -1708,6 +1712,32 @@
     return null;
   }
 
+  // CSS Custom Highlight 的名字是**全局**的 (CSS.highlights), 而 Range 属于
+  // **某一章**。旧写法每次重画都先删掉全部 rv-hl-* 再只装当前章 —— 于是预取的
+  // 下一章一画, 前一章的划线全被抹掉 (实测: 跳到第 8 篇后立刻预取第 9 篇,
+  // 第 8 篇的划线一条都不见了)。改成按章留登记表, 每次按全量重建。
+  var HLREG = Object.create(null);      // 'rv-hl-yellow' -> [{ ch, r }]
+
+  function hlCommit(name) {
+    var list = HLREG[name] || [];
+    if (!list.length) {
+      try { CSS.highlights.delete(name); } catch (e) { /* noop */ }
+      return;
+    }
+    var h = new Highlight();
+    list.forEach(function (it) { h.add(it.r); });
+    h.priority = 1;                     // 自己的划线/笔记永远盖在关键词底色之上
+    CSS.highlights.set(name, h);
+  }
+
+  function hlForget(ch) {
+    Object.keys(HLREG).forEach(function (n) {
+      HLREG[n] = HLREG[n].filter(function (it) { return it.ch !== ch; });
+      if (!HLREG[n].length) delete HLREG[n];
+      hlCommit(n);
+    });
+  }
+
   function paintHighlights(ch) {
     if (!S.loaded[ch]) return;
     if (isPaged()) flow = null;          // 兜底高亮会插 <mark>, 页号表要重建
@@ -1727,17 +1757,14 @@
       });
     }
     var names = ['yellow', 'green', 'blue', 'pink'];
-    if (useApi) names.forEach(function (n) { CSS.highlights.delete('rv-hl-' + n); });
+    if (useApi) hlForget(ch);            // 只摘掉**这一章**的旧区间, 别的章留着
     S.notes.filter(function (n) { return +n.chapter === ch; }).forEach(function (n) {
       var r = rangeFor(n);
       if (!r) return;
       var color = (n.color || 'yellow').replace(/[^a-z]/g, '') || 'yellow';
       if (useApi) {
         var name = 'rv-hl-' + (names.indexOf(color) >= 0 ? color : 'yellow');
-        var h = CSS.highlights.get(name) || new Highlight();
-        h.add(r);
-        h.priority = 1;   // 自己的划线/笔记永远盖在关键词底色之上
-        CSS.highlights.set(name, h);
+        (HLREG[name] = HLREG[name] || []).push({ ch: ch, r: r });
       } else {
         try {
           var mark = document.createElement('mark');
@@ -1748,6 +1775,7 @@
         } catch (e) { /* 跨节点选择在不支持 Range API 时跳过 */ }
       }
     });
+    if (useApi) names.forEach(function (n) { hlCommit('rv-hl-' + n); });
   }
 
   // ---------- 点划线 → 就地看 / 删这条笔记 ----------
@@ -1769,20 +1797,34 @@
     return null;
   }
 
-  function byteAtPoint(x, y) {
+  // 点击位置 → { ch, byte }。**ch 必须一起带出来**: 字节偏移是"章内"的,
+  // 只拿偏移去比就会命中别的章里同偏移的那条笔记 (实测: 在「建安二十二年的瘟疫」
+  // 第一页点一下, 弹出的是第 8 章 1555~1945 那条 —— 两条笔记的偏移都从 0 起算)。
+  function pointAt(x, y) {
     var r = caretRangeAt(x, y);
-    if (!r) return -1;
+    if (!r) return null;
     var blk = blockOf(r.startContainer);
-    if (!blk || blk.dataset.off == null) return -1;
-    return +blk.dataset.off + bytesOf(textPrefix(blk, r.startContainer, r.startOffset));
+    if (!blk || blk.dataset.off == null) return null;
+    return {
+      ch: blk.dataset.ch != null ? +blk.dataset.ch : null,
+      byte: +blk.dataset.off + bytesOf(textPrefix(blk, r.startContainer, r.startOffset))
+    };
+  }
+
+  function byteAtPoint(x, y) {
+    var p = pointAt(x, y);
+    return p ? p.byte : -1;
   }
 
   function noteAtPoint(x, y, ch) {
-    var b = byteAtPoint(x, y);
-    if (b < 0) return null;
+    var p = pointAt(x, y);
+    if (!p || p.byte < 0) return null;
+    if (ch == null) ch = p.ch;          // 没指定章时, 用"点到的那一块"所在的章
+    if (ch == null) return null;        // 认不出章就别猜 —— 宁可不开弹窗
+    var b = p.byte;
     var best = null;
     S.notes.forEach(function (n) {
-      if (ch != null && +n.chapter !== +ch) return;
+      if (+n.chapter !== +ch) return;
       var s = +n.start_off, e = +n.end_off;
       if (b < s || b > e) return;
       if (!best || (e - s) < (+best.end_off - +best.start_off)) best = n;
