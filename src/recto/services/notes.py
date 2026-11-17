@@ -91,6 +91,22 @@ def norm_key(key: str) -> str:
     return (key or "").strip().upper()
 
 
+def wire_key(key: str) -> str:
+    """内部 key (归一为大写) → **发给云端的写法** (32hex 身份小写)。
+
+    掌阅云端对 bookid **大小写敏感**, 同一本书的笔记在两个身份下是两套互不相干的
+    抽屉。App 的笔记身份是 `getFileMD5()` 的裸值 (**小写**), 而进度身份才是大写。
+    我们以前推大写: 云端确实存下了, 但 App 打开书按小写去拉 → 书内一条都看不到
+    (只有账号级笔记本列表能看见两条同名书)。2026-11-18 起编写都用小写。
+    """
+    return (key or "").strip().lower()
+
+
+def app_id(zy_book_id: str) -> str:
+    """一本书在 App 视角下的笔记身份 (32hex 小写)。"""
+    return kb32(zy_book_id).lower()
+
+
 def note_key(book32: str, pos_s: str, pos_e: str) -> str:
     return f"{book32}_{pos_s}{pos_e}"
 
@@ -1109,7 +1125,8 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
         ids = cloud_ids(r)
         if not ids:
             continue
-        book32 = ids[0]
+        book32 = ids[0]            # 内部一律归一为大写
+        wire = app_id(book32)      # 发给云端的身份必须是小写 (App 的口径)
         ver = cloud_versions_multi(ids)
         epub = r["path"]
         local_md5 = file_md5(epub)
@@ -1145,7 +1162,7 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
             pos_s = geometry.build_position(ch_id, int(n["start_off"]))
             pos_e = geometry.build_position(ch_id, int(n["end_off"]))
             marktime = int(n.get("zy_marktime") or 0) or now_ms
-            item = {"uniquecheck": norm_key(uc), "style": 0, "color": DEFAULT_COLOR,
+            item = {"uniquecheck": wire_key(uc), "style": 0, "color": DEFAULT_COLOR,
                     "summary": (n.get("summary") or "").strip(),
                     "remark": (n.get("remark") or "").strip(),
                     "positionstart": pos_s, "positionend": pos_e,
@@ -1171,7 +1188,7 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
             pct = 0.0
             if geo is not None and geo.total_bytes:
                 pct = round((geo.prefix_bytes(m_ch) + int(m["offset"])) / geo.total_bytes, 8)
-            out_marks.append({"uniquecheck": norm_key(uc),
+            out_marks.append({"uniquecheck": wire_key(uc),
                               "marksummary": label or (m.get("summary") or "")[:120],
                               "markpostion": pos, "markpercent": pct, "markstyle": 0,
                               "marktime": marktime})
@@ -1198,7 +1215,7 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
                 "type": int(idx.get("type") or 5),
                 "readpostion": idx.get("readpostion") or "",
                 "readpercent": idx.get("readpercent") or 0,
-                "bookid": book32,
+                "bookid": wire,
                 "updatetime": now_ms,
                 "deviceName": "Recto",
                 "marknum": int(idx.get("marknum") or 0) + len(out_marks),
@@ -1224,7 +1241,7 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
             if not keys_:
                 continue
             try:
-                delete_items(book32, keys_, type_=type_)
+                delete_items(wire, [wire_key(k) for k in keys_], type_=type_)
                 for k in keys_:
                     _seen_del(book32, kind, k)
                 deleted += len(keys_)
@@ -1246,7 +1263,7 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
 def _cloud_index_row(book32: str) -> dict:
     try:
         for nb in notebooks():
-            if kb32(str(nb.get("bookid") or "")) == book32:
+            if kb32(str(nb.get("bookid") or "")) == kb32(book32):
                 return {
                     "name": nb.get("bookname") or nb.get("name") or "",
                     "type": nb.get("booktype") or 5,
