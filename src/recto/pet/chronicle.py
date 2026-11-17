@@ -411,6 +411,37 @@ def _fallback_legacy(ch: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _merge_practice(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    """把两笔熟练度账合成一份 (按技能 id 相加), 给「学过」这一类事用。"""
+    a = dict(a or {})
+    b = dict(b or {})
+    rows: dict[str, dict[str, Any]] = {}
+    for src in (a.get("skills") or [], b.get("skills") or []):
+        for r in src:
+            sid = str(r.get("id") or "")
+            if not sid:
+                continue
+            cur = rows.get(sid)
+            if not cur:
+                rows[sid] = dict(r)
+                continue
+            cur["gain"] = int(cur.get("gain") or 0) + int(r.get("gain") or 0)
+            cur["leveled"] = bool(cur.get("leveled")) or bool(r.get("leveled"))
+            cur["level"] = max(int(cur.get("level") or 0), int(r.get("level") or 0))
+            why = list(cur.get("why") or [])
+            for w in (r.get("why") or []):
+                if w not in why:
+                    why.append(w)
+            cur["why"] = why
+    levels = list(a.get("levels") or []) + [x for x in (b.get("levels") or [])
+                                            if x not in (a.get("levels") or [])]
+    out = list(rows.values())
+    out.sort(key=lambda r: (-int(bool(r.get("leveled"))), -int(r.get("gain") or 0),
+                            str(r.get("name") or "")))
+    return {"skills": out, "levels": levels,
+            "total": sum(int(r.get("gain") or 0) for r in out)}
+
+
 def _change_brief(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     """这一回合**真实发生的**变化 (属性 / 技能 / 经脉 / 性情) —— 给写故事那道工序看。
 
@@ -512,6 +543,20 @@ def _duel_in_body(body: str, duel: dict[str, Any] | None,
     return bool(hits >= _STRIKE_MIN and uniq >= _STRIKE_UNIQ)
 
 
+def _moves_in_body(body: str, duel: dict[str, Any] | None) -> bool:
+    """这一场真使过的绝招, 正文里有没有点名。
+
+    为什么要这一层: 战报里「踏雪无痕」使了两次, 故事只写"他剑锋一引" ——
+    读者看到的是"老是平平地砍", 看不到那门功夫。招式是书宠身上唯一能"被看见"
+    的本事, 使了却不出名, 等于没使。
+    """
+    moves = [str(m) for m in ((duel or {}).get("moves") or []) if str(m or "").strip()]
+    if not moves:
+        return True
+    body = body or ""
+    return any(m in body for m in moves)
+
+
 def _contract_note(kind: str, duel: dict[str, Any] | None,
                    checks: list[dict[str, Any]], missing: list[str]) -> str:
     """给重写稿的"漏了什么"说明 —— 把已经落账的事实摆出来, 让它照写。
@@ -530,6 +575,14 @@ def _contract_note(kind: str, duel: dict[str, Any] | None,
             f"{hp.get('to')}/{hp.get('max')}。把其中三四拍揉成连贯的几段动作, "
             "招式用真名, 伤要留着; **不许按回合编号罗列**, 也不许写「略去」这类括注; "
             "写到了就把 duel_shown 置 true。")
+    if duel and "招式名" in missing and "交手" not in missing:
+        moves = [str(m) for m in (duel.get("moves") or []) if str(m or "").strip()]
+        if moves:
+            parts.append(
+                "上一稿把这一场打完了, 但**没点出招式名**。这一趟它真使过: "
+                + "、".join("「" + m + "」" for m in moves[:3])
+                + "。把其中一手照真名写进那几拍里 (递出去的那一下叫什么), "
+                  "别只写「砍」和「刺」; 写到了就把 duel_shown 置 true。")
     if checks and "路上的坎" in missing:
         rows = []
         for c in checks[:2]:
@@ -887,11 +940,14 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
     gear_req = payload.get("gear") or {}
     gear_need = _gear_need(gear_req)
     duel_ok = _duel_in_body(body, duel_req, data)
+    moves_ok = _moves_in_body(body, duel_req)
     checks_ok = (not checks_req) or bool((data or {}).get("checks_shown"))
     gear_ok = _gear_in_body(body, gear_need)
     missing: list[str] = []
     if duel_req and not duel_ok:
         missing.append("交手")
+    elif duel_req and not moves_ok:
+        missing.append("招式名")
     if checks_req and not checks_ok:
         missing.append("路上的坎")
     if gear_need and not gear_ok:
@@ -911,17 +967,21 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         body2 = jsonout.as_text((data2 or {}).get("body"), 2600)
         if body2:
             duel_ok2 = _duel_in_body(body2, duel_req, data2)
+            moves_ok2 = _moves_in_body(body2, duel_req)
             checks_ok2 = (not checks_req) or bool((data2 or {}).get("checks_shown"))
             gear_ok2 = _gear_in_body(body2, gear_need)
-            if (not duel_req or duel_ok2) and (not checks_req or checks_ok2) \
+            if (not duel_req or (duel_ok2 and moves_ok2)) \
+                    and (not checks_req or checks_ok2) \
                     and (not gear_need or gear_ok2):
                 data, body = data2, body2
-                duel_ok, checks_ok, gear_ok = duel_ok2, checks_ok2, gear_ok2
+                duel_ok, moves_ok, checks_ok, gear_ok = duel_ok2, moves_ok2, checks_ok2, gear_ok2
         payload.pop("contract_note", None)
-        if ((duel_req and not duel_ok) or (checks_req and not checks_ok)
+        if ((duel_req and not (duel_ok and moves_ok))
+                or (checks_req and not checks_ok)
                 or (gear_need and not gear_ok)):
             log.warning("游历 · 重写后仍缺%s —— 这一回按缺项记",
                         "与".join(x for x, bad in (("交手", duel_req and not duel_ok),
+                                                   ("招式名", duel_req and not moves_ok),
                                                    ("路上的坎", checks_req and not checks_ok),
                                                    ("钱与药", gear_need and not gear_ok))
                                   if bad))
@@ -1240,6 +1300,10 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
         # 长了多少修为, 看不到本事那一格。
         try:
             preview = growth.practice_from(probe_ch, duel_out, checks_out)
+            if str((ev.get("encounter") or {}).get("kind") or "") == "learn":
+                _d = growth.drill(probe_ch)
+                if _d.get("total"):
+                    preview = _merge_practice(preview, _d)
         except Exception as e:  # noqa: BLE001 — 预演算不出来不该挡住判词
             log.warning("推演 · 预演熟练度失败: %s", e)
             preview = {}
@@ -1265,6 +1329,18 @@ def _run_locked(*, trigger: str, force: bool, dry: bool) -> dict[str, Any]:
     #    判词点名的那一笔已在 award_judged 里记过; 这里记实战那一半。
     #    技能等级只由熟练度决定, 所以「战报里使了十二剑」现在真会长「剑法」。
     prac = growth.practice_from(ch, duel_out, checks_out)
+    if str((ev.get("encounter") or {}).get("kind") or "") == "learn":
+        # 手里没有对手的这一趟: 专门磨招 (本门绝招 + 主修兵器)。
+        # 绝招的熟练度本来只在交手时记得上, 而交手少 —— 不给它一条自己练的路,
+        # 那门功夫一辈子停在入门那一级。
+        try:
+            drilled = growth.drill(ch)
+            if drilled.get("total"):
+                prac = _merge_practice(prac, drilled)
+                log.info("推演 · 闭关磨招: %s", " · ".join(
+                    f"{r['name']} +{r['gain']}" for r in drilled["skills"][:4]))
+        except Exception as e:  # noqa: BLE001 — 练不成长也不该挡这一回
+            log.warning("推演 · 磨招失败: %s", e)
     if prac.get("total"):
         applied["practice"] = prac
         log.info("推演 · 练熟了 %s", " · ".join(

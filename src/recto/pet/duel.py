@@ -213,17 +213,45 @@ def _normalize_foe_stats(ch: dict[str, Any], stats: dict[str, Any],
     my = cs.d20_stats(ch)
 
     stats = dict(stats)
-    stats["ac"] = int(_clamp(my["ac"] + rng.randint(-2, 2), 8, 24))
-    stats["attack"] = int(_clamp(my["attack"] + rng.randint(-2, 2), -2, 16))
+    # 护体与命中要**反向**浮动: 对手更难打中 (+d), 它的出手同时也要 -d。
+    # 旧写法两处各自 ±2 独立抽, 同一个人可以既难打中又百发百中 —— 实测 80 场
+    # 只赢 5 场就是这么来的 (对手 rollout 里 90% 命中, 我方 80%)。
+    d_ac = rng.randint(-2, 2)
+    stats["ac"] = int(_clamp(my["ac"] + d_ac, 8, 24))
+    stats["attack"] = int(_clamp(my["attack"] - d_ac, -2, 16))
+    # 归一之后必须**重写拆账**, 否则掷骰仍读 pseudo 人物那份 attack_parts
+    # (它比归一的数大得多) —— 面板显示"命中 +8", 实际按 +14 打, 八十场里输七十六场。
+    stats["attack_parts"] = [{"name": "对手的武艺", "value": int(stats["attack"]),
+                              "src": "skill"}]
+    stats["ac_parts"] = [{"name": "对手护体", "value": int(stats["ac"]) - 10,
+                          "src": "foe"}]
     stats["init"] = {"total": int(_clamp(my["init"]["total"] + rng.randint(-2, 2), -3, 16)),
                      "parts": stats["init"]["parts"]}
-    hp = max(20, int(round(mine["hp_max"] * rng.uniform(0.72, 0.96))))
+    # 气血与伤害按**"几拍见血"**配对定: 双方各要 n 拍才倒下 (n≈5)。
+    # 旧口径两处都不看对方的出伤, 结果要么对手一拳打掉三成半气血 (一场四拍就收场,
+    # 绝招没机会出手), 要么反过来我方三剑砍死一个只会挠痒的人 (四十场全胜)。
+    # 以"我方平均一击"为单位定对手气血、以"我方气血"为单位定对手出伤, 双方就对称。
+    my_dmg = dict(my.get("damage") or {})
+    my_avg = (int(my_dmg.get("count") or 1) * (int(my_dmg.get("sides") or 6) + 1) / 2.0
+              + int(my_dmg.get("flat") or 0))
+    n = rng.uniform(4.6, 5.6)                   # 各需几拍
+    hp = int(round(my_avg * n))
+    # 份量先夹在"跟我同量级"里 (七成到一倍三), 再按实际血量反推几拍 ——
+    # 高攻低血的build不该招来一个血量翻倍的人, 也不该三剑砍死同量级的对手。
+    hp = int(_clamp(hp, int(mine["hp_max"] * 0.75), int(mine["hp_max"] * 1.28)))
     stats["hp"] = hp
-    # 伤害平值也归一: 比我重的一拳不该一掌打掉我半条命
-    flat = int(stats["damage"]["flat"])
-    myflat = int(my["damage"]["flat"])
-    stats["damage"] = dict(stats["damage"],
-                           flat=int(_clamp(round(flat * 0.6 + myflat * 0.4), 4, 60)))
+    n = max(2.0, hp / max(1.0, my_avg))         # 实际要几拍才倒
+
+    dmg = stats["damage"]
+    sides = int(dmg.get("sides") or 6)
+    count = int(dmg.get("count") or 1)
+    avg_dice = count * (sides + 1) / 2.0
+    want_avg = float(mine["hp_max"]) / n         # 对手一拍该打掉多少
+    flat = int(_clamp(round(want_avg - avg_dice), 1, 60))
+    # 顺手把 "1d8+14" 这行文字重算 —— 只改 flat 不改 text, 页面上会显示旧数
+    # (实测面板写着 1d10+28, 实际每次只打 1d10+12)。
+    stats["damage"] = dict(dmg, flat=int(flat),
+                           text=f"{count}d{sides}+{int(flat)}")
     return stats
 
 
@@ -367,16 +395,54 @@ def _save_check(rng: random.Random, dfd: dict[str, Any], *, label: str,
 
 # ------------------------------------------------------------------ 一拍
 
-def _pick_pfm(fight: dict[str, Any], rng: random.Random) -> dict[str, Any] | None:
+def _pick_pfm(fight: dict[str, Any], dfd: dict[str, Any],
+              rng: random.Random) -> dict[str, Any] | None:
+    """这一拍要不要使绝招、使哪一门。
+
+    旧做法只按 ``rate`` 排序取第一门 (sort → usable[0]), 而人物的两门绝招
+    rate 只差两点, 于是**永远只使同一门**, 另一门一年见不到一次; 而且出手
+    概率只有 45%, 一场四五拍下来常常一次都没放。
+
+    现在按**战况**挑: 自己血薄 → 疗伤 / 守势 / 身法; 对方还硬 → 控住;
+    对方将倒 → 补刀。同一场里使过的招降权, 让两门都露过面。
+    """
     usable = [p for p in (fight.get("pfms") or []) if p["cost"] <= fight["neili"]]
     if not usable:
         return None
-    # 不是每一下都放绝招: 内力见底就留着, 平时也只用四成
-    if rng.random() > 0.45:
+    # 内力见底就留着; 平时也不是每一下都放绝招
+    if fight["neili"] < fight["neili_max"] * 0.25:
+        if rng.random() > 0.5:
+            return None
+    elif rng.random() > 0.45:
         return None
-    if fight["neili"] < fight["neili_max"] * 0.25 and rng.random() > 0.5:
-        return None
-    return usable[0] if rng.random() > 0.4 else rng.choice(usable)
+
+    my_pct = float(fight["hp"]) / max(1, int(fight["hp_max"]))
+    foe_pct = float(dfd["hp"]) / max(1, int(dfd["hp_max"]))
+    used = fight.setdefault("used_pfm", {})
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for p in usable:
+        eff = str(p.get("effect") or "damage")
+        w = 1.0
+        if eff == "heal":
+            w += 3.0 if my_pct < 0.45 else -0.8
+        elif eff in ("defend", "evade"):
+            w += 1.6 if my_pct < 0.55 else 0.2
+        elif eff == "control":
+            w += 2.0 if foe_pct > 0.50 else 0.4
+        else:                                     # damage / 其它
+            w += 2.2 if foe_pct < 0.40 else 0.6
+        if fight["neili"] < fight["neili_max"] * 0.40:
+            w -= float(p["cost"]) / max(4.0, fight["neili_max"] * 0.5)
+        w -= 0.6 * int(used.get(p["id"], 0))       # 同一场别反复使同一招
+        scored.append((max(0.05, w), p))
+
+    total = sum(w for w, _ in scored)
+    r = rng.random() * total
+    for w, p in scored:
+        r -= w
+        if r <= 0:
+            return p
+    return scored[-1][1]
 
 
 def _log(log: list[dict[str, Any]], rnd: int, side: str, kind: str, text: str, *,
@@ -388,7 +454,10 @@ def _log(log: list[dict[str, Any]], rnd: int, side: str, kind: str, text: str, *
         "r": int(rnd), "side": side, "move": move, "sid": sid, "kind": kind, "text": text,
         "dmg": int(dmg), "self": int(self_dmg), "effect": effect,
         "hp": {"a": int(atk["hp"]), "b": int(dfd["hp"])},
-        "rolls": rolls or [], "dice": dice or {},
+        # 必须**拷贝**: 调用方传的就是那个还在追加的列表, 不拷的话上一拍的
+        # 战报会被下一拍的掷骰改写 (实测: "招式没运成"那一行里混进了后面那次
+        # 攻击的检定, 页面上就成了"没运成"却带一次大成功)。
+        "rolls": list(rolls or []), "dice": dict(dice or {}),
     })
 
 
@@ -417,11 +486,13 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
     atk["atk_buff"] = 0
     atk["exposed"] = 0
 
-    pfm = _pick_pfm(atk, rng)
+    pfm = _pick_pfm(atk, dfd, rng)
     rolls: list[dict[str, Any]] = []
     move, effect, sid = "", "damage", ""
 
     if pfm:
+        atk.setdefault("used_pfm", {})
+        atk["used_pfm"][pfm["id"]] = int(atk["used_pfm"].get(pfm["id"], 0)) + 1
         atk["neili"] = max(0, atk["neili"] - pfm["cost"])
         move, effect = pfm["name"], pfm["effect"]
         sid = str(pfm.get("id") or "")     # 熟练度按"真使过的招式"记 (见 growth.practice_from)
@@ -461,12 +532,12 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
                           amount=heal),
                  atk=atk, dfd=dfd, move=move, sid=sid, effect=effect, rolls=rolls)
         elif effect == "defend":
-            atk["guard"] = 0.30
+            atk["guard"] = 0.45
             _log(log, rnd, side, "defend",
                  F.effect(voice, who=atk["name"], move=move, kind="defend"),
                  atk=atk, dfd=dfd, move=move, sid=sid, effect=effect, rolls=rolls)
         elif effect == "evade":
-            atk["ac_buff"] = 3
+            atk["ac_buff"] = 5
             _log(log, rnd, side, "evade",
                  F.effect(voice, who=atk["name"], move=move, kind="evade"),
                  atk=atk, dfd=dfd, move=move, sid=sid, effect=effect, rolls=rolls)
@@ -475,7 +546,13 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
             _log(log, rnd, side, "buff",
                  F.effect(voice, who=atk["name"], move=move, kind="buff"),
                  atk=atk, dfd=dfd, move=move, sid=sid, effect=effect, rolls=rolls)
-        return
+        # 出招之后**照旧递一手** (带 -3 的"分心"减值), 不再整拍作废。
+        # 旧写法直接 return: 使一次守势等于白扔一拍 —— 而守势一拍只挡掉三成
+        # 伤害 (约 4 点), 少打一下却是 14 点。算下来"使绝招守"永远是亏的,
+        # 八十场里输七十六场, 面板上看着像"它不会打架"。
+        atk["atk_buff"] = int(atk.get("atk_buff") or 0)
+        effect, sid_saved = "damage", sid
+        sid = sid_saved
 
     extra = []
     if pfm:

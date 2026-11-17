@@ -468,6 +468,46 @@ def practice_judged(ch: dict[str, Any], skills: Any) -> dict[str, Any]:
             "total": sum(int(r["gain"]) for r in rows)}
 
 
+#: 没对手的「学」类事: 专门磨招。兵器与绝招各记一笔 —— 绝招只有在交手时才
+#: 记得上熟练度, 而交手本来就少 (读书的多半时间是坐着看字), 于是绝招永远停在
+#: 一级、永远只使得出同一个数字。给它一条"自己练"的路。
+DRILL = {"perform": 26, "weapon": 20}
+
+
+def drill(ch: dict[str, Any], *, school: str | None = None) -> dict[str, Any]:
+    """磨招: 把本门绝招与主修兵器各练一笔 (就地改 ``ch``)。
+
+    挑哪几门: 已经在册的绝招 (``skills`` 里 type=perform 且等级 > 0) 各一份,
+    加主修兵器 (最高等级的那门 weapon) 一份。全都没有就什么都不练 ——
+    不替它凭空点出一门没学过的功夫。
+    """
+    before = dict(ch.get("skills") or {})
+    picks: dict[str, int] = {}
+    skills = dict(ch.get("skills") or {})
+    for sid, lv in skills.items():
+        sk = cs.SKILL_BY_ID.get(str(sid)) or {}
+        if sk.get("type") == "perform" and int(lv or 0) > 0:
+            picks[str(sid)] = DRILL["perform"]
+    weapons = [(int(lv or 0), str(sid)) for sid, lv in skills.items()
+               if (cs.SKILL_BY_ID.get(str(sid)) or {}).get("type") == "weapon"]
+    if weapons:
+        weapons.sort(reverse=True)
+        picks[weapons[0][1]] = max(picks.get(weapons[0][1], 0), DRILL["weapon"])
+
+    rows, levels, total = [], [], 0
+    for sid, n in picks.items():
+        res = cs.add_practice(ch, sid, int(n))
+        if not int(res.get("added") or 0):
+            continue
+        total += int(res["added"])
+        item = _skill_row(sid, res, ["磨招"], before)
+        rows.append(item)
+        if item["leveled"]:
+            levels.append({"id": sid, "name": item["name"],
+                           "from": item["from"], "to": item["level"]})
+    rows.sort(key=lambda r: (-int(r["leveled"]), -int(r["gain"]), r["name"]))
+    return {"skills": rows, "levels": levels, "total": total}
+
 def award_judged(ch: dict[str, Any], j: dict[str, Any], *,
                  max_exp: int | None = None,
                  story_day: int | None = None) -> dict[str, Any]:
