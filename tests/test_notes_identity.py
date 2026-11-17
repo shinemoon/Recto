@@ -119,7 +119,9 @@ ver = notes.cloud_versions_multi([md5])
 ok(len(ver["note"]) == 2, "两个身份的各一条都收进来 (按大写归一去重)")
 ok(notes.norm_key(KEY_LO) in ver["note"], "只有小写身份才有的那条也进来了")
 ok(len(ver["del"]) == 1, "墓碑保留 (它对应的条目哪个身份都没有)")
-ok(ver["sources"] == {md5: {"note": 1, "mark": 0}}, "记录了哪些身份真的有内容")
+ok(ver["sources"] == {md5: {"note": 1, "mark": 0}, md5.lower(): {"note": 1, "mark": 0}},
+   "按大小写分别记录哪些抽屉真的有内容 (写入身份靠它选)")
+ok(notes._cases(ver) == {"upper": 1, "lower": 1}, "_cases 汇总两个抽屉各几条")
 
 # 同一条 key 在两个身份下 marktime 不同 → 取大的
 def _ver_both(bid: str) -> dict:

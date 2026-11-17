@@ -1018,6 +1018,7 @@ const WHY = {
   "auto-off": "自动同步已关闭",
   "no-key": "取不到云端记录",
   "text-mismatch": "本地这份与云端不是同一个文件，坐标对不上，跳过",
+  "text-unlocated": "本地这条的位置切不出正文（坐标偏移了），先不推",
   "cloud-only": "书库里没有这本书"
 };
 
@@ -1100,12 +1101,19 @@ function notesBody(n) {
     return parts.length ? parts.join(" · ") : "没有要拉的";
   });
   const errs = (n.errors || []).map((e) => `<li><span class="pill err">失败</span> ${esc(String(e))}</li>`).join("");
+  const ident = (n.identity || {});
+  const identNote = (ident.dual || []).length
+    ? `<p class="meta"><span class="pill err">身份</span> 这些书云端有两个大小写抽屉、书里只显示一个：`
+      + esc(ident.dual.slice(0, 3).join("、"))
+      + `（命令行跑 <code>recto notes identity --fix</code> 并成一处）</p>`
+    : (ident.local_fixed
+        ? `<p class="meta">本地笔记 key 已归一为大写 · ${ident.local_fixed} 行</p>` : "");
   const only = (n.unmapped || []).length
     ? `<p class="meta">云端还有 ${n.unmapped.length} 本有笔记、但书库里没有这本书（取不到原文，划不了线）：`
       + esc(n.unmapped.slice(0, 5).map((u) => `${u.name || u.book_id}（划线 ${u.notes || 0}`
         + (u.marks ? ` · 书签 ${u.marks}` : "") + `）`).join("、")) + `</p>`
     : "";
-  return body + (errs ? `<ul class="rs-list">${errs}</ul>` : "") + only;
+  return body + (errs ? `<ul class="rs-list">${errs}</ul>` : "") + identNote + only;
 }
 
 function timeBody(t) {

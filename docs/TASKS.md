@@ -393,3 +393,31 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 
 **验收**: `tests/test_pet_spark.py` 35 项; 全套测试通过; `tools/probe_pet_spark.mjs` 12/12
 (桌面 + 390px); 生产第 24 回三条来处全部落地 (流放者的信 / 糊补丁的窗纸 / 晕开墨的简牍)。
+
+
+## T14 § 笔记身份: 「一本书只一个抽屉」变成常驻机制 — `done` (2026-11-18)
+
+**起因**：11-18 上午把笔记身份统一成小写（依据是 APK 里 `getFileMD5()` 裸值），
+当日下午又改回大写（依据是手机自己写的条目落在大写抽屉）。两次都是"全局切一个常量"，
+用户指出：**这不是一次性迁移，机制本身要在实现里站住**，并按同一标准把已有笔记/划线规整。
+
+**机制（现在在代码里，不靠记忆）**
+
+| 层 | 规则 | 位置 |
+|---|---|---|
+| 内部坐标系 | `zy_key` / `zy_seen` / 墓碑差集 / 幂等判断一律**大写** | `notes.norm_key` / `_upper_local_keys` |
+| 写入身份 | **按书**选：`wire_id(ids, sources)` = 已经有内容的那个抽屉，两个都有才大写 | `notes.wire_id` |
+| 发送边界 | key 前 32 位换成 `wire` 的大小写；删除用云端返回的**原始大小写** | `notes.wire_key(key, wire)` |
+| "推过没有" | 只看**目标抽屉**（`cloud_versions_multi()["per_case"]`），不看合并视图 | `notes.push` |
+| 漂移可见 | `status()["identity"]` + `pull` 结果 `identity.dual` + 控制台结果行 | `notes.status` / `console.notesBody` |
+| 漂移可修 | `recto notes identity [--fix] [--book]` | `notes.identity_report` |
+
+**`--fix` 的边界**：先 pull 再 push，然后**只删**"另一个抽屉里、现在大写抽屉也有的"条目；
+正文拿不到的（老设备独占 / 文件不是同一份）一律不动 —— 宁可留两份，也不删别人的笔记。
+
+**规整结果（2026-11-18 生产）**：7 本映射书逐本核对 —— 本地 key 全大写、`local_bad_prefix` 全空、
+云端无一本分裂（大写抽屉 17 / 44 / 1 条，小写抽屉 0 条）。
+`notes pull` 幂等（`unchanged` 不动），`notes push --dry-run` 0 待推。
+
+**验收**：`tests/test_notes_wire.py` 扩到 40 项（新增 `wire_id` 四种情形 / `wire_key` 前缀换算 /
+双抽屉合并端到端 / 小写独占书写回小写 / 本地 key 漂移归一）；全套测试通过。

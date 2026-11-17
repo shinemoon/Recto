@@ -335,7 +335,10 @@ def _zy_notebook_pct(force: bool = False) -> dict[str, tuple[float, str | None, 
     """App 自己写的进度 (getUserNotebooks 的 readpercent/readpostion)。
 
     只覆盖"有笔记的书", 但那份通常比 getProgress 更新 (App 在本地写)。
-    返回 {book32lower: (pct01, chapterId, f3, 更新时间ms)}。
+    返回 {book32大写: (pct01, chapterId, f3, 更新时间ms)}。
+
+    键统一**大写**: 云端返回的 bookid 大小写不固定 (老设备小写 / 当前 App 大写),
+    内部只保留一个坐标系 —— 与 `services/notes` 的 `kb32()` 同一口径。
     """
     if not force and time.time() - float(_NOTES_CACHE["at"] or 0) < 120:
         return dict(_NOTES_CACHE["map"])  # type: ignore[arg-type]
@@ -356,7 +359,7 @@ def _zy_notebook_pct(force: bool = False) -> dict[str, tuple[float, str | None, 
                 ts = float(nb.get("updatetime") or nb.get("updateTime") or 0)
             except (TypeError, ValueError):
                 ts = 0.0
-            out[bid.strip().lower()[:32]] = (
+            out[bid.strip().upper()[:32]] = (
                 pct,
                 None if parsed.get("chapter_id") is None else str(parsed["chapter_id"]),
                 int(parsed.get("f3") or 0),
@@ -429,7 +432,12 @@ def _cloud_state(auth: dict, rows: Iterable[dict]) -> dict[str, dict]:
     nb = _zy_notebook_pct()
     for r in rows:
         bid = r["id64"] or r["id32"]
-        nbv = nb.get(str(r["id32"] or bid)[:32].lower())
+        nbv = None
+        # 一本书在云端最多两个身份 (id64 前 32 / id32) —— 两个都试, 别只看一个
+        for cand in app_book_keys(bid):
+            nbv = nb.get(str(cand)[:32].upper())
+            if nbv:
+                break
         if not nbv:
             continue
         cands.setdefault(bid, []).append({

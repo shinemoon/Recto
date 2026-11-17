@@ -272,6 +272,9 @@ def cmd_notes(args) -> int:
         out = notes.pull(keys, dry_run=args.dry_run)
     elif args.action == "push":
         out = notes.push(keys, dry_run=args.dry_run)
+    elif args.action == "identity":
+        # 每本书云端只该有一个大小写抽屉; fix 会把分裂的那份并进"已有内容"的那个
+        out = notes.identity_report(fix=bool(args.fix), keys=keys, quiet=False)
     else:
         out = {"pull": notes.pull(keys, dry_run=args.dry_run),
                "push": notes.push(keys, dry_run=args.dry_run)}
@@ -447,9 +450,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_daemon.set_defaults(func=cmd_daemon)
 
     p_nt = sub.add_parser("notes", help="划线/书签 双向同步")
-    p_nt.add_argument("action", choices=("sync", "pull", "push", "materialize"))
+    p_nt.add_argument("action", choices=("sync", "pull", "push", "materialize", "identity"))
     p_nt.add_argument("--book", action="append", default=[], help="只处理这本书")
     p_nt.add_argument("--dry-run", action="store_true")
+    p_nt.add_argument("--fix", action="store_true",
+                      help="identity: 把分裂的大小写抽屉并成一本 (先拉后推再删重复)")
     p_nt.set_defaults(func=cmd_notes)
 
     p_tm = sub.add_parser("time", help="阅读时长 双向同步")

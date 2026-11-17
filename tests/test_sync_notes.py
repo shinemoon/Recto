@@ -198,7 +198,8 @@ sync.cloud.get_progress = lambda auth, ids: {
                "readProcess": {"readPercent": "0.4", "chapterId": "3", "totalCount": "8",
                                "readPosition": "4_0_0$##3-0-4-100-0##$"}}
 }
-sync._zy_notebook_pct = lambda force=False: {("C" * 32).lower(): (0.6, "5", 10, 200)}
+# notebook 进度表的键**统一大写** (云端 bookid 大小写不固定, 内部只留一个坐标系)
+sync._zy_notebook_pct = lambda force=False: {("C" * 32).upper(): (0.6, "5", 10, 200)}
 rows = [{"id64": "A" * 64, "id32": "A" * 32}, {"id64": "C" * 32, "id32": "C" * 32}]
 st = sync._cloud_state({"usr": "x"}, rows)
 ok(abs(st["A" * 64]["pct"] - 0.4) < 1e-9, "getProgress 进度读入")

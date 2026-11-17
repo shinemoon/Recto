@@ -10,7 +10,10 @@
 `uniquecheck = <bookid32>_<positionstart><positionend>` (划线)
 `uniquecheck = <bookid32>_<markpostion>`          (书签)
 
-bookid32 = 文件内容 MD5 (大写, 前 32 位)。云端对大小写敏感, 统一大写。
+bookid32 = 文件内容 MD5 (前 32 位)。云端对 bookid **大小写敏感** —— 同一本书在
+两个大小写下是两套互不相干的抽屉, 书里只显示 App 打开时用的那一个。所以内部
+一律用大写做归一 (去重 / 墓碑 / 幂等), 而**写入身份按书选**: 认已经有内容的那个
+抽屉 (`wire_id`), 都没有才用大写。
 
 正文
 ----
@@ -91,21 +94,57 @@ def norm_key(key: str) -> str:
     return (key or "").strip().upper()
 
 
-def wire_key(key: str) -> str:
-    """内部 key (归一为大写) → **发给云端的写法** (32hex 身份大写)。
+def wire_key(key: str, book: str | None = None) -> str:
+    """内部 key (统一大写) → 发给云端的写法。
 
-    掌阅云端对 bookid **大小写敏感**: 同一本书在两个身份下是两套互不相干的抽屉,
-    App 打开书只按**其中一个**去拉。结论来自实测, 不是猜:
+    云端对 bookid **大小写敏感**: 同一本书在两个身份下是两套互不相干的抽屉,
+    书里只显示 App 打开时用的那一个。内部一律用大写做归一 (去重 / 墓碑 / 幂等),
+    发给云端时把 **前 32 位前缀**换成这本书的写入身份 (`wire_id`) 的写法。
 
-    - 手机端自己写下的笔记落在**大写**抽屉 (九诗心 4 条, deviceName=meizuMEIZU 22,
-      时间早于我们任何推送) —— 那才是 App 认的那一本;
-    - 小写抽屉里只有我们推的条目 (deviceName=Recto) → 账号级笔记本里显示成
-      另一本同名书, 书内一条看不到。
+    结论来自实测: 手机端自己写的笔记落在大写抽屉 (九诗心 4 条
+    deviceName=meizuMEIZU 22, 早于我们任何推送); 老设备 (iReader Smart X3 Pro /
+    Ocean 3 Plus) 留下的抽屉是小写。所以「写哪个」不是全局常量, 而是**按书**:
+    见 `wire_id()`。
 
-    2026-11-18 曾按"App 用 getFileMD5() 裸值(小写)"改成小写, 那个判断是错的
-    (依据是旧设备/旧版本写入的遗留数据)。现在统一到大写这一个抽屉。
+    2026-11-18 曾在全局层面来回切过两次 (先小写后大写) —— 那都是错的方向:
+    正确口径是「一本书只有一个抽屉, 认已经有内容的那个」。
     """
-    return (key or "").strip().upper()
+    k = (key or "").strip()
+    if len(k) <= 32:
+        return k.upper()
+    if book:
+        prefix = book.strip()[:32]
+    else:
+        prefix = k[:32].upper()          # 不给书 → 内部口径 (大写)
+    return f"{prefix or k[:32]}{k[32:]}"
+
+
+def wire_id(ids: Iterable[str], sources: dict | None = None) -> str:
+    """一本书的**写入身份**: 已经有条目的那一个抽屉; 都没有则大写。
+
+    `sources` = `cloud_versions_multi()["sources"]` (大小写原样保留)。
+
+    - 只有大写有货 → 大写 (当前 App 的口径)
+    - 只有小写有货 → 小写 (老设备留下的抽屉, 别在旁边另开一间)
+    - 两个都有 → 大写 (`normalize_identity(fix=True)` 会把小写那份并过来)
+    """
+    cand = [str(x).strip() for x in (ids or []) if str(x).strip()]
+    if not cand:
+        return ""
+    up = cand[0].upper()
+    if not sources:
+        return up
+    def _has(v) -> bool:
+        try:
+            return bool(int((v or {}).get("note") or 0) or int((v or {}).get("mark") or 0))
+        except Exception:  # noqa: BLE001
+            return False
+    # 逐字比较大小写: 用 upper() 比会把"只有小写有货"也判成大写有货
+    has_up = any(str(k) == up and _has(v) for k, v in sources.items())
+    has_lo = any(str(k) == up.lower() and _has(v) for k, v in sources.items())
+    if not has_up and has_lo:
+        return up.lower()
+    return up
 
 
 def app_id(zy_book_id: str) -> str:
@@ -439,6 +478,7 @@ def cloud_versions_multi(ids: Iterable[str]) -> dict[str, Any]:
     dels: set[str] = set()
     used: list[str] = []
     sources: dict[str, dict[str, int]] = {}
+    per_case: dict[str, dict[str, dict]] = {}   # 逐抽屉视图 (判断"目标抽屉里有没有")
     for bid in ids:
         for variant in dict.fromkeys((str(bid).upper(), str(bid).lower())):
             try:
@@ -448,11 +488,15 @@ def cloud_versions_multi(ids: Iterable[str]) -> dict[str, Any]:
             if not row:
                 continue
             used.append(variant)
+            one: dict[str, dict] = {"note": {}, "mark": {}}
             got = {"note": len(row.get("booknotesVerList") or []),
                    "mark": len(row.get("bookmarksVerList") or [])}
             if got["note"] or got["mark"]:
-                sources[str(bid).upper()] = got
-            for name, slot in (("booknotesVerList", note), ("bookmarksVerList", mark)):
+                # **原样保留大小写** —— 它是"这本书的抽屉在哪一档"的唯一证据
+                # (`wire_id` 靠它选写入身份), 归一成大写就丢了这份信息。
+                sources[variant] = got
+            for name, slot, short in (("booknotesVerList", note, "note"),
+                                      ("bookmarksVerList", mark, "mark")):
                 for it in (row.get(name) or []):
                     if not isinstance(it, dict):
                         continue
@@ -465,10 +509,13 @@ def cloud_versions_multi(ids: Iterable[str]) -> dict[str, Any]:
                         mt = 0
                     if k not in slot or mt > slot[k]:
                         slot[k] = mt
+                    one[short][k] = max(mt, int(one[short].get(k) or 0))
+            per_case[variant] = one
             for x in (row.get("delList") or []):
                 dels.add(norm_key(str(x)))
     dels -= set(note) | set(mark)
-    return {"note": note, "mark": mark, "del": dels, "ids": used, "sources": sources}
+    return {"note": note, "mark": mark, "del": dels, "ids": used, "sources": sources,
+            "per_case": per_case}
 
 
 _md5_cache: dict[tuple[str, int, int], str] = {}
@@ -966,12 +1013,19 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
         rows = [r for r in rows if r["key"] in want]
     added = updated = deleted = skipped = unchanged = 0
     report: list[dict] = []
+    local_fixed = _upper_local_keys()      # 内部坐标系永远大写 (纯本地, 幂等)
+    if local_fixed and not quiet:
+        _sync.audit("本地笔记 key 归一为大写 · %d 行", local_fixed)
+    dual: list[str] = []
     for r in rows:
         ids = cloud_ids(r)
         if not ids:
             continue
         book32 = ids[0]
         ver = cloud_versions_multi(ids)
+        cases = _cases(ver)
+        if len(cases) > 1:
+            dual.append(r["title"])
         if not ver["note"] and not ver["mark"] and not ver["del"]:
             skipped += 1
             report.append({"book": r["title"], "skipped": "cloud-empty"})
@@ -1083,6 +1137,11 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
         materialize(quiet=quiet)
     except Exception:                              # noqa: BLE001
         pass
+    if dual:
+        _DUAL_CACHE["at"] = time.time()
+        _DUAL_CACHE["books"] = dual
+        _sync.log.warning("笔记身份分裂 (两个大小写抽屉都有条目, 书里只显示一个): %s",
+                          ", ".join(dual[:5]))
     unmapped = cloud_only_books(_sync.links())
     if not (quiet and not (added or updated or deleted)):
         _sync.audit("拉取划线 · 新增 %d · 更新 %d · 删除 %d · 未变 %d",
@@ -1092,7 +1151,8 @@ def pull(keys: Iterable[str] | None = None, *, dry_run: bool = False,
                     "、".join(u["name"] or u["book_id"] for u in unmapped[:3]))
     return {"added": added, "updated": updated, "deleted": deleted,
             "skipped": skipped, "unchanged": unchanged, "books": report,
-            "unmapped": unmapped, "unmapped_pulled": pulled_unmapped}
+            "unmapped": unmapped, "unmapped_pulled": pulled_unmapped,
+            "identity": {"dual": dual, "local_fixed": local_fixed}}
 
 
 # --------------------------------------------------------------------------
@@ -1132,8 +1192,11 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
         if not ids:
             continue
         book32 = ids[0]            # 内部一律归一为大写
-        wire = app_id(book32)      # 发给云端的身份必须是小写 (App 的口径)
         ver = cloud_versions_multi(ids)
+        wire = wire_id(ids, ver.get("sources"))   # 写进"已经有内容"的那个抽屉
+        # 目标抽屉的版本表: "这条推过没有" 只能看**要写的那个抽屉**,
+        # 不能看合并视图 —— 否则另一档里的同一条会被误判成"已推送"。
+        wcase = (ver.get("per_case") or {}).get(wire) or {}
         epub = r["path"]
         local_md5 = file_md5(epub)
         have_src = {str(k).upper() for k in (ver.get("sources") or {})}
@@ -1152,23 +1215,34 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
         now_ms = int(time.time() * 1000)
         for n in notes:
             ch_id = max(0, int(n["chapter"]) - 1)
-            uc = n.get("zy_key") or note_key(
+            uc = norm_key(n.get("zy_key") or "") or note_key(
                 book32,
                 geometry.build_position(ch_id, int(n["start_off"])),
                 geometry.build_position(ch_id, int(n["end_off"])))
+            pos_s = geometry.build_position(ch_id, int(n["start_off"]))
+            pos_e = geometry.build_position(ch_id, int(n["end_off"]))
             sig = _sig("note", uc, n.get("summary") or "", n.get("remark") or "",
                        _label_at_spine(geo, int(n["chapter"])))
-            if n.get("zy_key") and (n.get("zy_sig") or "") == sig:
+            ck = (wcase.get("note") or {}).get(uc)
+            # "上次推过" (sig 相等) 不足以跳过: 条目可能是在**另一个抽屉**里同步进来的
+            # (老设备的小写抽屉 / 我们换过身份的那段历史)。目标抽屉里没有就补推。
+            if n.get("zy_key") and (n.get("zy_sig") or "") == sig and ck is not None:
                 skipped += 1
                 continue
-            ck = ver["note"].get(uc)
             if ck is not None and n.get("zy_key") and int(n.get("zy_marktime") or 0) and ck > int(n["zy_marktime"]):
                 skipped += 1          # 云端更新 (App 上改过)
                 continue
-            pos_s = geometry.build_position(ch_id, int(n["start_off"]))
-            pos_e = geometry.build_position(ch_id, int(n["end_off"]))
+            # 本地这条的位置切不出正文 (章节/偏移对不上) → 别拿它去写云端:
+            # 每次都会因为"摘录有字、切出来空"被判成变了, 一轮一轮重推, 而且坐标本身就可疑。
+            # 只有**章节确实读到了**才这么判 —— 读不到章节 (原书换了/缺篇) 时无从判断, 照旧推。
+            if ((n.get("summary") or "").strip() and _chapter_raw(epub, ch_id) is not None
+                    and not text_of_span(epub, pos_s, pos_e).strip()):
+                skipped += 1
+                report.append({"book": r["title"], "skipped": "text-unlocated",
+                               "zy_key": uc})
+                continue
             marktime = int(n.get("zy_marktime") or 0) or now_ms
-            item = {"uniquecheck": wire_key(uc), "style": 0, "color": DEFAULT_COLOR,
+            item = {"uniquecheck": wire_key(uc, wire), "style": 0, "color": DEFAULT_COLOR,
                     "summary": (n.get("summary") or "").strip(),
                     "remark": (n.get("remark") or "").strip(),
                     "positionstart": pos_s, "positionend": pos_e,
@@ -1180,13 +1254,13 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
         for m in marks:
             m_ch = max(0, int(m["chapter"]) - 1)
             pos = geometry.build_position(m_ch, int(m["offset"]))
-            uc = m.get("zy_key") or mark_key(book32, pos)
+            uc = norm_key(m.get("zy_key") or "") or mark_key(book32, pos)
             label = _label_at_spine(geo, int(m["chapter"]))
             sig = _sig("bookmark", uc, "", label)
-            if m.get("zy_key") and (m.get("zy_sig") or "") == sig:
+            ck = (wcase.get("mark") or {}).get(uc)
+            if m.get("zy_key") and (m.get("zy_sig") or "") == sig and ck is not None:
                 skipped += 1
                 continue
-            ck = ver["mark"].get(uc)
             if ck is not None and m.get("zy_key") and int(m.get("zy_marktime") or 0) and ck > int(m["zy_marktime"]):
                 skipped += 1
                 continue
@@ -1194,7 +1268,7 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
             pct = 0.0
             if geo is not None and geo.total_bytes:
                 pct = round((geo.prefix_bytes(m_ch) + int(m["offset"])) / geo.total_bytes, 8)
-            out_marks.append({"uniquecheck": wire_key(uc),
+            out_marks.append({"uniquecheck": wire_key(uc, wire),
                               "marksummary": label or (m.get("summary") or "")[:120],
                               "markpostion": pos, "markpercent": pct, "markstyle": 0,
                               "marktime": marktime})
@@ -1247,7 +1321,7 @@ def push(keys: Iterable[str] | None = None, *, dry_run: bool = False,
             if not keys_:
                 continue
             try:
-                delete_items(wire, [wire_key(k) for k in keys_], type_=type_)
+                delete_items(wire, [wire_key(k, wire) for k in keys_], type_=type_)
                 for k in keys_:
                     _seen_del(book32, kind, k)
                 deleted += len(keys_)
@@ -1308,6 +1382,155 @@ def _cloud_only_local() -> list[dict]:
             for r in rows if (r["notes"] or r["marks"])]
 
 
+def _upper_local_keys() -> int:
+    """本地 `zy_key` / `zy_seen` 统一大写 (幂等)。
+
+    内部只在**大写**这一个坐标系里认身份: 去重、墓碑差集、幂等判断全靠它。
+    发给云端的写法由 `wire_key(key, wire)` 现转, 所以这里改大写不影响可达性。
+    """
+    fixed = 0
+    try:
+        c = reader_state.conn()
+        for table in ("rnote", "rbookmark"):
+            rows = c.execute(f"SELECT id, zy_key FROM {table} "
+                             "WHERE zy_key IS NOT NULL AND zy_key<>''").fetchall()
+            for row in rows:
+                k = str(row["zy_key"])
+                if k != k.upper():
+                    c.execute(f"UPDATE {table} SET zy_key=? WHERE id=?", (k.upper(), int(row["id"])))
+                    fixed += 1
+        if fixed:
+            c.commit()
+    except Exception:  # noqa: BLE001 — 归一失败不该拖垮同步
+        pass
+    try:
+        sc = _state_conn()
+        try:
+            rows = sc.execute("SELECT book32, kind, key, marktime FROM zy_seen").fetchall()
+            for row in rows:
+                b, kind, k = str(row["book32"]), str(row["kind"]), str(row["key"])
+                mt = int(row["marktime"] or 0)
+                if b == b.upper() and k == k.upper():
+                    continue
+                sc.execute("DELETE FROM zy_seen WHERE book32=? AND kind=? AND key=?", (b, kind, k))
+                sc.execute("INSERT INTO zy_seen(book32,kind,key,marktime) VALUES(?,?,?,?) "
+                           "ON CONFLICT(book32,kind,key) DO UPDATE "
+                           "SET marktime=MAX(marktime, excluded.marktime)",
+                           (b.upper(), kind, k.upper(), mt))
+                fixed += 1
+            if fixed:
+                sc.commit()
+        finally:
+            sc.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return fixed
+
+
+def _cases(ver: dict) -> dict[str, int]:
+    """云端版本表 → {upper|lower: 条目数} (只算有内容的抽屉)。"""
+    out: dict[str, int] = {}
+    for k, v in (ver.get("sources") or {}).items():
+        n = int((v or {}).get("note") or 0) + int((v or {}).get("mark") or 0)
+        if n:
+            out["upper" if str(k) == str(k).upper() else "lower"] = n
+    return out
+
+
+_DUAL_CACHE: dict = {"at": 0.0, "books": []}
+
+
+def identity_report(*, fix: bool = False, keys: Iterable[str] | None = None,
+                    quiet: bool = True) -> dict:
+    """检查 (并可修复) 每本书的「云端抽屉身份」。
+
+    每本书只该有一个抽屉。检查项:
+
+    1. **本地 key 前缀** 是否为大写 (内部坐标系),
+    2. 云端 `data_ver(大写)` / `data_ver(小写)` 各有几条 —— 两个都有内容 = 分裂,
+    3. `wire_id` 选出的写入身份 (没分裂时它就是已经有内容的那一档)。
+
+    `fix=True` 时:
+
+    - 本地 key 前缀统一大写 (安全, 纯本地),
+    - 对分裂的书 **先 pull 再 push**, 然后只删除"另一个抽屉里、现在大写抽屉也有的"
+      那些条目 —— 正文拿不到的 (老设备独占 / 文件不是同一份) 一律不动, 宁可留两份
+      也不删别人的笔记。删除用**云端返回的原始大小写**, 否则接口返 success 但 no-op。
+
+    跑法: `python3 -m recto.cli notes identity [--fix]`
+    """
+    out: dict = {"books": [], "local_fixed": 0, "dual": [], "merged": [], "errors": []}
+    if fix:
+        out["local_fixed"] = _upper_local_keys()
+    rows = _sync.links()
+    if keys is not None:
+        want = set(keys)
+        rows = [r for r in rows if r["key"] in want]
+    for r in rows:
+        ids = cloud_ids(r)
+        if not ids:
+            continue
+        try:
+            ver = cloud_versions_multi(ids)
+        except Exception as e:  # noqa: BLE001
+            out["errors"].append(f"{r['title']}: {e}")
+            continue
+        wire = wire_id(ids, ver.get("sources"))
+        cases = _cases(ver)
+        local_keys = [str(n["zy_key"]) for n in reader_state.list_notes(r["key"]) if n.get("zy_key")]
+        local_keys += [str(m["zy_key"]) for m in reader_state.list_bookmarks(r["key"]) if m.get("zy_key")]
+        bad_local = sorted({k[:32] for k in local_keys if k[:32] != k[:32].upper()})
+        item: dict = {"book": r["title"], "key": r["key"], "ids": ids, "write": wire,
+                      "cases": cases, "dual": len(cases) > 1,
+                      "local_bad_prefix": bad_local,
+                      "local_notes": len(local_keys), "action": ""}
+        if len(cases) > 1:
+            out["dual"].append(r["title"])
+            if fix:
+                try:
+                    pull((r["key"],), quiet=True)
+                    push((r["key"],), quiet=True)
+                    after = cloud_versions_multi(ids)
+                    keep = {norm_key(k) for k in (after.get("note") or {})}
+                    keep |= {norm_key(k) for k in (after.get("mark") or {})}
+                    removed = 0
+                    for variant in (after.get("ids") or []):
+                        if str(variant) == wire:      # 保留的那个抽屉, 逐字比较
+                            continue
+                        row = data_ver(variant) or {}
+                        for name, type_ in (("booknotesVerList", 2), ("bookmarksVerList", 1)):
+                            cand = [str(it.get("uniquecheck") or it.get("uniquechek") or "")
+                                    for it in (row.get(name) or []) if isinstance(it, dict)]
+                            drop = [k for k in cand if k and norm_key(k) in keep]
+                            if drop:
+                                delete_items(variant, drop, type_=type_)
+                                removed += len(drop)
+                    after2 = cloud_versions_multi(ids)
+                    item["action"] = "merged"
+                    item["removed"] = removed
+                    item["cases_after"] = _cases(after2)
+                    item["write"] = wire_id(ids, after2.get("sources"))
+                    if len(item["cases_after"]) <= 1:
+                        out["merged"].append(r["title"])
+                    if not quiet:
+                        _sync.audit("整理笔记身份 · %s · 合并 %d 条 · 现在只剩 %s 一个抽屉",
+                                    r["title"], removed,
+                                    "大写" if "upper" in item["cases_after"] else "小写")
+                except Exception as e:  # noqa: BLE001
+                    item["action"] = "failed"
+                    item["error"] = str(e)
+                    out["errors"].append(f"{r['title']}: {e}")
+        out["books"].append(item)
+    _DUAL_CACHE["at"] = time.time()
+    _DUAL_CACHE["books"] = list(out["dual"])
+    if out["dual"] and not fix:
+        _sync.log.warning("笔记身份分裂 (同一本书云端两个大小写抽屉都有条目): %s",
+                          ", ".join(out["dual"][:5]))
+        _sync.audit("笔记身份分裂 · %s · 运行 `recto notes identity --fix` 合并",
+                    ", ".join(out["dual"][:5]))
+    return out
+
+
 def status() -> dict:
     rows = _sync.links()
     out = []
@@ -1317,5 +1540,18 @@ def status() -> dict:
         out.append({"book": r["title"], "notes": len(notes), "bookmarks": len(marks),
                     "synced_notes": sum(1 for n in notes if n.get("zy_key")),
                     "synced_marks": sum(1 for m in marks if m.get("zy_key"))})
+    local_bad = 0
+    try:
+        c = reader_state.conn()
+        for table in ("rnote", "rbookmark"):
+            row = c.execute(f"SELECT COUNT(*) AS n FROM {table} "
+                            "WHERE zy_key IS NOT NULL AND zy_key<>'' "
+                            "AND zy_key<>UPPER(zy_key)").fetchone()
+            local_bad += int(row["n"] if row else 0)
+    except Exception:  # noqa: BLE001
+        pass
     return {"books": out, "count": len(out), "cloud_only": cloud_only_books(rows),
-            "cloud_only_local": _cloud_only_local()}
+            "cloud_only_local": _cloud_only_local(),
+            "identity": {"local_key_case_issues": local_bad,
+                         "dual": list(_DUAL_CACHE["books"]),
+                         "dual_checked_at": _DUAL_CACHE["at"]}}
