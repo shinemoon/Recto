@@ -517,22 +517,50 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
 .rv.is-paged .rv-page p { orphans: 2; widows: 2; }
 .rv.is-paged .rv-foot { display: none; }
 
-/* 高亮（CSS Custom Highlight API）—— 用 ::highlight 上色，零 DOM 改动 */
-::highlight(rv-hl-yellow) { background-color: #ffe89a; color: #1b1a17; }
-::highlight(rv-hl-green)  { background-color: #c9edc2; color: #1b1a17; }
-::highlight(rv-hl-blue)   { background-color: #bcd8f5; color: #1b1a17; }
-::highlight(rv-hl-pink)   { background-color: #f6c6d8; color: #1b1a17; }
-::highlight(rv-hl-underline) { text-decoration: underline; text-decoration-color: #c0392b; text-decoration-thickness: 2px; }
-.rv[data-theme="dark"] ::highlight(rv-hl-yellow) { background-color: #6b5b1f; color: #f3efe6; }
-.rv[data-theme="dark"] ::highlight(rv-hl-green) { background-color: #2f5233; color: #f3efe6; }
-.rv[data-theme="dark"] ::highlight(rv-hl-blue) { background-color: #24415e; color: #f3efe6; }
-.rv[data-theme="dark"] ::highlight(rv-hl-pink) { background-color: #5c2b40; color: #f3efe6; }
+/* 划线 / 笔记（CSS Custom Highlight API）—— 波浪下划线，零 DOM 改动。
+ *
+ * 为什么不用底色: 底色在深色皮肤下是一块"白斑", 也会盖掉关键词高亮的半透明底。
+ * 波浪下划线不挡字, 且 Chromium 的 ::highlight() 支持 text-decoration-style: wavy
+ * (实测像素: 波浪每行 26/104/130/131/132/105/26, 实线恒定 288 —— 真的画出了波浪)。
+ * 颜色与抽屉里那颗小圆点同源 (reader.js 的 colorHex), 列表与正文一眼对得上。
+ */
+::highlight(rv-hl-yellow) {
+  text-decoration: underline wavy #f5c518;
+  text-decoration-thickness: 1.6px; text-underline-offset: 3px;
+}
+::highlight(rv-hl-green) {
+  text-decoration: underline wavy #4caf50;
+  text-decoration-thickness: 1.6px; text-underline-offset: 3px;
+}
+::highlight(rv-hl-blue) {
+  text-decoration: underline wavy #3d8bd9;
+  text-decoration-thickness: 1.6px; text-underline-offset: 3px;
+}
+::highlight(rv-hl-pink) {
+  text-decoration: underline wavy #e0699a;
+  text-decoration-thickness: 1.6px; text-underline-offset: 3px;
+}
+::highlight(rv-hl-underline) {
+  text-decoration: underline wavy #c0392b;
+  text-decoration-thickness: 1.6px; text-underline-offset: 3px;
+}
+/* 深色皮肤: 底色没了, 线要更亮才看得清 */
+.rv[data-theme="dark"] ::highlight(rv-hl-yellow) { text-decoration-color: #ffd23f; }
+.rv[data-theme="dark"] ::highlight(rv-hl-green)  { text-decoration-color: #7fd07f; }
+.rv[data-theme="dark"] ::highlight(rv-hl-blue)   { text-decoration-color: #7fb6ef; }
+.rv[data-theme="dark"] ::highlight(rv-hl-pink)   { text-decoration-color: #ef8bb4; }
+.rv[data-theme="dark"] ::highlight(rv-hl-underline) { text-decoration-color: #e0705c; }
 
 /* 我们的 DOM 兜底高亮（浏览器不支持 Highlight API 时用） */
-.rv mark.rv-mark { background: #ffe89a; color: inherit; padding: 0; border-radius: 0; }
-.rv mark.rv-mark[data-color="green"] { background: #c9edc2; }
-.rv mark.rv-mark[data-color="blue"] { background: #bcd8f5; }
-.rv mark.rv-mark[data-color="pink"] { background: #f6c6d8; }
+.rv mark.rv-mark {
+  background: transparent; color: inherit; padding: 0; border-radius: 0;
+  text-decoration: underline wavy #f5c518;
+  text-decoration-thickness: 1.6px; text-underline-offset: 3px;
+}
+.rv mark.rv-mark[data-color="green"] { text-decoration-color: #4caf50; }
+.rv mark.rv-mark[data-color="blue"] { text-decoration-color: #3d8bd9; }
+.rv mark.rv-mark[data-color="pink"] { text-decoration-color: #e0699a; }
+.rv mark.rv-mark[data-color="underline"] { text-decoration-color: #c0392b; }
 
 /* ---- 抽屉 ---- */
 .rv-drawer {

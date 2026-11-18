@@ -1756,7 +1756,7 @@
         p.normalize();
       });
     }
-    var names = ['yellow', 'green', 'blue', 'pink'];
+    var names = ['yellow', 'green', 'blue', 'pink', 'underline'];
     if (useApi) hlForget(ch);            // 只摘掉**这一章**的旧区间, 别的章留着
     S.notes.filter(function (n) { return +n.chapter === ch; }).forEach(function (n) {
       var r = rangeFor(n);
