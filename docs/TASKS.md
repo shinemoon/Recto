@@ -421,3 +421,80 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 
 **验收**：`tests/test_notes_wire.py` 扩到 40 项（新增 `wire_id` 四种情形 / `wire_key` 前缀换算 /
 双抽屉合并端到端 / 小写独占书写回小写 / 本地 key 漂移归一）；全套测试通过。
+
+---
+
+## T15 § 故事要能一段一段读 + 人物收进抽屉 + 划线线色统一（2026-11-19）
+
+**起因**：用户「用量恢复，请继续」后收尾工作树里积压的一批活。四件事，各自独立。
+
+### ① 读故事：一段一段往下读
+
+故事原本是**整篇铺在卡里**的 —— 一屏塞满，想接着上次那句读做不到。
+现在故事正文收进**读本**：从"没读过的那段"开始，空格推进，读完自动收起。
+
+| 层 | 做法 |
+|---|---|
+| 位置存哪 | **独立文件** `readpos.json`（不塞 `chronicle.json` —— 推演一回要跑 10~60 秒，期间它持有整份 state，最后一次性写回；前端在这段时间记的位置会被那份旧快照覆盖掉。真踩过：读着故事，推演一回，位置归零） |
+| 写者 | HTTP 处理线程 + 可能的后台线程 → `fcntl.flock` 圈住"读 → 改 → 写" |
+| 防手滑 | 一次跳超过 `MAX_JUMP=400` 段就夹住（手滑或脚本不该把位置一次推到天边） |
+| 往回看 | 允许回退读，但**不改位置** —— 回头看一眼不该把进度抹了 |
+| 复位/转生 | 位置一起清（故事都清了，位置没有意义） |
+
+**接口**：`GET/POST /pet/api/reading`（`{no, para}`）；页面一次拿全 → `chronicle.state_view()["readpos"]`。
+
+### ② 人物收进右侧抽屉（页面顶签 4 → 3）
+
+原来「人物」是一个整页子页签，把故事挤到第二位。现在收成一行图标
+（人物 / 行囊 / 本事 / 陪读），点一下浮出抽屉，里面再分四段。故事页始终是主角。
+
+* 老书签 `#hero` → 自动打开人物抽屉并把 hash 改回 `#story`（不让人撞哑链接）。
+* Esc 关抽屉；抽屉开着时页签点不到（先关再切）—— 探针踩过这个次序。
+
+### ③ 划线线色统一（一个主题变量）
+
+划线原本分 yellow/green/blue/pink/underline **五档各一个色**，满页五颜六色。
+现在五档只用来区分"哪条"（抽屉里那颗小圆点与列表顺序），线本身统一。
+
+* `--rv-hl`：淡色主题深蓝 `#1d4e89`，深色主题浅灰 `#c9ccd4`。
+* 两个浏览器限制（实测，别再踩）：
+  * `::highlight()` **不支持逗号多选择器** —— `::highlight(a, b)` 整条规则失效，
+    所以五档必须各写一条规则（值都取同一个变量）；
+  * `::highlight()` **支持 var() 从元素继承**，但 CSS 的 `prefers-color-scheme`
+    **不跟随**页面上的 `color-scheme` —— 所以"auto 主题跟随外壳皮肤"只能由
+    服务端把皮肤模式标到 DOM（`data-shell`），不能靠 media 查询。
+* 抽屉里那颗小圆点也不再内联色，改用 CSS 变量（`reader.js` 删掉 `colorHex`）。
+
+### ④ 原子写的临时名带线程 id
+
+`config / llmconfig / reading_mark / secret_io / settings / charsheet / config /
+life / reborn / world / chronicle` 的临时文件名原本只有 pid —— **同进程两个线程
+同时写会用同一个临时名**，一个 `os.replace` 走之后另一个找不到文件，抛
+`FileNotFoundError`（真踩过：陪读心跳写状态的同时，前端 POST 读位置也在写）。
+现在临时名带 `threading.get_ident()`。
+
+### ⑤ 万古江河的笔记重新对齐
+
+本地文件覆盖后 md5 与云端一致（`3749B344…`），`text-mismatch` 闸门解除；
+`notes pull --book 4f9cf8f5bf318028` → `unchanged 1`（本地正文与云端切出来的逐字相同，
+200 字，一字不差）。此前它卡在 `text-mismatch`（本地与云端不是同一份文件）。
+
+**验收**：`tests/test_pet_reading.py` 32 项 / `tests/test_reader_wavy.py` 40 项；
+探针 `probe_pet_read.mjs` 37 项（读本逐段 + 抽屉 + 手机 + 0 报错）、
+`probe_reader_hlcolor.mjs`（像素级线色）、`probe_reader_hlshell.mjs`；
+`probe_pet_char` 59 / `probe_pet_story` 35 / `probe_pet_ui` 36 / `probe_pet_gear` 23 全绿；
+全套测试只有 `test_excerpt_persist` 那 2 项**既有**失败（stash 对照基线同样红）。
+
+### ⑥ 分支合并
+
+`master` 与 `pet` 分叉了 4 个 commit（T2 注释层 / 云端上传 / cloudlink 字段）。
+今天把 master 并进 pet（冲突 11 处：文档取 pet 侧新稿，console/cloudlink 取
+"单按钮 + attached 口径"新写法），再把 master 快进到同一 commit。
+两个分支现已同步在 `1fe7dd5`，都推了 origin。
+
+**教训**：
+1. 「整篇铺开」和「能接着读」是两种东西 —— 前者是一屏字，后者是进度。
+2. 位置这类"频繁写的小状态"不能跟"偶尔整体覆盖的大状态"共用一个文件。
+3. 原子写的临时名只带 pid 不够 —— 同进程多线程会撞。
+4. `prefers-color-scheme` 不跟随 `color-scheme`；`::highlight()` 不支持逗号选择器
+   但支持 var() 继承 —— 这三条是实测出来的，不是查文档。
