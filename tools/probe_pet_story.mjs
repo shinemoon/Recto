@@ -34,12 +34,17 @@ await page.goto(`${URL}/pet/`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(900);
 
 // ── 1. 故事置顶 ───────────────────────────────────
-const ids = await page.$$eval('.rc-pet .card', (cs) => cs.map((c) => c.id));
+// 卡片有两处: 页面主列 + 抽屉里。分开数。
+const ids = await page.$$eval('.rc-pane-story .card', (cs) => cs.map((c) => c.id));
 ok(ids[0] === 'card-chronicle', `第一张卡是故事 (${ids[0]})`);
 // 传承卡平时 hidden, 但它一直在 DOM 里 —— 数"看得见的第二张"才对
-const visIds = await page.$$eval('.rc-pet .card',
+const visIds = await page.$$eval('.rc-pane-story .card',
   (cs) => cs.filter((c) => !c.hidden).map((c) => c.id));
-ok(visIds.indexOf('card-hero') === 1, `人物第二 (${visIds.indexOf('card-hero')})`);
+// 人物收进抽屉了 (2026-11-19) —— 页面上不再有第二张「人物」卡
+ok(!visIds.includes('card-hero'), '人物卡不在页面主列 (收进抽屉了)');
+const drawerHas = await page.evaluate(() =>
+  !!document.querySelector('#pg-drawer #card-hero'));
+ok(drawerHas, '人物卡在抽屉里');
 ok(ids.includes('card-legacy'), '页面里有传承卡');
 
 const title = await page.$eval('#card-chronicle h2', (e) => e.textContent.trim());
@@ -59,11 +64,15 @@ if (adv) {
   ok(h3.length > 0, `最新一回标题: ${h3}`);
   const shown = await page.$$eval('#adventure-latest .adv-growth .adv-chip', (els) => els.length);
   ok(shown >= 0, `本回所显条目数: ${shown}`);
-  const bodyP = await page.$$eval('#adventure-latest .adv-body p', (els) => els.length);
-  ok(bodyP >= 2, `故事正文分段: ${bodyP} 段`);
-  const fs = await page.$eval('#adventure-latest .adv-body p',
+  // 2026-11-19: 正文不再整篇铺在卡里 —— 它在**读本**里 (逐段解锁)
+  const bodyP = await page.$$eval('#adv-read-body p', (els) => els.length);
+  ok(bodyP >= 1, `读本里有一段正文: ${bodyP} 段`);
+  const fs = await page.$eval('#adv-read-body p',
     (e) => parseFloat(getComputedStyle(e).fontSize));
   ok(fs >= 15, `故事正文比正文大 (${fs}px)`);
+  const hasReadEntry = await page.$$eval('#adventure-latest .adv-read-entry button',
+    (els) => els.length);
+  ok(hasReadEntry === 1, '故事卡上有「读这一回」入口');
 } else {
   ok(true, '还没有故事 (首次运行) — 跳过最新一回检查');
   ok(true, '还没有故事 — 跳过本回所显');
@@ -72,7 +81,8 @@ if (adv) {
 }
 
 // ── 3. 技能折叠 (在「人物」分区里, 先切过去 —— 分区没切时整块 display:none) ──
-await page.click('.pg-tab[data-pg="hero"]');
+await page.click('.pg-ico-btn[data-drawer="skills"]');
+await page.waitForSelector('#pg-drawer:not([hidden])', { timeout: 15000 });
 await page.waitForTimeout(220);
 const fold = await page.$('#card-skills .cs-fold');
 ok(!!fold, '技能表在折叠块里');
@@ -94,6 +104,9 @@ await page.waitForTimeout(120);
 const box2 = await page.$eval('#card-skills .cs-fold', (d) => d.getBoundingClientRect().height);
 ok(box2 > box.self + 20, `点开后展开 (${Math.round(box.self)} → ${Math.round(box2)})`);
 await page.$eval('#card-skills .cs-fold', (d) => { d.open = false; });
+// 抽屉开着会遮住页签 —— 先关掉再切分区
+await page.keyboard.press('Escape');
+await page.waitForTimeout(220);
 await page.click('.pg-tab[data-pg="story"]');
 await page.waitForTimeout(160);
 

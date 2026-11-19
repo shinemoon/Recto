@@ -42,7 +42,7 @@ ok(page.url().includes('/pet/'), `点到书宠分区 (${page.url()})`);
 ok((await page.title()).includes('书宠'), `标题带「书宠」 (${await page.title()})`);
 
 // ── 页面结构 ──────────────────────────────────────
-const cards = await page.$$eval('.rc-pet .card h2', (hs) => hs.map((h) => h.textContent.trim()));
+const cards = await page.$$eval('.pg-pane[data-pg="setup"] .card h2', (hs) => hs.map((h) => h.textContent.trim()));
 ok(cards.length >= 3, `有 ${cards.length} 张卡 (${cards.join(' / ')})`);
 ok(cards.some((c) => c.includes('模型接入')), '有「模型接入」卡');
 ok(cards.some((c) => c.includes('模型库')), '有「模型库」卡');

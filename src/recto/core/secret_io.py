@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import threading
 import os
 from pathlib import Path
 
@@ -33,7 +34,7 @@ def write_secret(path: Path, text: str, *, mode: int = 0o600) -> bool:
     「新的完整内容」, 不会读到半截。
     """
     p = Path(path)
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         # 临时文件先 chmod 再写: 免得有一瞬间是 0644 (口令不该被别的用户读到)

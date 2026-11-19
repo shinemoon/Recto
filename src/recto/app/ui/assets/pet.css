@@ -874,3 +874,173 @@
   grid-column: 2; color: var(--rc-mute, #777); font-size: .84rem;
 }
 .echo-img::before { content: "· "; }
+/* ══════════════ 读故事 (逐段推进) ══════════════
+ *
+ * 故事是一段正文: 一段一段解锁, 空格推进, 读完收起。
+ * 直角口径沿用全站 (radius_scale=0), 只用高度阴影分层。
+ */
+
+/* 入口 (故事卡 / 往期条目里那个按钮) */
+.rc-pet .adv-read-entry {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin: 12px 0 4px; padding: 10px 0 0;
+  border-top: 1px solid var(--rc-outline-variant, rgba(0,0,0,.08));
+}
+.rc-pet .adv-read-entry .cs-dim { font-size: .84rem; }
+
+/* 读本 */
+.rc-pet .adv-read {
+  margin: 12px 0 4px;
+  background: color-mix(in oklab, var(--rc-fg) 3%, transparent);
+  border-left: 3px solid var(--rc-primary, var(--rc-accent));
+}
+.rc-pet .adv-read-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--rc-outline-variant, rgba(0,0,0,.08));
+}
+.rc-pet .adv-read-title {
+  font-weight: 650; font-size: .95rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rc-pet .adv-read-prog {
+  margin-left: auto; font-size: .82rem; color: var(--rc-mute);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.rc-pet .adv-read-bar .mini { font-size: 11px; padding: 3px 9px; }
+
+/* 正文: 逐段出现。最后一段留一点呼吸 (读到这里就是这一回的末了) */
+.rc-pet .adv-read-body {
+  padding: 12px 16px 4px;
+  max-height: 46vh; overflow-y: auto;
+  outline: none;
+}
+.rc-pet .adv-read-body:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--rc-primary, var(--rc-accent));
+}
+.rc-pet .adv-read-body p {
+  margin: 0 0 .85em; font-size: 1.02rem; line-height: 1.95;
+  text-indent: 2em;
+}
+.rc-pet .adv-read-body p:last-child { margin-bottom: .2em; }
+
+/* 底部: 继续按钮 + 提示 */
+.rc-pet .adv-read-foot {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 8px 14px 12px;
+}
+.rc-pet .adv-read-foot .primary { min-height: 40px; }
+.rc-pet .adv-read-hint { font-size: .82rem; color: var(--rc-mute); }
+
+/* 读完 */
+.rc-pet .adv-read-done {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 10px 14px 12px;
+  font-size: .9rem; color: var(--rc-mute);
+}
+
+/* ══════════════ 图标快捷入口 (人物 / 行囊 / 本事 / 陪读) ══════════════
+ *
+ * 原来「人物」是一个整页子页签, 把故事挤到第二位。现在收成一行图标,
+ * 点一下浮出抽屉 —— 故事页始终是主角。
+ */
+.pg-ico-rail {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin: 0 0 14px;
+}
+.pg-ico-btn {
+  appearance: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 40px; padding: 0 13px;
+  font: inherit; font-size: 12.5px;
+  color: var(--rc-fg, var(--ink));
+  background: color-mix(in srgb, var(--rc-fg, var(--ink)) 5%, transparent);
+  border: 1px solid var(--rc-outline-variant, var(--line));
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.pg-ico-btn:hover, .pg-ico-btn:focus-visible {
+  background: color-mix(in srgb, var(--rc-fg, var(--ink)) 10%, transparent);
+}
+.pg-ico-btn.is-on {
+  color: var(--rc-on-primary-container, var(--rc-fg, var(--ink)));
+  background: var(--rc-primary-container, color-mix(in srgb, var(--accent) 14%, transparent));
+  border-color: color-mix(in srgb, var(--rc-primary, var(--accent)) 34%, transparent);
+}
+.pg-ico { display: grid; place-items: center; width: 18px; height: 18px; }
+.pg-ico svg { width: 18px; height: 18px; display: block; }
+.pg-ico-name { white-space: nowrap; }
+
+/* ══════════════ 人物抽屉 ══════════════ */
+.pg-drawer { position: fixed; inset: 0; z-index: 60; }
+.pg-drawer[hidden] { display: none !important; }
+.pg-drawer-scrim {
+  position: absolute; inset: 0;
+  background: color-mix(in srgb, var(--rc-fg, #000) 42%, transparent);
+  animation: pg-fade .18s ease both;
+}
+@keyframes pg-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.pg-drawer-panel {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: min(560px, 100vw);
+  display: flex; flex-direction: column;
+  background: var(--rc-surface, var(--bg));
+  box-shadow: var(--rc-elev-3, 0 8px 28px rgba(0,0,0,.22));
+  animation: pg-slide .2s cubic-bezier(.2,0,0,1) both;
+}
+@keyframes pg-slide { from { transform: translateX(18px); opacity: .4; } to { transform: none; opacity: 1; } }
+
+.pg-drawer-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--rc-outline-variant, var(--line));
+}
+.pg-drawer-head h2 { margin: 0; font-size: 1.06rem; font-weight: 650; }
+.pg-drawer-x {
+  margin-left: auto; appearance: none; cursor: pointer;
+  width: 34px; height: 34px; min-height: 34px; padding: 0;
+  font: inherit; font-size: 15px; line-height: 1;
+  color: var(--rc-mute);
+  background: transparent; border: 1px solid var(--rc-outline-variant, var(--line));
+}
+.pg-drawer-x:hover { color: var(--rc-fg, var(--ink)); background: color-mix(in srgb, var(--rc-fg, var(--ink)) 7%, transparent); }
+
+.pg-drawer-tabs {
+  display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
+  padding: 0 12px; border-bottom: 1px solid var(--rc-outline-variant, var(--line));
+}
+.pg-drawer-tabs::-webkit-scrollbar { display: none; }
+.pg-dt-tab {
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  padding: 10px 14px; min-height: 40px; white-space: nowrap;
+  font: inherit; font-size: 13px; color: var(--rc-mute);
+  border-bottom: 2px solid transparent;
+}
+.pg-dt-tab:hover { color: var(--rc-fg, var(--ink)); }
+.pg-dt-tab.is-on {
+  color: var(--rc-primary, var(--accent));
+  font-weight: 650; border-bottom-color: var(--rc-primary, var(--accent));
+}
+
+.pg-drawer-body {
+  flex: 1 1 auto; overflow-y: auto;
+  padding: 14px 16px 40px;
+}
+.pg-dt-pane { display: none; }
+.pg-dt-pane.is-on { display: block; }
+/* 抽屉里的卡: 去掉多余的外边距 (卡片自己已经有 padding) */
+.pg-drawer-body .card { margin-bottom: 14px; }
+.pg-drawer-body .card:last-child { margin-bottom: 0; }
+
+/* 抽屉开着时: 背景不许滚 */
+body.pg-drawer-open { overflow: hidden; }
+
+/* 窄屏: 抽屉占满宽 */
+@media (max-width: 640px) {
+  .pg-drawer-panel { width: 100vw; }
+  .pg-drawer-body { padding: 12px 12px 32px; }
+  .rc-pet .adv-read-body { max-height: 52vh; }
+}
+
+/* 抽屉里的小段切换不产生横向溢出 */
+.pg-drawer-body .models-wrap { max-width: 100%; }

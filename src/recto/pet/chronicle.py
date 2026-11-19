@@ -117,7 +117,10 @@ def load_state() -> dict[str, Any]:
 def save_state(st: dict[str, Any]) -> None:
     p = state_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    # 临时名要带**线程 id**: 只带 pid 的话, 同进程里两个线程同时写就会用同一个
+    # 临时文件 —— 一个 replace 走之后另一个的 os.replace 找不到文件, 直接抛
+    # FileNotFoundError (真踩过: 陪读心跳写状态的同时, 前端 POST 读位置也在写)。
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(st, ensure_ascii=False, indent=1), "utf-8")
     try:
         os.chmod(tmp, 0o600)
@@ -2015,7 +2018,18 @@ def state_view() -> dict[str, Any]:
         "encounters": encounters.summary(days=7),
         "guides": guidance.all_specs(),
         "char": _char_brief(ch),
+        "readpos": _readpos_map(),
     }
+
+
+def _readpos_map() -> dict[str, int]:
+    """每回读到第几段 (给页面一次拿全)。"""
+    try:
+        from recto.pet import reading as reading_mod
+
+        return reading_mod.all_positions()
+    except Exception:  # noqa: BLE001 — 读不到就当没读过, 不拖垮页面
+        return {}
 
 
 # ------------------------------------------------------------------ 心跳

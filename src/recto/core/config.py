@@ -5,6 +5,7 @@ Recto 是独立服务: 这里不出现任何外部书目数据库 / 容器路径
 """
 from __future__ import annotations
 
+import threading
 import os
 import sys
 import tomllib
@@ -387,7 +388,7 @@ def set_value(section: str, key: str, value: str) -> bool:
     else:
         lines.insert(sec_at + 1, line_new)
     out = "\n".join(lines).rstrip("\n") + "\n"
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         tmp.write_text(out, "utf-8")
         try:

@@ -251,6 +251,17 @@ from recto.app import pet as _petapp  # noqa: E402
 html = _petapp.page_html()
 ok(html.index('id="card-chronicle"') < html.index('id="card-hero"'),
    "故事卡排在人物卡前面")
+# 2026-11-19: 人物收进右侧抽屉 (图标唤起), 不再是子页签
+ok('id="pg-drawer"' in html and 'class="pg-ico-rail"' in html,
+   "页面有人物抽屉与图标入口")
+ok('data-pg="hero"' not in html, "「人物」不再是子页签 (收进抽屉)")
+ok(html.count('<div class="pg-pane') == 3, "三个子页签: 故事 / 世界 / 设置")
+ok('data-drawer="char"' in html and 'data-drawer="bag"' in html
+   and 'data-drawer="skills"' in html and 'data-drawer="companion"' in html,
+   "四个图标入口: 人物 / 行囊 / 本事 / 陪读")
+# 读故事: 逐段推进
+ok('id="adv-read"' in html and 'id="btn-adv-next"' in html,
+   "页面有读本与推进按钮")
 ok('id="card-legacy"' in html and 'id="btn-inherit"' in html, "页面有传承卡与确认按钮")
 ok('id="story-clock"' in html and 'id="story-meta"' in html, "故事时钟挂在故事卡上")
 ok('<details class="cs-fold">' in html and '<details class="cs-fold" open>' not in html,

@@ -18,13 +18,20 @@
 <!-- ── 子页签 (页内切换, 不重载) ── -->
 <nav class="pg-tabs" id="pg-tabs" aria-label="书宠分区">
   <button class="pg-tab is-on" data-pg="story">故事</button>
-  <button class="pg-tab" data-pg="hero">人物</button>
   <button class="pg-tab" data-pg="world">世界</button>
   <button class="pg-tab" data-pg="setup">设置</button>
 </nav>
 
+<!-- 快捷入口 (图标): 人物 / 行囊 / 本事 / 陪读 —— 点开是浮窗 -->
+<div class="pg-ico-rail" id="pg-ico-rail" role="toolbar" aria-label="人物与本事">
+<button class="pg-ico-btn" data-drawer="char" aria-label="人物" title="人物"><span class="pg-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="3.2"/><path d="M6.5 20c0-3.2 2.5-5.4 5.5-5.4s5.5 2.2 5.5 5.4"/></svg></span><span class="pg-ico-name">人物</span></button>
+<button class="pg-ico-btn" data-drawer="bag" aria-label="行囊" title="行囊"><span class="pg-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 8.5h11l-1 11h-9l-1-11Z"/><path d="M9.6 8.5V6.8a2.4 2.4 0 0 1 4.8 0v1.7"/><path d="M9.5 12.6h5"/></svg></span><span class="pg-ico-name">行囊</span></button>
+<button class="pg-ico-btn" data-drawer="skills" aria-label="本事" title="本事"><span class="pg-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 4.5 14 14"/><path d="M19.5 4.5 10 14"/><path d="M8.6 16.2 5.2 19.6"/><path d="M15.4 16.2 18.8 19.6"/></svg></span><span class="pg-ico-name">本事</span></button>
+<button class="pg-ico-btn" data-drawer="companion" aria-label="陪读" title="陪读"><span class="pg-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.2h5.2A2.8 2.8 0 0 1 12 8v10.4a2.4 2.4 0 0 0-2.4-2.4H4Z"/><path d="M20 5.2h-5.2A2.8 2.8 0 0 0 12 8v10.4a2.4 2.4 0 0 1 2.4-2.4H20Z"/></svg></span><span class="pg-ico-name">陪读</span></button>
+</div>
+
 <!-- ══════════════ 故事 ══════════════ -->
-<div class="pg-pane is-on" data-pg="story">
+<div class="pg-pane rc-pane-story is-on" data-pg="story">
 
 <section class="card adv-hero" id="card-chronicle">
   <div class="card-head">
@@ -43,6 +50,27 @@
       <span class="status" id="chronicle-status"></span>
     </div>
     <div id="chronicle-out" class="adv-out" hidden></div>
+
+    <!-- 读故事: 一段一段往下读, 空格推进; 读完了折叠起来 -->
+    <div class="adv-read" id="adv-read" hidden>
+      <div class="adv-read-bar">
+        <span class="adv-read-title" id="adv-read-title">—</span>
+        <span class="adv-read-prog" id="adv-read-prog">—</span>
+        <button class="mini" id="btn-adv-restart">从头读</button>
+        <button class="mini" id="btn-adv-fold">收起</button>
+      </div>
+      <div class="adv-read-body" id="adv-read-body" tabindex="0"
+           role="article" aria-label="故事正文"></div>
+      <div class="adv-read-foot" id="adv-read-foot">
+        <button class="primary" id="btn-adv-next">继续 (空格)</button>
+        <span class="cs-dim" id="adv-read-hint">按空格往下读 · 读完自动收起</span>
+      </div>
+      <div class="adv-read-done" id="adv-read-done" hidden>
+        <span>这一回读完了。</span>
+        <button class="mini" id="btn-adv-again">再读一遍</button>
+      </div>
+    </div>
+
     <div id="adventure-latest" class="adv-latest"></div>
     <details class="tc-sub" id="adv-history">
       <summary>往期故事</summary>
@@ -78,196 +106,6 @@
       所以要你自己点头。确认后: 上一代的一生会存档, 书宠从 12 岁重新开始,
       只带走一份家学 (最高那门功夫的三成)、一点声望与余荫。
     </p>
-  </div>
-</section>
-
-</div>
-
-<!-- ══════════════ 人物 ══════════════ -->
-<div class="pg-pane" data-pg="hero">
-
-<section class="card" id="card-hero">
-  <div class="card-head">
-    <h2>人物</h2>
-    <span class="hint">参数骨架取自 MUD《侠客行》 · 掷骰按 d20</span>
-    <span class="pill" id="char-rank">读取中…</span>
-  </div>
-  <div class="card-body">
-    <div class="pet-preview">
-      <div class="pet-avatar" id="pet-avatar" aria-hidden="true">
-        <span class="pet-face">◕‿◕</span>
-      </div>
-      <div class="pet-meta">
-        <div class="pet-name" id="pet-name">小墨</div>
-        <div class="pet-state-line" id="char-subline">初入江湖 · 无门无派</div>
-        <div class="pet-state-line" id="char-life">12 岁 · 第 1 日 · 第 1 代</div>
-        <div class="pet-state-line" id="char-backstory" hidden></div>
-        <div class="pet-bars">
-          <label class="inline">亲密度
-            <input id="pet-intimacy" type="range" min="0" max="100" value="0" disabled>
-          </label>
-          <label class="inline">心情
-            <input id="pet-mood" type="range" min="0" max="100" value="60" disabled>
-          </label>
-        </div>
-      </div>
-    </div>
-
-    <div class="cs-stats" id="char-stats"></div>
-    <div class="cs-meta" id="char-meta"></div>
-
-    <details class="cs-fold" id="fold-card-d20">
-      <summary>交手数据 · d20 <span class="cs-dim" id="char-d20-sum">—</span></summary>
-      <div class="cs-d20" id="char-d20"></div>
-      <div class="cs-meta" id="char-d20-rules"></div>
-    </details>
-
-    <p class="tip" id="char-intro">
-      这是<b>江湖上的本事</b>, 不是读书的比喻: 六项根骨决定它出手多沉、多快、多耐,
-      技能决定它用哪一路打法, 绝招是它在遭遇里真能打出去的那几手。
-      陪读只是它攒修为的来路 —— 长了什么本事, 看它在自己的江湖里吃过什么亏。
-    </p>
-  </div>
-</section>
-
-<section class="card" id="card-bag">
-  <div class="card-head">
-    <h2>行囊与银钱</h2>
-    <span class="hint">药与吃食是救急的, 兵器护具佩物是真进交手的</span>
-    <span class="pill" id="bag-money">—</span>
-  </div>
-  <div class="card-body">
-    <div class="cs-meta" id="bag-mods"></div>
-    <div class="bag-slots" id="bag-slots"></div>
-
-    <details class="cs-fold" id="fold-card-bag">
-      <summary>行囊 <span class="cs-dim" id="bag-sum">—</span></summary>
-      <div class="bag-list" id="bag-list"></div>
-    </details>
-
-    <details class="cs-fold" id="fold-card-shop">
-      <summary>药铺 · 铁匠铺 <span class="cs-dim" id="shop-sum">—</span></summary>
-      <div class="bag-list" id="shop-list"></div>
-    </details>
-
-    <p class="tip" id="bag-tip">
-      伤不是修一下就好的: 出门前它自己会先上药 (钱不够就打坐), 路上挣的赏钱与脚钱
-      落进钱袋, 回来再敷一次。<b>这一段账由后端结算</b> —— 故事里写出来的药与钱,
-      都真从行囊里扣过。
-    </p>
-  </div>
-</section>
-
-<section class="card" id="card-growth">
-  <div class="card-head">
-    <h2>陪读</h2>
-    <span class="hint">阅读器时长 → 它的阅历</span>
-    <span class="pill" id="companion-pill">读取中…</span>
-  </div>
-  <div class="card-body">
-    <div class="cs-meta" id="growth-rules"></div>
-    <div class="cs-meta" id="companion-state"></div>
-    <div class="row" style="margin-top:12px">
-      <button class="mini" id="btn-companion-feed">立即折算</button>
-      <span class="status" id="companion-status"></span>
-    </div>
-    <p class="tip">
-      陪读分钟来自<b>阅读器自己的时长记录</b> (人真的在读的那些分钟, 挂着不读不算)。
-      它只累计时长 / 长「基本内功」/ 推经脉 —— <b>修为不在这里给</b>,
-      由「故事」页里那趟出门按这段时间的读书记录判定 (两处都给会双计)。
-    </p>
-  </div>
-</section>
-
-<section class="card" id="card-attrs">
-  <div class="card-head">
-    <h2>六项根骨</h2>
-    <span class="hint">初始 10 · 每项封顶 30 · 总和 180</span>
-    <span class="pill" id="attr-pot">潜能 0</span>
-  </div>
-  <div class="card-body">
-    <div class="models-wrap">
-    <table class="cats attrs">
-      <thead>
-        <tr><th>属性</th><th>别名</th><th>当前</th><th>基础</th><th>先天</th><th>上限</th><th>说明</th><th></th></tr>
-      </thead>
-      <tbody id="attr-rows"></tbody>
-    </table>
-    </div>
-    <p class="tip">
-      侠客行规矩: 潜能点自由分配, 每项封顶 30, 六项总和封顶 180。
-      悟性直接决定技能等级上限 —— <code>(修为×10)^(1/3)+1</code>, 悟性不足 30 按比例打折。
-      门派加成是<b>额外</b>的, 不占你的潜能额度 —— 叛门即刻收回。
-    </p>
-  </div>
-</section>
-
-<section class="card" id="card-schools">
-  <div class="card-head">
-    <h2>门派</h2>
-    <span class="hint">入门得内功与绝招 · 叛门清声望与门忠</span>
-  </div>
-  <div class="card-body">
-    <details class="cs-fold" id="fold-card-schools">
-      <summary>门派明细 <span class="cs-dim">点开看本门的内功与绝招 · 入门 / 叛门</span></summary>
-      <div class="cs-schools" id="school-cards"></div>
-    <p class="tip" id="school-tip"></p>
-    </details>
-  </div>
-</section>
-
-<section class="card" id="card-skills">
-  <div class="card-head">
-    <h2>技能与绝招</h2>
-    <span class="hint">绝招三要素: 成功率 / 定身 / 反噬 · 都会在遭遇里结算</span>
-  </div>
-  <div class="card-body">
-    <details class="cs-fold">
-      <summary>技能明细 <span class="cs-dim">(点开看每一项的等级与绝招参数)</span></summary>
-      <div class="models-wrap">
-    <table class="cats skills">
-      <thead>
-        <tr><th>名称</th><th>类</th><th>属性</th><th>等级</th><th>上限</th><th>熟练</th>
-            <th>成功率</th><th>定身</th><th>反噬</th><th>耗内力</th><th>说明</th></tr>
-      </thead>
-      <tbody id="skill-rows"></tbody>
-    </table>
-    </div>
-    </details>
-    <p class="tip" id="skill-tip"></p>
-  </div>
-</section>
-
-<section class="card" id="card-traits">
-  <div class="card-head">
-    <h2>性情</h2>
-    <span class="hint">最多 6 条 · 总分 ≤ 100 · 上品 40 / 良品 30 / 常品 20 / 下品 10</span>
-    <span class="pill" id="trait-pill">0 / 6</span>
-  </div>
-  <div class="card-body">
-    <details class="cs-fold" id="fold-card-traits">
-      <summary>性情明细 <span class="cs-dim">点开看已觉醒与可觉醒的 16 条</span></summary>
-      <div class="cs-traits" id="trait-cards"></div>
-    <p class="tip">
-      侠客行叫「个人特征」: 黄色罕见, 红色天生, 蓝色常见, 绿色锦上添花。
-      觉醒点随阅历攒, 每条性情都会进战斗与判定的加值 (「交手数据」里能看到它落在哪)。
-    </p>
-    </details>
-  </div>
-</section>
-
-<section class="card" id="card-veins">
-  <div class="card-head">
-    <h2>经脉</h2>
-    <span class="hint">十层 · 通脉给五行亲和与属性加成</span>
-    <span class="pill" id="vein-pill">0 / 10</span>
-  </div>
-  <div class="card-body">
-    <details class="cs-fold" id="fold-card-veins">
-      <summary>经脉明细 <span class="cs-dim">点开看十层的效果与进度</span></summary>
-      <div class="cs-veins" id="vein-list"></div>
-    <p class="tip" id="vein-tip"></p>
-    </details>
   </div>
 </section>
 
@@ -495,6 +333,210 @@
   </div>
 </section>
 
+</div>
+
+<!-- ══════════════ 人物抽屉 (图标唤起) ══════════════ -->
+<div class="pg-drawer" id="pg-drawer" hidden>
+  <div class="pg-drawer-scrim" data-drawer-close></div>
+  <aside class="pg-drawer-panel" role="dialog" aria-modal="true" aria-label="人物与本事">
+    <header class="pg-drawer-head">
+      <h2 id="pg-drawer-title">人物</h2>
+      <button class="pg-drawer-x" data-drawer-close aria-label="关闭">✕</button>
+    </header>
+    <nav class="pg-drawer-tabs" id="pg-drawer-tabs" aria-label="人物分区">
+<button class="pg-dt-tab is-on" data-dt="char" aria-selected="true">人物</button>
+<button class="pg-dt-tab" data-dt="bag" aria-selected="false">行囊</button>
+<button class="pg-dt-tab" data-dt="skills" aria-selected="false">本事</button>
+<button class="pg-dt-tab" data-dt="companion" aria-selected="false">陪读</button>
+</nav>
+    <div class="pg-drawer-body">
+      <div class="pg-dt-pane is-on" data-dt="char">
+<section class="card" id="card-hero">
+  <div class="card-head">
+    <h2>人物</h2>
+    <span class="hint">参数骨架取自 MUD《侠客行》 · 掷骰按 d20</span>
+    <span class="pill" id="char-rank">读取中…</span>
+  </div>
+  <div class="card-body">
+    <div class="pet-preview">
+      <div class="pet-avatar" id="pet-avatar" aria-hidden="true">
+        <span class="pet-face">◕‿◕</span>
+      </div>
+      <div class="pet-meta">
+        <div class="pet-name" id="pet-name">小墨</div>
+        <div class="pet-state-line" id="char-subline">初入江湖 · 无门无派</div>
+        <div class="pet-state-line" id="char-life">12 岁 · 第 1 日 · 第 1 代</div>
+        <div class="pet-state-line" id="char-backstory" hidden></div>
+        <div class="pet-bars">
+          <label class="inline">亲密度
+            <input id="pet-intimacy" type="range" min="0" max="100" value="0" disabled>
+          </label>
+          <label class="inline">心情
+            <input id="pet-mood" type="range" min="0" max="100" value="60" disabled>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="cs-stats" id="char-stats"></div>
+    <div class="cs-meta" id="char-meta"></div>
+
+    <details class="cs-fold" id="fold-card-d20">
+      <summary>交手数据 · d20 <span class="cs-dim" id="char-d20-sum">—</span></summary>
+      <div class="cs-d20" id="char-d20"></div>
+      <div class="cs-meta" id="char-d20-rules"></div>
+    </details>
+
+    <p class="tip" id="char-intro">
+      这是<b>江湖上的本事</b>, 不是读书的比喻: 六项根骨决定它出手多沉、多快、多耐,
+      技能决定它用哪一路打法, 绝招是它在遭遇里真能打出去的那几手。
+      陪读只是它攒修为的来路 —— 长了什么本事, 看它在自己的江湖里吃过什么亏。
+    </p>
+  </div>
+</section>
+      </div>
+      <div class="pg-dt-pane" data-dt="bag">
+<section class="card" id="card-bag">
+  <div class="card-head">
+    <h2>行囊与银钱</h2>
+    <span class="hint">药与吃食是救急的, 兵器护具佩物是真进交手的</span>
+    <span class="pill" id="bag-money">—</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-meta" id="bag-mods"></div>
+    <div class="bag-slots" id="bag-slots"></div>
+
+    <details class="cs-fold" id="fold-card-bag">
+      <summary>行囊 <span class="cs-dim" id="bag-sum">—</span></summary>
+      <div class="bag-list" id="bag-list"></div>
+    </details>
+
+    <details class="cs-fold" id="fold-card-shop">
+      <summary>药铺 · 铁匠铺 <span class="cs-dim" id="shop-sum">—</span></summary>
+      <div class="bag-list" id="shop-list"></div>
+    </details>
+
+    <p class="tip" id="bag-tip">
+      伤不是修一下就好的: 出门前它自己会先上药 (钱不够就打坐), 路上挣的赏钱与脚钱
+      落进钱袋, 回来再敷一次。<b>这一段账由后端结算</b> —— 故事里写出来的药与钱,
+      都真从行囊里扣过。
+    </p>
+  </div>
+</section>
+      </div>
+      <div class="pg-dt-pane" data-dt="skills">
+<section class="card" id="card-attrs">
+  <div class="card-head">
+    <h2>六项根骨</h2>
+    <span class="hint">初始 10 · 每项封顶 30 · 总和 180</span>
+    <span class="pill" id="attr-pot">潜能 0</span>
+  </div>
+  <div class="card-body">
+    <div class="models-wrap">
+    <table class="cats attrs">
+      <thead>
+        <tr><th>属性</th><th>别名</th><th>当前</th><th>基础</th><th>先天</th><th>上限</th><th>说明</th><th></th></tr>
+      </thead>
+      <tbody id="attr-rows"></tbody>
+    </table>
+    </div>
+    <p class="tip">
+      侠客行规矩: 潜能点自由分配, 每项封顶 30, 六项总和封顶 180。
+      悟性直接决定技能等级上限 —— <code>(修为×10)^(1/3)+1</code>, 悟性不足 30 按比例打折。
+      门派加成是<b>额外</b>的, 不占你的潜能额度 —— 叛门即刻收回。
+    </p>
+  </div>
+</section>
+<section class="card" id="card-schools">
+  <div class="card-head">
+    <h2>门派</h2>
+    <span class="hint">入门得内功与绝招 · 叛门清声望与门忠</span>
+  </div>
+  <div class="card-body">
+    <details class="cs-fold" id="fold-card-schools">
+      <summary>门派明细 <span class="cs-dim">点开看本门的内功与绝招 · 入门 / 叛门</span></summary>
+      <div class="cs-schools" id="school-cards"></div>
+    <p class="tip" id="school-tip"></p>
+    </details>
+  </div>
+</section>
+<section class="card" id="card-skills">
+  <div class="card-head">
+    <h2>技能与绝招</h2>
+    <span class="hint">绝招三要素: 成功率 / 定身 / 反噬 · 都会在遭遇里结算</span>
+  </div>
+  <div class="card-body">
+    <details class="cs-fold">
+      <summary>技能明细 <span class="cs-dim">(点开看每一项的等级与绝招参数)</span></summary>
+      <div class="models-wrap">
+    <table class="cats skills">
+      <thead>
+        <tr><th>名称</th><th>类</th><th>属性</th><th>等级</th><th>上限</th><th>熟练</th>
+            <th>成功率</th><th>定身</th><th>反噬</th><th>耗内力</th><th>说明</th></tr>
+      </thead>
+      <tbody id="skill-rows"></tbody>
+    </table>
+    </div>
+    </details>
+    <p class="tip" id="skill-tip"></p>
+  </div>
+</section>
+<section class="card" id="card-traits">
+  <div class="card-head">
+    <h2>性情</h2>
+    <span class="hint">最多 6 条 · 总分 ≤ 100 · 上品 40 / 良品 30 / 常品 20 / 下品 10</span>
+    <span class="pill" id="trait-pill">0 / 6</span>
+  </div>
+  <div class="card-body">
+    <details class="cs-fold" id="fold-card-traits">
+      <summary>性情明细 <span class="cs-dim">点开看已觉醒与可觉醒的 16 条</span></summary>
+      <div class="cs-traits" id="trait-cards"></div>
+    <p class="tip">
+      侠客行叫「个人特征」: 黄色罕见, 红色天生, 蓝色常见, 绿色锦上添花。
+      觉醒点随阅历攒, 每条性情都会进战斗与判定的加值 (「交手数据」里能看到它落在哪)。
+    </p>
+    </details>
+  </div>
+</section>
+<section class="card" id="card-veins">
+  <div class="card-head">
+    <h2>经脉</h2>
+    <span class="hint">十层 · 通脉给五行亲和与属性加成</span>
+    <span class="pill" id="vein-pill">0 / 10</span>
+  </div>
+  <div class="card-body">
+    <details class="cs-fold" id="fold-card-veins">
+      <summary>经脉明细 <span class="cs-dim">点开看十层的效果与进度</span></summary>
+      <div class="cs-veins" id="vein-list"></div>
+    <p class="tip" id="vein-tip"></p>
+    </details>
+  </div>
+</section>
+      </div>
+      <div class="pg-dt-pane" data-dt="companion">
+<section class="card" id="card-growth">
+  <div class="card-head">
+    <h2>陪读</h2>
+    <span class="hint">阅读器时长 → 它的阅历</span>
+    <span class="pill" id="companion-pill">读取中…</span>
+  </div>
+  <div class="card-body">
+    <div class="cs-meta" id="growth-rules"></div>
+    <div class="cs-meta" id="companion-state"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="mini" id="btn-companion-feed">立即折算</button>
+      <span class="status" id="companion-status"></span>
+    </div>
+    <p class="tip">
+      陪读分钟来自<b>阅读器自己的时长记录</b> (人真的在读的那些分钟, 挂着不读不算)。
+      它只累计时长 / 长「基本内功」/ 推经脉 —— <b>修为不在这里给</b>,
+      由「故事」页里那趟出门按这段时间的读书记录判定 (两处都给会双计)。
+    </p>
+  </div>
+</section>
+      </div>
+    </div>
+  </aside>
 </div>
 
 </div>

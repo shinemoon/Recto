@@ -35,6 +35,7 @@
 """
 from __future__ import annotations
 
+import threading
 import json
 import os
 import re
@@ -270,7 +271,7 @@ def save(conf) -> dict:
     new["updated"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     p = conf_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{CONF_NAME}.{os.getpid()}.tmp")
+    tmp = p.with_name(f".{CONF_NAME}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(new, ensure_ascii=False, indent=2), "utf-8")
     os.replace(tmp, p)
     try:  # 服务可能以 root 跑, 交回目录属主

@@ -23,7 +23,8 @@ try {
     await p.goto(BASE + '/pet/', { waitUntil: 'domcontentloaded' });
     await p.waitForSelector('#card-bag', { state: 'attached' });
     // 人物面板是第二个分区, 先切过去
-    await p.click('.pg-tab[data-pg="hero"]');
+    await p.click('.pg-ico-btn[data-drawer="bag"]');
+    await p.waitForSelector('#pg-drawer:not([hidden])', { timeout: 15000 });
     await p.waitForTimeout(700);
 
     const info = await p.evaluate(() => {

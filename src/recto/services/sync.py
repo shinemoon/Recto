@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import threading
 import time
@@ -162,6 +163,42 @@ def file_md5(path: str | Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest().upper()
+
+
+_MD5_CACHE: dict[tuple[str, float, int], str] = {}
+
+
+def _file_md5_cached(path: str | Path) -> str:
+    """按 (路径, mtime, size) 缓存的书文件 md5 —— 40MB 的书不该每次推送都重算。"""
+    try:
+        st = os.stat(str(path))
+    except OSError:
+        return ""
+    ck = (str(path), round(st.st_mtime, 3), int(st.st_size))
+    got = _MD5_CACHE.get(ck)
+    if got:
+        return got
+    try:
+        got = file_md5(path)
+    except OSError:
+        return ""
+    _MD5_CACHE[ck] = got
+    return got
+
+
+def _is_cloud_copy(path: str | Path, row: dict) -> bool:
+    """本地这份文件是不是就是云端那一份 (md5 逐位相同)。
+
+    是的话, epub 目录章数就是**确定值** —— 云端 totalCount 若与它不一致, 说明那是
+    另一个版本留下的旧数 (重新下载覆盖后就会这样), 该按目录章数改写。
+    """
+    got = _file_md5_cached(path)
+    if not got:
+        return False
+    cid = str(row.get("id64") or row.get("id32") or "").strip().upper()
+    if not cid:
+        return False
+    return cid[:32] == got[:32]
 
 
 def _catalog_chapter(geo: geometry.BookGeometry | None, spine_chapter: int) -> int:
@@ -656,7 +693,8 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
         cur = state.get(r["id64"] or r["id32"]) or {}
         # 闸门看"云端三份记录里最靠前的那一个"：往回拨的代价比多写一次大
         cur_pct = cur.get("max_pct") if cur.get("max_pct") is not None else cur.get("pct")
-        total_count = _total_count_for(geo, cur.get("total_count"), catalog_ch)
+        total_count = _total_count_for(geo, cur.get("total_count"), catalog_ch,
+                                      authoritative=_is_cloud_copy(r["path"], r))
         # 只有 totalCount 明显不对才允许"进度不变也写一次"。
         # chapterId 是 App 自己的目录口径, 跟我们算的差一两个是常态 (前置文档
         # 计数方式不同), 不值得为它去改读者眼前的记录。
@@ -765,8 +803,15 @@ def push_once(auth: dict | None = None, *, keys: Iterable[str] | None = None,
 
 
 def _total_count_for(geo: geometry.BookGeometry | None, cur: int | None,
-                     chapter_id: int) -> int:
-    """云端 totalCount 写什么: 云端自洽值 > epub 目录章数 > 当前章 + 1。"""
+                     chapter_id: int, *, authoritative: bool = False) -> int:
+    """云端 totalCount 写什么: 目录章数 (本地就是云端那份文件时) > 云端自洽值 > 目录章数 > 当前章 + 1。
+
+    `authoritative=True` = 本地文件与云端那份逐位相同 (md5 一致)。这时 epub 的目录章数
+    就是 App 的 `getCatalogCount()`, 云端 cur 若是另一个版本留下的旧数 (重新下载覆盖后
+    常见) 就该被改写 —— 否则 App 会一直显示"共 N 章"的旧数。
+    """
+    if authoritative and geo is not None and geo.total_count > 0:
+        return int(geo.total_count)
     if cur and cur >= 2 and cur >= chapter_id + 1:
         return int(cur)
     if geo is not None and geo.total_count > 0:

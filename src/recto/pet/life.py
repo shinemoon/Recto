@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import threading
 import json
 import math
 import os
@@ -207,7 +208,7 @@ def archive(ch: dict[str, Any]) -> str:
     gen = int(ch.get("generation") or 1)
     name = str(ch.get("name") or "无名")
     p = d / f"gen{gen:02d}-{name}.json"
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     payload = dict(ch)
     payload["_archived_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     payload["_age"] = age_years(ch)

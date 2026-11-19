@@ -62,13 +62,18 @@ page.on('console', (m) => { if (m.type() === 'error') pageErrors.push(m.text());
 
 await page.goto(`${URL}/pet/`, { waitUntil: 'domcontentloaded' });
 // 人物面板在「人物」分区里 (默认落在「故事」); 分区没切时整块 display:none, 等不到可见元素
-await page.waitForSelector('.pg-tab[data-pg="hero"]', { timeout: 15000 });
-await page.click('.pg-tab[data-pg="hero"]');
+// 人物收进抽屉了 (2026-11-19): 点图标唤起
+await page.waitForSelector('.pg-ico-btn[data-drawer="char"]', { timeout: 15000 });
+await page.click('.pg-ico-btn[data-drawer="char"]');
+await page.waitForSelector('#pg-drawer:not([hidden])', { timeout: 15000 });
+// 六项根骨那张表在抽屉的「本事」段 (人物段只有名片) —— 先切过去再等它可见
+await page.click('.pg-dt-tab[data-dt="skills"]');
 await page.waitForSelector('#attr-rows tr', { timeout: 15000 });
 
 // ── 段落都在 ──────────────────────────────────────────
-const cards = await page.$$eval('.rc-pet .card h2', (hs) => hs.map((h) => h.textContent.trim()));
-ok(cards.length >= 9, `有 ${cards.length} 张卡 (${cards.join(' / ')})`);
+// 抽屉里有 8 张卡 (人物1 + 行囊1 + 本事5 + 陪读1)
+const cards = await page.$$eval('#pg-drawer .card h2', (hs) => hs.map((h) => h.textContent.trim()));
+ok(cards.length >= 8, `有 ${cards.length} 张卡 (${cards.join(' / ')})`);
 for (const want of ['六项根骨', '门派', '技能与绝招', '性情', '经脉', '陪读']) {
   ok(cards.some((c) => c.includes(want)), `有「${want}」卡`);
 }
@@ -222,8 +227,10 @@ ok(overflowDesktop <= 0, `桌面无横向溢出 (${overflowDesktop}px)`);
 const mob = await ctx.newPage();
 await mob.setViewportSize({ width: 390, height: 780 });
 await mob.goto(`${URL}/pet/`, { waitUntil: 'domcontentloaded' });
-await mob.waitForSelector('.pg-tab[data-pg="hero"]', { timeout: 15000 });
-await mob.click('.pg-tab[data-pg="hero"]');
+await mob.waitForSelector('.pg-ico-btn[data-drawer="char"]', { timeout: 15000 });
+await mob.click('.pg-ico-btn[data-drawer="char"]');
+await mob.waitForSelector('#pg-drawer:not([hidden])', { timeout: 15000 });
+await mob.click('.pg-dt-tab[data-dt="skills"]');
 await mob.waitForSelector('#attr-rows tr', { timeout: 15000 });
 const overflowMobile = await mob.evaluate(() =>
   document.documentElement.scrollWidth - document.documentElement.clientWidth);

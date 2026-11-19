@@ -25,6 +25,7 @@ from recto.pet import growth as growth_mod
 from recto.pet import life as life_mod
 from recto.pet import lore as lore_mod
 from recto.pet import proper as proper_mod
+from recto.pet import reading as reading_mod
 from recto.pet import reborn as reborn_mod
 from recto.pet import world as world_mod
 
@@ -276,7 +277,29 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
         except ValueError:
             limit = 20
         return 200, {"adventures": chronicle_mod.adventures(limit=limit),
-                     "cycles": chronicle_mod.cycles(limit=8)}
+                     "cycles": chronicle_mod.cycles(limit=8),
+                     "readpos": reading_mod.all_positions()}
+
+    # 故事读到哪了 (一段一段读的那种进度)
+    if path == "/reading":
+        if method == "POST":
+            body = _body(h)
+            try:
+                no = int(body.get("no") or 0)
+            except (TypeError, ValueError):
+                no = 0
+            try:
+                para = int(body.get("para") or 0)
+            except (TypeError, ValueError):
+                para = 0
+            return 200, {"ok": True, "pos": reading_mod.set_pos(no, para)}
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(getattr(h, "path", "")).query)
+        try:
+            no = int((q.get("no") or ["0"])[0])
+        except ValueError:
+            no = 0
+        return 200, {"pos": reading_mod.get(no),
+                     "readpos": reading_mod.all_positions()}
 
     # 补写: 上一回判成长落了地、故事却没写出来的那一趟 (不重判成长)
     if path == "/adventure/backfill":

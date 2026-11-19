@@ -34,6 +34,7 @@ from recto.core import bookfile
 from recto.services import sync as _sync
 from recto.services import reader_state as rs
 from recto.app.ui import shell
+from recto.app.ui import skins as _skins
 
 _log = logging.getLogger("recto.reader")
 
@@ -73,12 +74,27 @@ def _pct_text(p: float) -> str:
     return f"{int(p * 1000) / 10:.1f}%"
 
 
+def _shell_mode() -> str:
+    """当前外壳皮肤是深色还是浅色 ("dark" / "light")。
+
+    阅读器的"auto"主题跟随外壳皮肤, 划线颜色也因此要跟着变 (深蓝 ↔ 浅灰)。
+    CSS 的 prefers-color-scheme **不跟随**页面上的 color-scheme (实测: html 设了
+    color-scheme:dark, media 查询照样走 light), 所以只能由服务端把当前皮肤的
+    模式标到 DOM 上。
+    """
+    try:
+        _sid, tokens, _conf = _skins.resolve()
+        return "dark" if (tokens.get("mode") == "dark") else "light"
+    except Exception:  # noqa: BLE001
+        return "light"
+
+
 # --------------------------------------------------------------------------
 # 页面
 # --------------------------------------------------------------------------
 
 _READER_HTML = """
-<div class="rv" id="rv" data-book="{key}">
+<div class="rv" id="rv" data-book="{key}" data-shell="{shell_mode}">
   <div class="rv-prog" id="rv-prog" aria-hidden="true"></div>
 
   <header class="rv-bar" id="rv-bar">
@@ -301,7 +317,8 @@ def reader_page(user: str | None, key: str) -> str | None:
     if not row:
         return None
     body = _READER_HTML.format(key=_e(key), title=_e(row.get("title")),
-                               author=_e(row.get("author") or ""))
+                               author=_e(row.get("author") or ""),
+                               shell_mode=_e(_shell_mode()))
     return shell.document(
         title=str(row.get("title") or "阅读"), body=body, active="read", user=user,
         head_extra=('<link rel="stylesheet" href="/assets/reader.css">'

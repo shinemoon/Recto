@@ -2198,7 +2198,7 @@
     });
     box.innerHTML = list.map(function (x) {
       return '<div class="rv-note-item" data-jump="' + x.chapter + '" data-off="' + x.start_off + '">' +
-        '<div class="q"><span class="dot" style="background:' + colorHex(x.color) + '"></span> ' +
+        '<div class="q"><span class="dot"></span> ' +
         escapeHtml(x.summary || '') + '</div>' +
         (x.remark ? '<div class="r">' + escapeHtml(x.remark) + '</div>' : '') +
         '<div class="m"><span>' + (x.remark ? '笔记' : '划线') +
@@ -2209,10 +2209,6 @@
   }
 
   function renderLists() { renderMarkList(); renderNoteList(); }
-
-  function colorHex(c) {
-    return { yellow: '#f5c518', green: '#4caf50', blue: '#3d8bd9', pink: '#e0699a', underline: '#c0392b' }[c] || '#f5c518';
-  }
 
   $('#rv-marks').addEventListener('click', function (ev) {
     var t = ev.target;

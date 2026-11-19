@@ -568,7 +568,7 @@ def save_char(ch: dict[str, Any]) -> None:
     ch.setdefault("created_at", ch["updated_at"])
     p = Path(CHAR_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     with _LOCK:
         tmp.write_text(json.dumps(ch, ensure_ascii=False, indent=2), "utf-8")
         try:

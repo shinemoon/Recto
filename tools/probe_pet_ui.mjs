@@ -50,7 +50,7 @@ ok(hud.barH > 60 && hud.barH < 200, `状态栏高度合理 got ${Math.round(hud.
 
 // ── 子页签 ───────────────────────────────────────────
 const tabs = await page.$$eval('.pg-tab', (els) => els.map((e) => e.textContent.trim()));
-ok(tabs.length === 4, `4 个子页签 got ${tabs.join('/')}`);
+ok(tabs.length === 3, `3 个子页签 (人物收进抽屉) got ${tabs.join('/')}`);
 ok(tabs[0] === '故事', '默认第一个是「故事」');
 const firstOn = await page.evaluate(() =>
   document.querySelector('.pg-pane.is-on')?.dataset.pg);
@@ -67,7 +67,7 @@ async function openPane(name) {
   }));
 }
 
-for (const name of ['hero', 'world', 'setup', 'story']) {
+for (const name of ['world', 'setup', 'story']) {
   const st = await openPane(name);
   ok(st.on === name && st.hash === `#${name}`, `切到「${name}」且地址记下 (${st.hash})`);
   ok(st.visible >= 1, `「${name}」有可见内容`);

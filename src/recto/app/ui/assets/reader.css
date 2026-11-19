@@ -49,6 +49,8 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
   --rv-radius: var(--rc-radius, 0px);
   --rv-radius-lg: var(--rc-radius-lg, 0px);
   --rv-radius-pill: var(--rc-radius-pill, 0px);
+  /* 划线波浪线的颜色: 淡色主题深蓝, 深色主题浅灰 (见 .rv[data-theme="dark"]) */
+  --rv-hl: #1d4e89;
   min-height: 100vh;
   background: var(--rv-bg);
   color: var(--rv-fg);
@@ -57,9 +59,15 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
   --rv-bg: var(--rc-bg, #f6f2e8); --rv-fg: var(--rc-fg, #26221d);
   --rv-dim: var(--rc-dim, #7a7266); --rv-line: var(--rc-outline-variant, #ddd3c0);
   --rv-panel: var(--rc-surface, #fffdf7); --rv-accent: var(--rc-primary, #8a5a2b); }
+/* 淡色主题的线色 = 深蓝; 深色主题 = 浅灰 (见 .rv[data-theme="dark"])。
+ * "auto" 跟随外壳皮肤 —— 外壳是不是深色由服务端标记 (data-shell),
+ * 因为 CSS 的 prefers-color-scheme 不跟随页面的 color-scheme (实测)。 */
+.rv[data-theme="auto"][data-shell="dark"] { --rv-hl: #c9ccd4; }
+
 .rv[data-theme="light"] { --rv-bg:#ffffff; --rv-fg:#1d1d1f; --rv-dim:#6e6e73; --rv-line:#e3e3e6; --rv-panel:#ffffff; --rv-accent:#2f6fb3; }
 .rv[data-theme="sepia"] { --rv-bg:#f6f2e8; --rv-fg:#26221d; --rv-dim:#7a7266; --rv-line:#ddd3c0; --rv-panel:#fffdf7; --rv-accent:#8a5a2b; }
-.rv[data-theme="dark"]  { --rv-bg:#14161a; --rv-fg:#d8d4cc; --rv-dim:#8b8880; --rv-line:#2a2e35; --rv-panel:#1b1f25; --rv-accent:#c39b6a; }
+/* 深色主题: 线要更亮才看得清 —— 用浅灰 */
+.rv[data-theme="dark"]  { --rv-bg:#14161a; --rv-fg:#d8d4cc; --rv-dim:#8b8880; --rv-line:#2a2e35; --rv-panel:#1b1f25; --rv-accent:#c39b6a; --rv-hl:#c9ccd4; }
 .rv[data-theme="green"] { --rv-bg:#e9f0e4; --rv-fg:#22301f; --rv-dim:#66735f; --rv-line:#cfdbc7; --rv-panel:#f4f8f0; --rv-accent:#4a6b3a; }
 
 /* ---- 顶栏 ----
@@ -522,45 +530,40 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
  * 为什么不用底色: 底色在深色皮肤下是一块"白斑", 也会盖掉关键词高亮的半透明底。
  * 波浪下划线不挡字, 且 Chromium 的 ::highlight() 支持 text-decoration-style: wavy
  * (实测像素: 波浪每行 26/104/130/131/132/105/26, 实线恒定 288 —— 真的画出了波浪)。
- * 颜色与抽屉里那颗小圆点同源 (reader.js 的 colorHex), 列表与正文一眼对得上。
+ *
+ * 线色 = **一个**主题变量 (--rv-hl): 淡色主题深蓝, 深色主题浅灰。
+ * 五档分类 (yellow/green/blue/pink/underline) 不再各画各的色 —— 它们只用来
+ * 区分"哪条划线"(抽屉里那颗小圆点与列表顺序), 线本身统一, 不然满页五颜六色。
+ * Chromium 的 ::highlight() 支持 var() 从元素继承 (实测), 但**不支持逗号多选择器**,
+ * 所以五档各写一条规则, 值都取同一个变量。
  */
 ::highlight(rv-hl-yellow) {
-  text-decoration: underline wavy #f5c518;
+  text-decoration: underline wavy var(--rv-hl);
   text-decoration-thickness: 1.6px; text-underline-offset: 3px;
 }
 ::highlight(rv-hl-green) {
-  text-decoration: underline wavy #4caf50;
+  text-decoration: underline wavy var(--rv-hl);
   text-decoration-thickness: 1.6px; text-underline-offset: 3px;
 }
 ::highlight(rv-hl-blue) {
-  text-decoration: underline wavy #3d8bd9;
+  text-decoration: underline wavy var(--rv-hl);
   text-decoration-thickness: 1.6px; text-underline-offset: 3px;
 }
 ::highlight(rv-hl-pink) {
-  text-decoration: underline wavy #e0699a;
+  text-decoration: underline wavy var(--rv-hl);
   text-decoration-thickness: 1.6px; text-underline-offset: 3px;
 }
 ::highlight(rv-hl-underline) {
-  text-decoration: underline wavy #c0392b;
+  text-decoration: underline wavy var(--rv-hl);
   text-decoration-thickness: 1.6px; text-underline-offset: 3px;
 }
-/* 深色皮肤: 底色没了, 线要更亮才看得清 */
-.rv[data-theme="dark"] ::highlight(rv-hl-yellow) { text-decoration-color: #ffd23f; }
-.rv[data-theme="dark"] ::highlight(rv-hl-green)  { text-decoration-color: #7fd07f; }
-.rv[data-theme="dark"] ::highlight(rv-hl-blue)   { text-decoration-color: #7fb6ef; }
-.rv[data-theme="dark"] ::highlight(rv-hl-pink)   { text-decoration-color: #ef8bb4; }
-.rv[data-theme="dark"] ::highlight(rv-hl-underline) { text-decoration-color: #e0705c; }
 
 /* 我们的 DOM 兜底高亮（浏览器不支持 Highlight API 时用） */
 .rv mark.rv-mark {
   background: transparent; color: inherit; padding: 0; border-radius: 0;
-  text-decoration: underline wavy #f5c518;
+  text-decoration: underline wavy var(--rv-hl);
   text-decoration-thickness: 1.6px; text-underline-offset: 3px;
 }
-.rv mark.rv-mark[data-color="green"] { text-decoration-color: #4caf50; }
-.rv mark.rv-mark[data-color="blue"] { text-decoration-color: #3d8bd9; }
-.rv mark.rv-mark[data-color="pink"] { text-decoration-color: #e0699a; }
-.rv mark.rv-mark[data-color="underline"] { text-decoration-color: #c0392b; }
 
 /* ---- 抽屉 ---- */
 .rv-drawer {
@@ -631,7 +634,12 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
 .rv-note-item .m button { margin-left: auto; background: none; border: 0; color: var(--rv-dim); cursor: pointer; font-size: .78rem; }
 /* 抽屉里的删除 = 破坏性动作, 给红字 (编辑仍走中性色) */
 .rv-note-item .m button[data-delnote], .rv-note-item .m button[data-delmark] { color: var(--rc-err, #b3261e); }
-.rv-note-item .dot { width: .6rem; height: .6rem; border-radius: 0; display: inline-block; }
+/* 抽屉里那颗小圆点 = 正文里那条波浪线的颜色 (跟正文用同一个变量,
+   淡色主题深蓝 / 深色主题浅灰)。划线的**分类**只体现在列表顺序与"笔记/划线"字样上。 */
+.rv-note-item .dot {
+  width: .6rem; height: .6rem; border-radius: 0; display: inline-block;
+  background: var(--rv-hl);
+}
 .rv-empty { padding: 1.4rem 1rem; color: var(--rv-dim); font-size: .84rem; text-align: center; }
 
 /* ---- 选区工具条 ---- */

@@ -68,7 +68,7 @@ def save(d: dict) -> bool:
     """原子写。返回是否真的落盘。"""
     p = _path()
     keep = {k: v for k, v in (d or {}).items() if k in KEYS and v not in (None, "")}
-    tmp = p.with_name(f".{NAME}.{os.getpid()}.tmp")
+    tmp = p.with_name(f".{NAME}.{os.getpid()}.{threading.get_ident()}.tmp")
     with _LOCK:
         try:
             p.parent.mkdir(parents=True, exist_ok=True)

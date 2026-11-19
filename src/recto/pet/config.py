@@ -414,7 +414,7 @@ def write_state(state: dict[str, Any]) -> None:
     """存书宠的运行时状态 (以后放心情 / 记忆 / 亲密度)。现在只是占位。"""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     path = DATA_DIR / "state.json"
-    tmp = path.with_name(f".state.json.{os.getpid()}.tmp")
+    tmp = path.with_name(f".state.json.{os.getpid()}.{threading.get_ident()}.tmp")
     with _LOCK:
         tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), "utf-8")
         try:

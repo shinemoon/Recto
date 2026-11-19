@@ -13,6 +13,7 @@ LLM 端点"这件事完全一样: 协议 / base_url / 模型 / key / 超时 / �
 """
 from __future__ import annotations
 
+import threading
 import json
 import os
 import re
@@ -196,7 +197,7 @@ def save_config(path: Path, cfg: dict[str, Any]) -> None:
     """原子写配置。文件含 api key → 权限 600。"""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     with tmp.open("w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
     try:

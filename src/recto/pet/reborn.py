@@ -153,6 +153,13 @@ def _clear_story() -> dict[str, Any]:
         out["state"] = True
     except Exception as e:  # noqa: BLE001
         log.warning("复位 · 清推演状态失败: %s", e)
+    # 阅读位置在另一个文件里 (readpos.json) —— 故事清了, 位置也就没有意义
+    try:
+        from recto.pet import reading
+
+        reading.clear()
+    except Exception as e:  # noqa: BLE001
+        log.warning("复位 · 清阅读位置失败: %s", e)
     return out
 
 

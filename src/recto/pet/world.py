@@ -148,7 +148,7 @@ def save(w: dict[str, Any]) -> None:
         w["created_at"] = w["updated_at"]
     p = path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     with _LOCK:
         tmp.write_text(json.dumps(w, ensure_ascii=False, indent=2), "utf-8")
         try:

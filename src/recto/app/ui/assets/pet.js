@@ -1082,6 +1082,23 @@ function echoBlock(e) {
     '</div>';
 }
 
+/** 「读这一回」的入口 (带读到哪了)。 */
+function readEntry(a) {
+  if (!a) return '';
+  const paras = splitParas(a.body);
+  if (!paras.length) return '';
+  const done = readPos(a.no);
+  const finished = done >= paras.length;
+  const label = finished ? '再读一遍' : (done > 0 ? '接着读' : '读这一回');
+  const sub = finished
+    ? ('已读完 · 共 ' + paras.length + ' 段')
+    : (done > 0 ? ('读到第 ' + done + ' / ' + paras.length + ' 段') : ('共 ' + paras.length + ' 段'));
+  return '<div class="adv-read-entry">' +
+    '<button class="primary" data-adv-read="' + esc(a.no) + '">' + esc(label) + '</button>' +
+    '<span class="cs-dim">' + esc(sub) + '</span>' +
+    '</div>';
+}
+
 function kindBadge(g) {
   if (!g || !g.kind) return '';
   return '<span class="adv-kind" title="' + esc(g.kind_why || '') + '">' +
@@ -1145,6 +1162,200 @@ function checksBlock(list) {
         rollRow(c) + '</li>';
     }).join('') + '</ol></div>';
 }
+
+
+/* ══════════════ 读故事 (逐段推进) ══════════════
+ *
+ * 故事是一段正文, 不是一张卡。读者从**没读过的那段**开始, 按空格往下推进,
+ * 读完自动收起 —— 收起后卡片回到"摘要"状态 (标题 / 本回所显 / 来处)。
+ *
+ * 位置记在后端 (`/pet/api/reading`) 而不是 localStorage: "它走过的路"不该
+ * 跟着换设备消失, 也不该被清缓存抹掉。
+ */
+
+const READER = {
+  no: 0,          // 第几回
+  paras: [],      // 段落数组
+  para: 0,        // 已读到第几段 (0 = 一段都还没读)
+  done: false,    // 这一回读完了
+  open: false,    // 读本是不是展开着
+};
+
+function readPos(no) {
+  const rp = (state.chronicle && state.chronicle.readpos) || {};
+  const v = rp[String(no)];
+  return Number(v) || 0;
+}
+
+function splitParas(body) {
+  return String(body || '')
+    .split(/\n{2,}/)
+    .map(function (p) { return p.trim(); })
+    .filter(function (p) { return p.length > 0; });
+}
+
+/** 把读本铺出来 (位置 = 没读过的那段)。 */
+function readOpen(no, paras) {
+  const box = $('#adv-read');
+  const body = $('#adv-read-body');
+  if (!box || !body) return;
+  READER.no = Number(no) || 0;
+  READER.paras = paras || [];
+  // 从**没读过的那段**开始: 上次读完 k 段 → 这次先看见第 k+1 段。
+  // (所以屏幕上一开始就有一段字, 不是空白)
+  const total = READER.paras.length;
+  const read = readPos(READER.no);
+  // 已经读完 → 当作"再读一遍" (从头开始), 否则从**没读过的那段**接上
+  READER.para = total ? (read >= total ? 1 : Math.min(read + 1, total)) : 0;
+  READER.done = total > 0 && READER.para >= total;
+  READER.open = true;
+  box.hidden = false;
+  readRender();
+}
+
+function readRender() {
+  const body = $('#adv-read-body');
+  const foot = $('#adv-read-foot');
+  const doneBox = $('#adv-read-done');
+  const prog = $('#adv-read-prog');
+  const title = $('#adv-read-title');
+  if (!body) return;
+  const total = READER.paras.length;
+  const adv = ((state.chronicle && state.chronicle.adventures) || [])
+    .find(function (a) { return Number(a.no) === Number(READER.no); });
+  if (title) title.textContent = adv ? ('第 ' + adv.no + ' 回 · ' + (adv.title || '')) : '故事';
+  // 只铺到当前段 —— 后面还没读的段不占屏幕 (读者自己一段一段解锁)
+  body.innerHTML = READER.paras.slice(0, READER.para).map(function (p) {
+    return '<p>' + esc(p) + '</p>';
+  }).join('');
+  if (prog) {
+    prog.textContent = total ? (READER.para + ' / ' + total + ' 段') : '—';
+  }
+  const finished = total > 0 && READER.para >= total;
+  if (foot) foot.hidden = finished;
+  if (doneBox) doneBox.hidden = !finished;
+  // 滚到刚解锁的那段
+  const last = body.lastElementChild;
+  if (last && READER.para > 0) {
+    try { last.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (e) { /* 老浏览器 */ }
+  }
+}
+
+/** 推进一段 (空格 / 点按钮)。读完 → 记位置 + 收起。 */
+function readNext() {
+  if (!READER.open) return;
+  if (READER.para >= READER.paras.length) { readFinish(); return; }
+  READER.para += 1;
+  readRender();
+  readSave();
+  if (READER.para >= READER.paras.length) readFinish();
+}
+
+/** 回退一段 (往回看, 不改位置)。 */
+function readPrev() {
+  if (!READER.open || READER.para <= 1) return;
+  READER.para -= 1;
+  readRender();
+  // 往回看**不**改位置 (读到哪里只前进) —— 否则回头看一眼就把进度抹了
+}
+
+/** 读完了: 记位置 + 收起读本 (故事回到摘要状态)。 */
+function readFinish() {
+  READER.done = true;
+  readSave();
+  readFold();
+}
+
+function readSave() {
+  const no = READER.no;
+  if (!no) return;
+  // 存的是"**读完**了几段" —— 屏幕上最后那段正在读, 还没算读完
+  const total = READER.paras.length;
+  const finished = READER.para >= total && total > 0;
+  const para = finished ? total : Math.max(0, READER.para - 1);
+  api('/api/reading', {
+    method: 'POST',
+    body: JSON.stringify({ no: no, para: para }),
+  }).then(function (r) {
+    const p = (r || {}).pos || {};
+    if (state.chronicle) {
+      state.chronicle.readpos = state.chronicle.readpos || {};
+      state.chronicle.readpos[String(no)] = Number(p.para) || para;
+    }
+  }).catch(function () { /* 位置记不上不影响读 */ });
+}
+
+/** 收起读本 (回到摘要)。 */
+function readFold() {
+  const box = $('#adv-read');
+  if (box) box.hidden = true;
+  READER.open = false;
+}
+
+/** 展开读本 (从没读过的那段开始)。 */
+function readExpand() {
+  const adv = ((state.chronicle && state.chronicle.adventures) || [])[0];
+  if (!adv) return;
+  readOpen(adv.no, splitParas(adv.body));
+}
+
+/** 打开页面时: 自动把读本摊开在**没读过的那段**上。 */
+function readAutoOpen() {
+  const advs = (state.chronicle && state.chronicle.adventures) || [];
+  if (!advs.length) return;
+  const adv = advs[0];
+  const paras = splitParas(adv.body);
+  if (!paras.length) return;
+  // 已经读完了 → 不自动摊开 (读完了就让它收着, 别每次进来都顶一脸字)
+  if (readPos(adv.no) >= paras.length) return;
+  readOpen(adv.no, paras);
+}
+
+function readRestart() {
+  READER.para = READER.paras.length ? 1 : 0;
+  READER.done = false;
+  readRender();
+  readSave();
+}
+
+/* 键盘: 空格推进 (不在输入框里时) */
+document.addEventListener('keydown', function (e) {
+  if (!READER.open) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+    || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (e.code === 'Space' || e.key === ' ') {
+    e.preventDefault();
+    readNext();
+  } else if (e.key === 'ArrowLeft' && e.altKey) {
+    e.preventDefault();
+    readPrev();
+  }
+});
+
+document.addEventListener('click', function (e) {
+  const rd = e.target.closest('[data-adv-read]');
+  if (rd) {
+    const no = Number(rd.dataset.advRead);
+    const adv = ((state.chronicle && state.chronicle.adventures) || [])
+      .find(function (x) { return Number(x.no) === no; });
+    if (adv) {
+      readOpen(no, splitParas(adv.body));
+      const box = $('#adv-read');
+      if (box) box.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+    return;
+  }
+  if (e.target.closest('#btn-adv-next')) { readNext(); return; }
+  if (e.target.closest('#btn-adv-restart')) { readRestart(); return; }
+  if (e.target.closest('#btn-adv-again')) { readRestart(); return; }
+  if (e.target.closest('#btn-adv-fold')) { readFold(); return; }
+  // 读本正文区点一下也算推进 (但别把点按钮算进去)
+  const body = $('#adv-read-body');
+  if (body && body.contains(e.target) && !e.target.closest('button')) {
+    readNext();
+  }
+});
 
 function renderChronicle(v) {
   const pill = $('#chronicle-pill');
@@ -1289,7 +1500,7 @@ function renderChronicle(v) {
           : '') +
         echoBlock(g.echo) +
         duelBlock(g.duel) +
-        '<div class="adv-body">' + advParagraphs(latest.body) + '</div>' +
+        readEntry(latest) +
         checksBlock(g.checks) +
         (latest.terms && latest.terms.length
           ? '<div class="adv-chips">' + latest.terms.map(function (t) {
@@ -1312,7 +1523,7 @@ function renderChronicle(v) {
             esc(a.title) + '<span class="adv-at">' +
             esc(String(a.at || '').replace('T', ' ').slice(0, 16)) + '</span></summary>' +
             echoBlock(gg.echo) +
-            '<div class="adv-body">' + advParagraphs(a.body) + '</div>' +
+            readEntry(a) +
             checksBlock(gg.checks) + '</details>';
         }).join('')
       : '<p class="tip">还没有更早的游历。</p>';
@@ -1329,6 +1540,7 @@ async function loadChronicle() {
     if ($('#ch-interval')) $('#ch-interval').value = c.interval_min || 120;
     if ($('#ch-minmin')) $('#ch-minmin').value = c.min_minutes || 0;
     if ($('#ch-search')) $('#ch-search').checked = c.search !== false;
+    readAutoOpen();
   } catch (e) {
     setStatus($('#chronicle-status'), e.message, 'err');
   }
@@ -1677,8 +1889,86 @@ function renderBar(ch) {
   pgRebornHint();
 }
 
+
+/* ══════════════ 人物抽屉 (图标唤起) ══════════════
+ *
+ * 原来「人物」是一个独立子页签, 占了整页。现在它收成右侧抽屉:
+ * 顶部一排图标 (人物 / 行囊 / 本事 / 陪读), 点一下浮出来, 里面再分小段。
+ *
+ * 页面顶签从 4 个变 3 个 (故事 / 世界 / 设置) —— 故事是主角, 不该被别的事挤掉。
+ */
+
+const DRAWER_TABS = {
+  char: { label: '人物' },
+  bag: { label: '行囊' },
+  skills: { label: '本事' },
+  companion: { label: '陪读' },
+};
+
+let drawerLast = 'char';
+
+function drawerShow(key) {
+  const dr = $('#pg-drawer');
+  if (!dr) return;
+  const k = DRAWER_TABS[key] ? key : 'char';
+  drawerLast = k;
+  dr.hidden = false;
+  // 抽屉里的小段
+  document.querySelectorAll('.pg-dt-pane').forEach(function (el) {
+    el.classList.toggle('is-on', el.dataset.dt === k);
+  });
+  document.querySelectorAll('.pg-dt-tab').forEach(function (el) {
+    const on = el.dataset.dt === k;
+    el.classList.toggle('is-on', on);
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  const title = $('#pg-drawer-title');
+  if (title) title.textContent = (DRAWER_TABS[k] || {}).label || '人物';
+  // 图标的选中态
+  document.querySelectorAll('.pg-ico-btn').forEach(function (el) {
+    el.classList.toggle('is-on', el.dataset.drawer === k);
+  });
+  document.body.classList.add('pg-drawer-open');
+  const closeBtn = $('.pg-drawer-x');
+  if (closeBtn) closeBtn.focus();
+}
+
+function drawerHide() {
+  const dr = $('#pg-drawer');
+  if (!dr) return;
+  dr.hidden = true;
+  document.body.classList.remove('pg-drawer-open');
+  const btn = document.querySelector('.pg-ico-btn[data-drawer="' + drawerLast + '"]');
+  if (btn) btn.focus();
+}
+
+document.addEventListener('click', function (e) {
+  const ico = e.target.closest('.pg-ico-btn');
+  if (ico) {
+    drawerShow(ico.dataset.drawer);
+    return;
+  }
+  const dt = e.target.closest('.pg-dt-tab');
+  if (dt) {
+    drawerShow(dt.dataset.dt);
+    return;
+  }
+  if (e.target.closest('[data-drawer-close]')) {
+    drawerHide();
+  }
+});
+
+document.addEventListener('keydown', function (e) {
+  const dr = $('#pg-drawer');
+  if (!dr || dr.hidden) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    drawerHide();
+  }
+});
+
 /* ── 页签 ─────────────────────────────────────────────────────── */
-const PG_PANES = ['story', 'hero', 'world', 'setup'];
+const PG_PANES = ['story', 'world', 'setup'];
 
 function pgShow(name) {
   if (PG_PANES.indexOf(name) < 0) name = 'story';
@@ -1695,7 +1985,14 @@ function pgShow(name) {
 
 function pgInit() {
   const want = (location.hash || '').replace('#', '');
-  pgShow(PG_PANES.indexOf(want) >= 0 ? want : 'story');
+  // 老书签 (#hero) → 打开人物抽屉 (那个页签已经收进抽屉了)
+  if (want === 'hero') {
+    pgShow('story');
+    drawerShow('char');
+    try { history.replaceState(null, '', '#story'); } catch (e) { /* file:// 之类 */ }
+  } else {
+    pgShow(PG_PANES.indexOf(want) >= 0 ? want : 'story');
+  }
   // 委托: 页签是页内切换, 不许触发导航 (老坑: 拦了却没换页 → 哑链接)
   document.addEventListener('click', function (e) {
     const tab = e.target.closest('.pg-tab');
