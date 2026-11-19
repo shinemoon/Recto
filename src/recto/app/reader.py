@@ -383,6 +383,7 @@ def _chapter_payload(doc: bookfile.BookDoc, idx: int) -> dict:
             "notes": doc.notes(idx)}
 
 
+
 def _track_chapter(key: str, idx: int, payload: dict) -> None:
     """记"人打开了这一章" —— 章节足迹 + 语料遭遇 (后台线程, 不挡翻页)。
 
