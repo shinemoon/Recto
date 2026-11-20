@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 import threading
 import time
 import traceback
@@ -370,6 +372,75 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return body if isinstance(body, dict) else {}
 
+    def _handle_shelf_upload(self) -> bool:
+        """`POST /api/shelf/upload` —— multipart 上传, 书进书库。
+
+        **流式**: 请求体先 spool 到临时文件, 再按 boundary 切, 文件部分
+        边读边写进书库 —— 一本 69MB 的 epub 不会把服务端内存吃掉一半。
+
+        返回 True = 已处理 (不管成功失败都回过响应了)。
+        """
+        from recto.core import multipart
+        from recto.services import library_upload
+
+        ctype = self.headers.get("Content-Type") or ""
+        length = int(self.headers.get("Content-Length") or 0)
+        if "multipart/form-data" not in ctype.lower():
+            self._json(400, {"ok": False, "error": "要用 multipart/form-data 上传"})
+            return True
+        # 上限 = 单文件上限 + 一点 multipart 开销 (边界/头/字段)
+        limit = library_upload.max_bytes()
+        cap = (limit + 1024 * 1024) if limit else 0
+        spool = Path(tempfile.gettempdir()) / f".recto-upload-{os.getpid()}-{id(self)}.tmp"
+        try:
+            try:
+                boundary = multipart.boundary_of(ctype)
+                multipart.spool(self.rfile, length, spool, max_bytes=cap)
+            except multipart.MultipartError as e:
+                self._json(400, {"ok": False, "error": str(e)})
+                return True
+            try:
+                spans = multipart.part_spans(spool, boundary)
+            except Exception as e:  # noqa: BLE001
+                self._json(400, {"ok": False, "error": f"解析上传内容失败: {e}"})
+                return True
+            file_part = None
+            for sp in spans:
+                if sp["filename"]:
+                    file_part = sp
+                    break
+            if file_part is None:
+                self._json(400, {"ok": False, "error": "没有收到文件 (form 里要有 file 字段)"})
+                return True
+            fields = {}
+            for sp in spans:
+                if sp["filename"]:
+                    continue
+                with spool.open("rb") as fh:
+                    fh.seek(int(sp["start"]))
+                    fields[sp["name"]] = fh.read(
+                        int(sp["end"]) - int(sp["start"])).decode("utf-8", "replace")
+            fname = file_part["filename"] or "book"
+            try:
+                out = library_upload.save_stream(
+                    fname, multipart.read_span(spool, file_part),
+                    subdir=fields.get("subdir") or "")
+            except library_upload.UploadError as e:
+                self._json(400, {"ok": False, "error": str(e)})
+                return True
+            try:
+                extra = library_upload.ingest_uploaded(out["path"])
+            except Exception as e:  # noqa: BLE001
+                extra = {"error": str(e)}
+            out.update(extra)
+            self._json(200, out)
+        finally:
+            try:
+                spool.unlink()
+            except OSError:
+                pass
+        return True
+
     # --- 路由 ---
     def do_GET(self):  # noqa: N802
         u = urllib.parse.urlparse(self.path)
@@ -503,6 +574,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self._gate():
             return
+        # 上传走 multipart —— 必须在 _read_json() **之前**分流,
+        # 否则请求体会被当成 JSON 读掉, 文件内容就没了。
+        if path == "/api/shelf/upload":
+            if self._handle_shelf_upload():
+                return
         body = self._read_json()
         if path == "/api/sync/run":
             self._json(200, _run_sync(str(body.get("action") or "pull")))
@@ -1412,6 +1488,70 @@ document.addEventListener("click", async (e) => {
 });
 setShelfSort(SORT, false);
 document.addEventListener("DOMContentLoaded", () => setShelfSort(SORT, false));
+
+/* 上传书籍: 选文件 → multipart 传到书库 → 立刻出现在书架上。
+ *
+ * 用 XMLHttpRequest 而不是 fetch: 要拿到**上传进度** (fetch 没有)。
+ * 一本几十 MB 的 epub 在慢速链路上要等很久, 没进度条像卡死了。 */
+async function uploadBooks(files) {
+  const btn = $("shelf-upload");
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  const label = btn ? btn.textContent : "";
+  let okCount = 0, failCount = 0, lastErr = "";
+  for (const f of list) {
+    if (btn) { btn.disabled = true; btn.textContent = `上传中 0%`; }
+    const fd = new FormData();
+    fd.append("file", f, f.name);
+    try {
+      const r = await uploadOne(fd, f, (pctv) => {
+        if (btn) btn.textContent = `上传中 ${pctv}%`;
+      });
+      if (r && r.ok) okCount++; else { failCount++; lastErr = (r && r.error) || "未知错误"; }
+    } catch (e) {
+      failCount++; lastErr = String(e && e.message || e);
+    }
+  }
+  if (btn) { btn.disabled = false; btn.textContent = label; }
+  await loadState();
+  const bits = [];
+  if (okCount) bits.push(`已上传 ${okCount} 本`);
+  if (failCount) bits.push(`失败 ${failCount} 本${lastErr ? " · " + lastErr : ""}`);
+  toast(bits.join(" · ") || "没有文件可传", failCount > 0 && !okCount);
+}
+
+function uploadOne(fd, file, onProgress) {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/shelf/upload");
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round(e.loaded * 100 / e.total));
+      }
+    };
+    xhr.onload = () => {
+      try { resolve(JSON.parse(xhr.responseText || "{}")); }
+      catch (e) { resolve({ ok: false, error: "HTTP " + xhr.status }); }
+    };
+    xhr.onerror = () => resolve({ ok: false, error: "网络中断" });
+    xhr.ontimeout = () => resolve({ ok: false, error: "上传超时" });
+    xhr.send(fd);
+  });
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest("#shelf-upload") : null;
+  if (!btn) return;
+  const input = $("shelf-upload-file");
+  if (input) input.click();
+});
+document.addEventListener("change", (e) => {
+  const input = e.target && e.target.id === "shelf-upload-file" ? e.target : null;
+  if (!input) return;
+  uploadBooks(input.files);
+  input.value = "";   // 允许连续传同一本
+});
 loadState(); loadCloud(); loadIdent(); loadAuth(); loadLog();
 """
 
@@ -1463,6 +1603,8 @@ def _page_html(user: str | None) -> str:
       <button class="chip" data-sort="recent" aria-pressed="true">最近阅读</button>
       <button class="chip" data-sort="title" aria-pressed="false">书名</button>
     </div>
+    <button id="shelf-upload" class="primary">上传书籍</button>
+    <input id="shelf-upload-file" type="file" accept=".epub,.txt" multiple hidden>
     <div class="shelf-stat" id="shelf-stat">
       <div class="s"><b>…</b><span>本</span></div>
     </div>

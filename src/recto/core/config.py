@@ -31,6 +31,7 @@ DEFAULTS: dict[str, Any] = {
         "dirs": [],                       # 可选: 多个根目录 (dir 仍作主目录)
         "download_subdir": "",            # 相对 library.dir 的子目录; 空 = 根
         "scan_exts": [".epub", ".txt"],
+        "upload_max_mb": 200,             # 单次上传上限 (MB); 0 = 不限
     },
     "cloud": {
         "auth_file": "",                  # 空 = <config_dir>/secrets/cloud.json
@@ -175,6 +176,7 @@ class Config:
             "RECTO_DATA_DIR": ("recto", "data_dir"),
             "RECTO_LIBRARY_DIR": ("library", "dir"),
             "RECTO_LIBRARY_DOWNLOAD_SUBDIR": ("library", "download_subdir"),
+            "RECTO_LIBRARY_UPLOAD_MAX_MB": ("library", "upload_max_mb"),
             "RECTO_CLOUD_AUTH_FILE": ("cloud", "auth_file"),
             "RECTO_CORPUS_DIR": ("corpus", "dir"),
             "RECTO_PET_DIR": ("pet", "dir"),

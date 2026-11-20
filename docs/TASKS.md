@@ -158,24 +158,56 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 
 ---
 
-## T5 · 书架支持上传书籍 `todo`
+## T5 · 书架支持上传书籍 `done` (2026-11-20)
 
 **目标**：书架页提供一个「上传书籍」按钮，用户可从本机选文件（epub / txt 优先）
 直接传进书库，落盘后立刻出现在书架，可读、可同步。
 
 **要点**
-- 上传走 `POST /api/shelf/upload`（multipart 或流式），落 `[library] dir`（或其 `download_subdir`）
+- 上传走 `POST /api/shelf/upload`（multipart），落 `[library] dir`（或其 `download_subdir`）
 - 文件名清洗：去路径、去非法字符、重名自动加序号；**绝不覆盖已有书**
-- 类型白名单按扩展名（epub / txt / pdf …）+ 内容嗅探双确认（防改后缀）
+- 类型白名单按扩展名（epub / txt …）+ 内容嗅探双确认（防改后缀）
 - 上限可配（默认按单文件大小），超限/类型不符返回人话原因
 - 落盘后自动补边车（`.recto.json`）与云端身份（可选「上传完顺手传到掌阅」）
 - 上传进度与结果复用现有任务槽（`job_begin` / `job_update`），书架即时追加卡片
 
+**落点**
+
+| 位置 | 内容 |
+|---|---|
+| `services/library_upload.py`（新） | `clean_name` / `unique_path` / `sniff_file` / `save_stream` / `ingest_uploaded` / `copy_in` |
+| `core/multipart.py`（新） | **流式** multipart 解析（滑窗找 boundary + 按偏移读 part）；`spool` / `part_spans` / `read_span` / `text_fields` |
+| `app/console.py` | `POST /api/shelf/upload`（`_handle_shelf_upload`）；书架页「上传书籍」按钮 + 隐藏 file input；XHR 传（要上传进度） |
+| `services/reader_state.py` | **内容去重改成只在不同书库根之间**（见下） |
+| `tests/test_library_upload.py`（新） | 33 项：文件名清洗 / 类型双确认 / 不覆盖 / 只落书库 / 大小上限 / multipart 切分 / 流式落盘 |
+| `tools/probe_shelf_upload.mjs`（新） | 11 项真浏览器：按钮 / accept / 传完上架 / 重名不覆盖 / 非白名单被拒 / 手机不溢出 / 收尾清理 |
+
 **验收**
-- 手机上也能选文件（`accept=".epub,.txt"` 生效）
-- 上传一本 epub → 书架出现、可打开、进度从 0 开始
-- 重名上传不覆盖原书
-- 非白名单文件被拒且提示得是人话
+
+* 手机上也能选文件（`accept=".epub,.txt"` 生效）
+* 上传一本 epub → 书架出现、可打开、进度从 0 开始
+* 重名上传不覆盖原书
+* 非白名单文件被拒且提示得是人话
+
+**三个踩出来的真问题**
+
+1. **内容去重把「同一本书的两份副本」合并了** —— `reader_state.scan()` 原来按
+   内容指纹全局去重（本是给「同一本书经多个挂载点出现」用的），结果**同一书库
+   目录里**内容相同的两份文件也被合并: 上传同一本书两次，第二份成了「文件在
+   磁盘上、书架上却看不见」的幽灵文件。改成**只在不同书库根之间去重** ——
+   跨根才是"同一个文件的两条路径"。
+2. **multipart 滑窗的 `skip` 在裁剪后没重算** —— 窗口裁掉前缀后相对起点跟着
+   挪，否则 `skip` 指着裁掉的地方，越界后 part 结束位置被算到文件尾之后
+   （实测内容多出 21 字节）。
+3. **滑窗与 part 头读取共用一个句柄** —— 读 part 头时 `seek` 走了，窗口的读
+   位置就跟不上。滑窗自己开句柄。
+
+**已知边界**
+
+* 传输层受限于 `Content-Length`（浏览器 `fetch`/XHR 都带），没做 chunked 编码
+* 大文件上传期间**占着连接**（没有分片断点续传）
+* 上传**不自动传掌阅云** —— 两件事分开，免得"传一本书"悄悄变成"把整个书库推上公网"
+* 单文件上限默认 200MB（`[library] upload_max_mb`，0 = 不限）
 
 ---
 

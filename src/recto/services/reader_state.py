@@ -247,9 +247,17 @@ def scan(force: bool = False, max_files: int = 4000) -> list[dict]:
     """扫描书库目录 → 落 rbook 表。返回全部书（含进度）。"""
     c = conn()
     seen: list[str] = []
-    seen_sig: set[tuple] = set()
+    # 同一份文件可能通过多个挂载点出现：inode 不同时按内容指纹去重。
+    #
+    # **只在不同书库根之间去重** —— 同一目录里内容相同的两个文件是
+    # 两本书 (比如用户把同一本书传了两次, 或者自己放了两份),
+    # 合并掉就等于"文件在磁盘上、书架上却看不见" (真踩过: 上传同一本
+    # 两次, 第二份成了幽灵文件)。跨根去重才是"同一个文件的两条路径"。
+    seen_sig: dict[tuple, int] = {}      # 内容指纹 → 首次出现的根序号
+    root_index: dict[str, int] = {}
     counts = 0
-    for root in book_roots():
+    for ri, root in enumerate(book_roots()):
+        root_index[str(root)] = ri
         for p in sorted(root.rglob("*")):
             if counts >= max_files:
                 break
@@ -265,9 +273,10 @@ def scan(force: bool = False, max_files: int = 4000) -> list[dict]:
                 continue
             # 同一份文件可能通过多个挂载点出现：inode 不同时按内容指纹去重
             sig = _content_sig(p, st.st_size)
-            if sig in seen_sig:
-                continue
-            seen_sig.add(sig)
+            prev_root = seen_sig.get(sig)
+            if prev_root is not None and prev_root != ri:
+                continue          # 另一个书库根里的同一份文件 (换条路径看到而已)
+            seen_sig[sig] = ri
             key = bookfile.book_key(p)
             row = c.execute(
                 "SELECT key, size, mtime, title, author, cover FROM rbook WHERE key=?",

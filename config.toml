@@ -21,6 +21,7 @@ data_dir = ""                     # 空 = <项目根>/data
 # 选项: [library] 也可以写 dirs = [ ... ] 配多个根目录
 [library]
 dir = ""                          # 空 = <项目根>/library
+upload_max_mb = 200               # 单次上传上限 (MB); 0 = 不限
 
 # --- 云端阅读服务 (掌阅) ---
 [cloud]
