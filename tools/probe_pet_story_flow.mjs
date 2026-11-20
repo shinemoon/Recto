@@ -91,36 +91,50 @@ ok(body.paras >= 1, `读本里有正文 (${body.paras} 段)`);
 ok(!/第\s*\d+\s*回/.test(body.title), `标题不带章节号 (${body.title})`);
 ok(body.hasNoBadge, '正文区没有「第N回」的标记');
 ok(body.archive && body.archiveHref === '/pet/story/', '有「按回查阅」的入口', body.archiveHref);
-ok(/空格/.test(body.hint), `提示写明空格推进 (${body.hint})`);
+ok(/翻一屏/.test(body.hint), `提示写明空格翻一屏 (${body.hint})`);
 
-// ── 2. 空格推一段 (不是一行) ─────────────────────────────
-const before = body.paras;
+// ── 2. 空格翻一屏 (MUD 式, 不是一段一行) ────────────────────────
+//
+// 2026-11-20 改: 空格**翻一屏** (滚一个视口高), 不是推一段。
+// 「推一段」那次敲击只出两行字, 读起来碎; 而且 max-height 容器会随
+// 内容长高, 把整个页面撑出滚动条 —— 版面跟着晃。
+// 现在: 窗口高度固定, 滚动只在窗口内, 位置 = 窗口底压着的那一段。
+const before = await page.evaluate(() => {
+  const b = document.querySelector('#adv-read-body');
+  return { st: b.scrollTop, ch: b.clientHeight, pageY: window.scrollY };
+});
 await page.keyboard.press('Space');
 await page.waitForTimeout(300);
-const after = await page.evaluate(() => ({
-  paras: document.querySelectorAll('#adv-read-body p').length,
-  prog: document.querySelector('#adv-read-prog')?.textContent?.trim() || '',
-}));
-ok(after.paras === before + 1, `空格推进一段 (${before} → ${after.paras})`);
-ok(/^\d+ \/ \d+ 段$/.test(after.prog), `进度按段记 (${after.prog})`);
-
-// 推进的是**一整段**, 不是一行 —— 拿后端给的段落边界对账:
-// 页面上新出现的那段, 必须**逐字等于**后端 flow 里的第 N 段。
-// (逐字相等 = 它是整段落的边界, 不是按行切的)
-const seg = await page.evaluate(() => {
-  const ps = document.querySelectorAll('#adv-read-body p');
-  const last = ps[ps.length - 1];
-  const flow = (window.state && window.state.story && window.state.story.flow) || [];
-  const idx = (window.READER ? window.READER.idx : 0) - 1;
+const after = await page.evaluate(() => {
+  const b = document.querySelector('#adv-read-body');
   return {
-    len: (last?.textContent || '').length,
-    text: (last?.textContent || '').slice(0, 60),
-    same: flow[idx] ? flow[idx].text === (last?.textContent || '') : false,
-    flowLen: flow[idx] ? flow[idx].text.length : 0,
+    st: b.scrollTop, ch: b.clientHeight, pageY: window.scrollY,
+    prog: document.querySelector('#adv-read-prog')?.textContent?.trim() || '',
+    idx: window.READER ? window.READER.idx : 0,
   };
 });
-ok(seg.same, `推进的是**整段** (逐字等于后端第 ${'?'} 段, ${seg.len} 字): ${seg.text}…`);
-ok(seg.len === seg.flowLen, `段落长度一致 (页面 ${seg.len} / 后端 ${seg.flowLen})`);
+const delta = after.st - before.st;
+ok(delta > 0, `空格让窗口往下滚 (Δ${Math.round(delta)}px)`);
+ok(Math.abs(delta - after.ch) < after.ch * 0.15,
+   `翻的正好是一屏 (Δ${Math.round(delta)} vs 视口 ${after.ch})`);
+ok(after.pageY === before.pageY, `页面自己没被卷走 (pageY ${before.pageY} → ${after.pageY})`);
+ok(/^\d+ \/ \d+ 段$/.test(after.prog), `进度按段记 (${after.prog})`);
+ok(after.idx > 0, `位置跟着前进 (idx=${after.idx})`);
+
+// 位置 = 窗口底压着的那一段 (眼睛看到屏幕底就等于读到那儿)
+// 拿后端给的段落边界对账: 窗口底那一段的**下沿**应落在窗口底附近。
+const bot = await page.evaluate(() => {
+  const b = document.querySelector('#adv-read-body');
+  const R = window.READER;
+  const i = R.idx - 1;
+  return {
+    bot: R.bots[i] || 0,
+    limit: b.scrollTop + b.clientHeight,
+    text: (R.flow[i] || {}).text || '',
+  };
+});
+ok(bot.bot <= bot.limit + 2,
+   `位置 = 窗口底压着的那一段 (下沿 ${Math.round(bot.bot)} vs 窗口底 ${Math.round(bot.limit)})`);
 
 // ── 3. 位置记在后端 ──────────────────────────────────────
 await page.waitForTimeout(300);
@@ -131,12 +145,17 @@ ok(posNow > 0, `位置记在后端 (idx=${posNow})`);
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#adv-read-body p', { timeout: 15000 });
 await page.waitForTimeout(900);
-const afterReload = await page.evaluate(() => ({
-  paras: document.querySelectorAll('#adv-read-body p').length,
-  prog: document.querySelector('#adv-read-prog')?.textContent?.trim() || '',
-}));
-ok(afterReload.paras === after.paras,
-   `刷新后接着上次那段 (${afterReload.paras} 段 / ${afterReload.prog})`);
+const afterReload = await page.evaluate(() => {
+  const b = document.querySelector('#adv-read-body');
+  return {
+    st: Math.round(b.scrollTop),
+    idx: window.READER ? window.READER.idx : 0,
+    prog: document.querySelector('#adv-read-prog')?.textContent?.trim() || '',
+  };
+});
+ok(afterReload.st > 0, `刷新后落在上次读到的地方 (scrollTop=${afterReload.st})`);
+ok(Math.abs(afterReload.idx - after.idx) <= 2,
+   `刷新后位置跟存档一致 (${afterReload.idx} vs ${after.idx})`);
 
 // ── 5. 档案页: 按回查阅 ──────────────────────────────────
 await page.goto(`${URL}/pet/story/`, { waitUntil: 'domcontentloaded' });

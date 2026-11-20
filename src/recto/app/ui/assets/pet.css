@@ -909,13 +909,24 @@
 }
 .rc-pet .adv-read-bar .mini { font-size: 11px; padding: 3px 9px; }
 
-/* 正文: 一条连续的路。逐段出现, 读完接着往下 —— 没有章节标题。
-   高度给足 (它是一段一段读下去的东西, 不是一小块摘要)。 */
+/* 正文: 一条连续的路, **固定高度的阅读窗口** (MUD 式)。
+   ────────────────────────────────────────────────────────────
+   高度用 `height` 而不是 `max-height` —— 之前用 max-height, 每追加一段
+   容器就长高一截, 整个页面被撑高 → 页面自己冒出滚动条, 版面跟着晃。
+   现在窗口高度恒定, 内容在窗口**内部**滚, 页面结构完全不变。
+
+   `overflow-anchor: none` 关掉浏览器的滚动锚定 —— 否则往窗口里追加内容
+   时浏览器会自作主张地调整滚动位置, 刚翻好的一屏会莫名其妙地跳。 */
 .rc-pet .adv-read-body {
   padding: 14px 18px 6px;
-  max-height: 62vh; overflow-y: auto;
+  height: 58vh;
+  min-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-anchor: none;
   outline: none;
-  scroll-behavior: smooth;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .rc-pet .adv-read-body:focus-visible {
   box-shadow: inset 0 0 0 2px var(--rc-primary, var(--rc-accent));
@@ -1055,7 +1066,8 @@ body.pg-drawer-open { overflow: hidden; }
 @media (max-width: 640px) {
   .pg-drawer-panel { width: 100vw; }
   .pg-drawer-body { padding: 12px 12px 32px; }
-  .rc-pet .adv-read-body { max-height: 56vh; }
+  /* 窗口高度跟着视口走, 但仍**固定** (不是 max-height) —— 页面结构稳定 */
+  .rc-pet .adv-read-body { height: 56vh; min-height: 280px; }
 }
 
 /* 抽屉里的小段切换不产生横向溢出 */

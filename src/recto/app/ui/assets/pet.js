@@ -972,120 +972,269 @@ function advParagraphs(body) {
   }).join('');
 }
 
-/* ══════════════ 读故事 (一条连续的路) ══════════════
+/**
+ * 读本 —— **MUD 式阅读窗口** (2026-11-20 改)。
  *
- * **不分章节**: 读者看到的是「它走过的路」, 一条往下滚的正文, 像 MUD
- * 那样按空格推一段。章节是**后台**的事 —— 要按回查 (第几回 / 交手 /
- * 判定 / 来处), 去档案页 `/pet/story/`。
+ * **为什么改**: 原来正文区是 `max-height`, 每追加一段容器就长高一截 →
+ * 整个页面被撑高 → 页面自己冒出滚动条, 版面跟着晃。而且空格只推**一段**
+ * (平均 39 字 ≈ 两行), 一次敲击只出两行字, 读起来碎。
  *
- * 空格推**一段** (不是一行): 一段就是一次呼吸, 一次呼吸读不完。
+ * **现在**:
+ *   · 正文窗口**高度固定** —— 页面结构不随内容长高, 页面滚动条不会
+ *     因为多读一段就冒出来。
+ *   · 滚动**只在窗口内**发生 —— 自己设 scrollTop, 不用 scrollIntoView
+ *     (后者会连带把页面卷走, 整个版面跟着晃 —— 那正是要治的毛病)。
+ *   · 空格**翻一屏** —— 一次敲击滚一整屏 (一个视口高), 不切内容、
+ *     不跳段; 一次敲击只出两行字太碎。
+ *   · PageUp / Alt+← 回看一屏; 位置是**高水位** (往回看不抹掉已读的)。
  *
- * 段落切分在**后台**做 (`/api/story` 给的是已经切好的 flow) —— 位置
+ * **位置 = 窗口底压着的那一段**: 眼睛看到屏幕底就等于读到那儿了。
+ *
+ * **段落切分在后台做** (`/api/story` 给的是已经切好的 flow) —— 位置
  * (读到第几段) 是跨端共用的索引, 两边各切一次迟早错位。
  *
- * 位置记在后端 (`/pet/api/reading`, 全局段序号) 而不是 localStorage:
+ * **位置记在后端** (`/pet/api/reading`, 全局段序号) 而不是 localStorage:
  * "它走过的路"不该跟着换设备消失, 也不该被清缓存抹掉。
  */
 
 const READER = {
   flow: [],        // 全书段落流 (后端给)
   total: 0,        // 总段数
-  idx: 0,          // 已读到第几段 (1 基: 第 idx 段正在读)
-  drawn: 0,        // 已经画到第几段 (只往后追加, 不整篇重画)
+  idx: 0,          // 已读到第几段 (= 窗口底压着的那一段)
+  drawn: 0,        // DOM 里画到第几段 (段是连续的 1..drawn)
   done: false,     // 走到尽头了
   open: false,     // 读本是不是展开着
+  tops: [],        // 每段在"内容坐标"里的上沿 (不随滚动变)
+  bots: [],        // 每段在"内容坐标"里的下沿
+  lockUntil: 0,    // 程序化滚动截止时刻 (ms) —— 期间位置**不**跟着动
 };
+
+/**
+ * 程序化滚动期间**锁住**位置。
+ *
+ * 为什么不能是一个布尔开关: `body.scrollTop = x` 触发的 scroll 事件是
+ * **异步**的 (下一个事件循环才派发) —— 同步地置位/复位布尔开关根本
+ * 盖不住它 (真撞过: 「从头读」复位后位置跳到 9 段 —— 复位那一滚被
+ * 当成了"读者读到了第 9 段")。
+ *
+ * 用**时间戳**: 程序化滚动前设一个截止时刻, scroll 事件里看还有没有
+ * 到期。没到期就是程序化滚的 (不推进位置), 到期后自然放行。
+ */
+function readLock(ms) {
+  READER.lockUntil = Date.now() + (ms || 400);
+}
+
+/* 往后面多画多少段 —— 滚动要有料, 但也别一次画几千段。 */
+const READER_LOOKAHEAD = 120;
+
+/* 位置存盘的防抖 (滚动是连续的, 一次翻屏会连着滚很多事件) */
+let readSaveTimer = 0;
 
 /* 探针要读读本现状 (顶层 const 不是 window 的属性) */
 window.READER = READER;
 
-function readIdx() {
-  const r = (state.story && state.story.read) || {};
-  return Number(r.idx) || 0;
-}
-
-/** 摊开读本 (从**没读过的那段**开始)。 */
+/**
+ * 摊开读本 —— 从上次读到的地方接着往下。
+ *
+ * 打开时**对齐到存档位置**: 窗口底落在上次读到的那一段的下沿, 读者
+ * 看到的还是上次那一屏, 再按空格就往下走。
+ */
 function readOpen(flow, total, idx) {
   const box = $('#adv-read');
   const body = $('#adv-read-body');
   if (!box || !body) return;
   READER.flow = flow || [];
   READER.total = Number(total) || READER.flow.length;
-  // 从**没读过的那段**开始: 上次读到第 k 段 → 这次先看见第 k+1 段。
-  // (所以屏幕上一开始就有一段字, 不是空白)
-  const read = Number(idx) || 0;
-  READER.idx = READER.total
-    ? (read >= READER.total ? READER.total : Math.min(read + 1, READER.total))
-    : 0;
-  READER.done = READER.total > 0 && READER.idx >= READER.total;
+  const read = Math.max(0, Number(idx) || 0);
+  READER.idx = read;
+  READER.done = false;
   READER.open = true;
   READER.drawn = 0;
-  const blank = $('#adv-read-body');
-  if (blank) blank.innerHTML = '';
+  READER.tops = [];
+  READER.bots = [];
+  body.innerHTML = '';
   box.hidden = false;
-  readRender();
+  // 先画够一屏 + 后面一截 (滚动要有料)
+  readEnsure(Math.min(READER.total, read + READER_LOOKAHEAD));
+  // 对齐到存档位置 (从没用过 → 从头看)
+  // **加锁**: 这一滚是程序化对齐, 不是读者在读 —— 不该算进度。
+  readLock();
+  readScrollToBottom(read);
+  // **打开时不推进位置** —— 见 readSync 的 advance 说明
+  readSync(false, false);
+  // 之前挂着的存盘定时器 (读别的页面时排的) 得撤掉 ——
+  // 否则它会把"复位前"的位置又写回去。
+  if (readSaveTimer) { clearTimeout(readSaveTimer); readSaveTimer = 0; }
 }
 
-function readRender() {
+/** 量一遍某一段在"内容坐标"里的上下沿 (scrollTop 坐标系, 不随滚动变)。 */
+function readRectOf(el) {
   const body = $('#adv-read-body');
+  if (!body || !el) return null;
+  const br = body.getBoundingClientRect();
+  const base = body.scrollTop - br.top - body.clientTop;
+  const r = el.getBoundingClientRect();
+  return { top: base + r.top, bot: base + r.bottom };
+}
+
+/** 往后面补画段 (滚到画出来的尽头时要续)。 */
+function readEnsure(upto) {
+  const body = $('#adv-read-body');
+  if (!body) return;
+  const want = Math.min(READER.total, Math.max(0, upto));
+  if (want <= READER.drawn) return;
+  for (let i = READER.drawn; i < want; i++) {
+    const item = READER.flow[i];
+    if (!item) break;
+    const el = document.createElement('p');
+    el.textContent = item.text;
+    body.appendChild(el);
+    const rc = readRectOf(el);
+    if (rc) { READER.tops.push(rc.top); READER.bots.push(rc.bot); }
+  }
+  READER.drawn = want;
+}
+
+/** 全量重量 (窗口尺寸变了 → 之前的几何都作废)。 */
+function readMeasureAll() {
+  const body = $('#adv-read-body');
+  if (!body) return;
+  const ps = body.querySelectorAll('p');
+  READER.tops = [];
+  READER.bots = [];
+  for (let i = 0; i < ps.length; i++) {
+    const rc = readRectOf(ps[i]);
+    if (!rc) continue;
+    READER.tops.push(rc.top);
+    READER.bots.push(rc.bot);
+  }
+}
+
+/**
+ * 窗口底压着的是第几段 (1 基) —— "读到哪儿了"的唯一口径。
+ *
+ * = **完整落在窗口里**的最后一段 (眼睛看到屏幕底就等于读到那儿)。
+ * +2px 容差: 正好齐底的那段算已读完。
+ *
+ * 曾经写成"第一个还没读完的段" —— 那样每开一次页面就凭空多读一段。
+ */
+function readBottomIdx() {
+  const body = $('#adv-read-body');
+  if (!body || !READER.bots.length) return 0;
+  const limit = body.scrollTop + body.clientHeight;
+  let idx = 0;
+  for (let i = 0; i < READER.bots.length; i++) {
+    if (READER.bots[i] <= limit + 2) idx = i + 1;
+    else break;
+  }
+  // 一段都装不进窗口 (段比窗口还高) —— 至少算读过了第一段
+  return idx || 1;
+}
+
+/** 把窗口滚到底落在第 idx 段的下沿 (只滚窗口自己, 不碰页面)。 */
+function readScrollToBottom(idx) {
+  const body = $('#adv-read-body');
+  if (!body) return;
+  const maxScroll = Math.max(0, body.scrollHeight - body.clientHeight);
+  if (!idx || idx > READER.drawn) { body.scrollTop = 0; return; }
+  const i = Math.min(idx, READER.bots.length) - 1;
+  const target = READER.bots[i] - body.clientHeight;
+  body.scrollTop = Math.max(0, Math.min(target, maxScroll));
+}
+
+/** 翻一屏 (往下): 恰好一个视口高 —— 不切内容, 不跳段。 */
+function readPageDown() {
+  const body = $('#adv-read-body');
+  if (!body) return;
+  // **先补画再翻** —— 否则读者翻到"画出来的尽头"时, 这一按会滚到旧
+  // 底 (内容还没长出来), 看起来像"这一按没反应", 得再按一次才动。
+  // (补画在前面 → 内容够长 → 这一按直接滚到真正的下一屏)
+  const maxBefore = Math.max(0, body.scrollHeight - body.clientHeight);
+  if (body.scrollTop + body.clientHeight >= maxBefore - 8) {
+    readEnsure(READER.drawn + READER_LOOKAHEAD);
+  }
+  const maxScroll = Math.max(0, body.scrollHeight - body.clientHeight);
+  const target = Math.min(body.scrollTop + body.clientHeight, maxScroll);
+  readScrollTo(target);
+}
+
+/** 回看一屏 (往上): 恰好一个视口高。 */
+function readPageUp() {
+  const body = $('#adv-read-body');
+  if (!body) return;
+  readScrollTo(Math.max(0, body.scrollTop - body.clientHeight));
+}
+
+/**
+ * 滚到某个位置 (只动窗口自己的 scrollTop)。
+ *
+ * **瞬时, 不做平滑** —— 平滑滚动是**动画**, 动画期间 scrollTop 在动,
+ * 连按空格时"下一页"要从动画中途的位置算起 → 每次只走半屏, 手感乱。
+ * MUD 翻页本来就是瞬时的, 而且瞬时才能算准。
+ */
+function readScrollTo(top) {
+  const body = $('#adv-read-body');
+  if (!body) return;
+  body.scrollTop = Math.max(0, top);
+}
+
+/**
+ * 滚动之后: 同步"读到哪儿了" (位置只前进)。
+ *
+ * ``advance=false`` —— **打开页面时不推进位置**。理由: 刚打开时窗口里
+ * 摊着的那几段是"刚好装得下"的量, 不是读者读过的量 —— 不设这个闸,
+ * 每打开一次页面位置就凭空往前挪几段 (真撞过: idx 4 → 9)。
+ * 只有读者**自己往前滚**了才算数。
+ */
+function readSync(save, advance) {
+  const body = $('#adv-read-body');
+  if (!body) return;
+  // 滚到画出来的尽头 → 后面还有段, 补画 (滚动要有料)
+  const maxScroll = Math.max(0, body.scrollHeight - body.clientHeight);
+  if (body.scrollTop + body.clientHeight >= maxScroll - 8) {
+    readEnsure(READER.drawn + READER_LOOKAHEAD);
+  }
+  const bi = readBottomIdx();
+  // **位置只前进** (高水位): 往回看不抹掉已经读到的地方
+  //
+  // 锁定期内**不**推进 —— 程序化滚动 (打开时对齐存档 / 「从头读」复位)
+  // 会触发 scroll 事件, 那不是读者在读, 不该算进度。
+  // (真撞过: 「从头读」后位置跳到 9 —— 复位那一滚被当成了读者读到了第 9 段)
+  const locked = Date.now() < READER.lockUntil;
+  if (advance !== false && !locked && bi > READER.idx) {
+    READER.idx = bi;
+    if (save !== false) readSaveSoon();
+  }
+  const prog = $('#adv-read-prog');
+  if (prog) prog.textContent = READER.total ? (READER.idx + ' / ' + READER.total + ' 段') : '—';
+  const finished = READER.total > 0 && READER.idx >= READER.total;
   const foot = $('#adv-read-foot');
   const doneBox = $('#adv-read-done');
-  const prog = $('#adv-read-prog');
-  const title = $('#adv-read-title');
-  if (!body) return;
-  const total = READER.total;
-  if (title) title.textContent = '它走过的路';
-  // 只铺到当前段 —— 后面还没读的段不占屏幕 (读者自己一段一段解锁)
-  //
-  // **只往后追加**, 不整篇重画: 这条路可能有几百段, 每按一次空格就
-  // 重建全部 DOM 会明显卡 (真量过: 600+ 段时每按一次重建上千个节点)。
-  // 所以记着"已经画到第几段", 只把新的那几段接上去。
-  if (READER.drawn > READER.idx) {
-    // 往回翻 (Alt+左) —— 少画几段
-    READER.drawn = READER.idx;
-    const keep = body.querySelectorAll('p');
-    for (let i = keep.length - 1; i >= READER.idx; i--) {
-      if (keep[i] && keep[i].parentNode === body) body.removeChild(keep[i]);
-    }
-  } else {
-    for (let i = READER.drawn; i < READER.idx; i++) {
-      const item = READER.flow[i];
-      if (!item) continue;
-      const el = document.createElement('p');
-      el.textContent = item.text;
-      body.appendChild(el);
-    }
-    READER.drawn = READER.idx;
-  }
-  if (prog) {
-    prog.textContent = total ? (READER.idx + ' / ' + total + ' 段') : '—';
-  }
-  const finished = total > 0 && READER.idx >= total;
   if (foot) foot.hidden = finished;
   if (doneBox) doneBox.hidden = !finished;
-  // 滚到刚解锁的那段
-  const last = body.lastElementChild;
-  if (last && READER.idx > 0) {
-    try { last.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (e) { /* 老浏览器 */ }
-  }
+  READER.done = finished;
 }
 
-/** 推进一段 (空格 / 点按钮)。走到尽头 → 记位置 + 收尾。 */
+/** 推进一屏 (空格 / 点按钮)。走到尽头 → 记位置 + 收尾。 */
 function readNext() {
   if (!READER.open) return;
-  if (READER.idx >= READER.total) { readFinish(); return; }
-  READER.idx += 1;
-  readRender();
-  readSave();
-  if (READER.idx >= READER.total) readFinish();
+  const body = $('#adv-read-body');
+  if (!body) return;
+  const maxScroll = Math.max(0, body.scrollHeight - body.clientHeight);
+  if (body.scrollTop >= maxScroll - 2) {
+    // 已经在尽头
+    READER.idx = READER.total;
+    readSync(false);
+    readFinish();
+    return;
+  }
+  readPageDown();
 }
 
-/** 回退一段 (往回看, 不改位置)。 */
+/** 回看一屏 (往回看, 不改位置)。 */
 function readPrev() {
-  if (!READER.open || READER.idx <= 1) return;
-  READER.idx -= 1;
-  readRender();
-  // 往回看**不**改位置 (读到哪里只前进) —— 否则回头看一眼就把进度抹了
+  if (!READER.open) return;
+  readPageUp();
 }
 
 /** 走到尽头: 记位置。 */
@@ -1094,15 +1243,27 @@ function readFinish() {
   readSave();
 }
 
+/** 位置存盘 (防抖) —— 滚动是连续的, 一次翻屏会连着滚很多事件。 */
+function readSaveSoon() {
+  if (readSaveTimer) clearTimeout(readSaveTimer);
+  readSaveTimer = setTimeout(function () {
+    readSaveTimer = 0;
+    readSave();
+  }, 600);
+}
+
 function readSave(force) {
   const total = READER.total;
   if (!total) return;
-  // 存的是"**读完**了几段" —— 屏幕上最后那段正在读, 还没算读完
+  // 位置 = **窗口底压着的那一段** (眼睛看到屏幕底就等于读到了那儿)。
+  // 可以合法地是 0 (「从头读」复位后还没读任何一段)。
   const finished = READER.idx >= total;
-  const idx = finished ? total : Math.max(0, READER.idx - 1);
+  const idx = finished ? total : Math.max(0, READER.idx);
   api('/api/reading', {
     method: 'POST',
-    body: JSON.stringify({ idx: idx, force: force === true }),
+    // clamp=false: 读者真读到了那儿 (拖滚动条一次滑到底是合法的) ——
+    // 后端那个"一次跳太远就夹住"的闸是给手滑/脚本用的, 这里不适用。
+    body: JSON.stringify({ idx: idx, force: force === true, clamp: false }),
   }).then(function (r) {
     const p = (r || {}).pos || {};
     if (state.story) state.story.read = p;
@@ -1111,17 +1272,26 @@ function readSave(force) {
 
 /** 从头读 (回到第一段)。 */
 function readRestart() {
-  READER.idx = READER.total ? 1 : 0;
+  const body = $('#adv-read-body');
+  READER.idx = 0;
   READER.done = false;
   READER.drawn = 0;
-  const body = $('#adv-read-body');
+  READER.tops = [];
+  READER.bots = [];
   if (body) body.innerHTML = '';
-  readRender();
+  readEnsure(Math.min(READER.total, READER_LOOKAHEAD));
+  // 撤掉挂着的存盘定时器 —— 它写的是"复位前"的位置
+  if (readSaveTimer) { clearTimeout(readSaveTimer); readSaveTimer = 0; }
+  // **加锁**: 复位那一滚是程序化滚动, 不是读者在读
+  readLock();
+  if (body) body.scrollTop = 0;
+  readMeasureAll();
+  readSync(false, false);
   // 「从头读」是**明确**的动作 —— 位置回到 0 (平时位置只前进)
   readSave(true);
 }
 
-/* 键盘: 空格推进一段 (不在输入框里时) */
+/* 键盘: 空格翻一屏 / PageUp 回看 (不在输入框里时) */
 document.addEventListener('keydown', function (e) {
   if (!READER.open) return;
   const t = e.target;
@@ -1130,7 +1300,10 @@ document.addEventListener('keydown', function (e) {
   if (e.code === 'Space' || e.key === ' ') {
     e.preventDefault();
     readNext();
-  } else if (e.key === 'ArrowLeft' && e.altKey) {
+  } else if (e.key === 'PageDown') {
+    e.preventDefault();
+    readNext();
+  } else if (e.key === 'PageUp' || (e.key === 'ArrowLeft' && e.altKey)) {
     e.preventDefault();
     readPrev();
   }
@@ -1140,11 +1313,33 @@ document.addEventListener('click', function (e) {
   if (e.target.closest('#btn-adv-next')) { readNext(); return; }
   if (e.target.closest('#btn-adv-restart')) { readRestart(); return; }
   if (e.target.closest('#btn-adv-again')) { readRestart(); return; }
-  // 读本正文区点一下也算推进 (但别把点按钮算进去)
+  // 读本正文区点一下也算翻屏 (但别把点按钮算进去, 也不打断选字)
   const body = $('#adv-read-body');
   if (body && body.contains(e.target) && !e.target.closest('button')) {
-    readNext();
+    const sel = window.getSelection && window.getSelection().toString();
+    if (!sel) readNext();
   }
+});
+
+/* 窗口内滚动了 (鼠标滚轮 / 触摸 / 程序滚动) → 同步"读到哪儿了"。
+   位置**只前进**, 往回滚不抹掉已读的地方。 */
+let readScrollTick = 0;
+(function () {
+  const el = document.querySelector('#adv-read-body');
+  if (!el) return;
+  el.addEventListener('scroll', function () {
+    if (readScrollTick) return;
+    readScrollTick = requestAnimationFrame(function () {
+      readScrollTick = 0;
+      readSync(true);
+    });
+  }, { passive: true });
+})();
+
+/* 窗口尺寸变了 → 之前量的段落几何作废, 重量一遍 */
+window.addEventListener('resize', function () {
+  if (!READER.open) return;
+  readMeasureAll();
 });
 
 function renderChronicle(v) {

@@ -355,7 +355,11 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
             except (TypeError, ValueError):
                 idx = 0
             force = body.get("force") is True
-            return 200, {"ok": True, "pos": reading_mod.set_idx(idx, force=force)}
+            # clamp=false: 读者真读到了那儿 (拖滚动条一次滑到底是合法的)
+            # —— 后端那个"一次跳太远就夹住"的闸是给手滑/脚本用的。
+            clamp = body.get("clamp") is not False
+            return 200, {"ok": True,
+                         "pos": reading_mod.set_idx(idx, force=force, clamp=clamp)}
         return 200, {"pos": reading_mod.get()}
 
     # 老接口 (按回记段数) —— 留着但明说不再支持, 别让人以为位置还在按回记

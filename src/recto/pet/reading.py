@@ -144,11 +144,15 @@ def get() -> dict[str, Any]:
             "legacy": is_legacy(d)}
 
 
-def set_idx(idx: int, *, force: bool = False) -> dict[str, Any]:
+def set_idx(idx: int, *, force: bool = False, clamp: bool = True) -> dict[str, Any]:
     """记下"读到全局第几段"。返回新的位置。
 
     **只前进** (高水位): "读到哪儿了"是已经读过的最远处 —— 回头重读
     不该把它抹掉。``force=True`` 才允许往回写 (迁移老档时用)。
+
+    ``clamp=True`` (默认) 会把"一次跳太远"夹住 (防手滑/脚本把位置推到天边)。
+    **滚动式阅读要传 ``clamp=False``** —— 读者一口气拖过几百段是正常的,
+    夹住会让"读到哪儿"永远落后于眼睛。
     """
     try:
         idx = int(idx)
@@ -167,7 +171,7 @@ def set_idx(idx: int, *, force: bool = False) -> dict[str, Any]:
                 # 已经在更远处 (回头重读) —— 不动
                 return {"idx": old, "at": d.get("at") or "", "legacy": False}
             # 一次跳太远 = 大概是手滑或脚本, 不认 (只往前一点点, 读者一段一段读)
-            if idx - old > MAX_JUMP:
+            if clamp and idx - old > MAX_JUMP:
                 idx = old + MAX_JUMP
         d = {"v": VERSION, "idx": idx, "at": clock.fmt_sec(time.time())}
         _save(d)

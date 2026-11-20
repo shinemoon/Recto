@@ -583,3 +583,57 @@ life / reborn / world / chronicle` 的临时文件名原本只有 pid —— **�
 - 改 `tools/probe_pet_read.mjs`（28）、`probe_pet_kind.mjs`（19）、`probe_pet_spark.mjs`（12）、
   `probe_pet_watch.mjs`（13）指到档案页
 - 全套 python 测试绿（只有 `test_excerpt_persist` 那 2 项**既有**失败，基线同样红）
+
+
+---
+
+## T17 § 读本改成 MUD 式阅读窗口（2026-11-20）
+
+**起因**：用户「现在前台阅读体验很差，1. 每次空格继续就出现 scroll bar 滚动，
+我希望不要改变阅读网页本身内容高度，而是把文字在固定高度的阅读窗口内滚动，
+即还是参考 mud 的显示方式，整个页面结构保持稳定；2. 不要一次敲击只有一行字，
+应当是一页更好」
+
+### 两个要求怎么落的
+
+1. **固定高度的阅读窗口，页面结构不变**
+   - 正文区从 `max-height` 改成 **`height`（固定）** —— 之前每追加一段容器就
+     长高一截 → 整个页面被撑高 → 页面自己冒出滚动条，版面跟着晃
+   - 加 `overflow-anchor: none`（浏览器会自作主张调整滚动位置）与
+     `overscroll-behavior: contain`（窗口内滚到底不带动页面）
+2. **一次敲击一页**
+   - 空格从「推一段」（平均 39 字 ≈ 两行）改成 **翻一屏**（滚一个视口高）
+   - 翻页是**瞬时**的，不做平滑动画 —— 动画期间 `scrollTop` 在动，连按空格
+     每次只走半屏
+
+### 关键决定
+
+| 决定 | 为什么 |
+|---|---|
+| 滚动**只在窗口内** | 原来用 `scrollIntoView` —— 它会连带把**页面**卷走，整个版面跟着晃（要治的正是这个） |
+| 位置 = **窗口底压着的那一段** | 眼睛看到屏幕底就等于读到那儿了；比"推一段"更贴近眼睛 |
+| 位置**只前进** | 位置是"已经读过的最远处"；往回看不抹掉已读的 |
+| 程序化滚动加**时间戳锁** | `scrollTop = x` 的 scroll 事件是**异步**的 —— 同步置位/复位布尔开关盖不住（真撞过：「从头读」复位后位置跳到 9 段） |
+| 打开页面**不推进**位置 | 刚打开时窗口里摊着的那几段是"刚好装得下"的量，不是读者读过的量（不设闸 → 每开一次页面凭空多读几段） |
+| `clamp=false` 存盘 | 后端那个"一次跳太远就夹住"的闸是给手滑/脚本用的；读者拖滚动条滑到底是合法的 |
+| 存盘**防抖 600ms** | 滚动是连续的，一次翻屏会连着滚很多事件 |
+| 段落**边界**保留 | 位置仍是全局段序号（跨端共用的索引），只是口径从"推了几段"变成"底压着第几段" |
+
+### 落地
+
+- `src/recto/app/ui/assets/pet.css`：正文区固定高度 + `overflow-anchor` +
+  `overscroll-behavior`；窄屏高度跟着视口但仍固定
+- `src/recto/app/ui/assets/pet.js`：读本重写（`readPageDown` / `readPageUp` /
+  `readSync` / `readEnsure` / `readMeasureAll` / `readBottomIdx` / `readLock`）
+- `src/recto/pet/reading.py`：`set_idx` 加 `clamp` 参数
+- `src/recto/app/pet.py`：`POST /api/reading` 认 `clamp`
+- `src/recto/app/ui/assets/pet.html`：提示改「按空格翻一屏 · PageUp 回看」
+
+### 验收
+
+- 新探针 `tools/probe_pet_mudread.mjs` 20 项（窗口固定 / 翻的正好一屏 /
+  页面没被卷走 / 位置只前进 / 刷新接着 / 手机）
+- 新探针 `tools/probe_pet_read_reset.mjs` 6 项（「从头读」复位归零）
+- `tests/test_pet_reading.py` 55 → **76** 项（新增 MUD 窗口契约 21 项）
+- 改 `tools/probe_pet_story_flow.mjs`（27）、`tools/probe_pet_read.mjs`（29）
+- 全套 python 测试绿（只有 `test_excerpt_persist` 那 2 项**既有**失败，基线同样红）

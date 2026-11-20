@@ -140,25 +140,37 @@ ok(read.open, '读本摊开着');
 ok(read.paras >= 1, `读本里有正文 (${read.paras} 段)`);
 ok(/^\d+ \/ \d+ 段$/.test(read.prog), `进度按段记 (${read.prog})`);
 
-// 空格推进一段
-const before = read.paras;
+// 空格翻一屏 (MUD 式: 滚一个视口高, 不是推一段)
+const beforeScroll = await page.evaluate(() => {
+  const b = document.querySelector('#adv-read-body');
+  return { st: b.scrollTop, ch: b.clientHeight };
+});
 await page.keyboard.press('Space');
 await page.waitForTimeout(280);
-const after = await page.evaluate(() => document.querySelectorAll('#adv-read-body p').length);
-ok(after === before + 1, `空格推进一段 (${before} → ${after})`);
+const afterScroll = await page.evaluate(() => {
+  const b = document.querySelector('#adv-read-body');
+  return { st: b.scrollTop, ch: b.clientHeight, idx: window.READER ? window.READER.idx : 0 };
+});
+const delta = afterScroll.st - beforeScroll.st;
+ok(delta > 0 && Math.abs(delta - afterScroll.ch) < afterScroll.ch * 0.15,
+   `空格翻一屏 (Δ${Math.round(delta)} vs 视口 ${afterScroll.ch})`);
 
 // 位置记在后端
 await page.waitForTimeout(300);
 const posNow = await readPos();
 ok(posNow > 0, `位置记在后端 (idx=${posNow})`);
 
-// 刷新 → 接着上次那段
+// 刷新 → 接着上次读到的地方 (位置 = 窗口底压着的那一段)
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#adv-read-body p', { timeout: 15000 });
-await page.waitForTimeout(900);
-const afterReload = await page.evaluate(() =>
-  document.querySelectorAll('#adv-read-body p').length);
-ok(afterReload === after, `刷新后接着上次那段 (${afterReload} 段)`);
+await page.waitForTimeout(1100);
+const afterReload = await page.evaluate(() => ({
+  st: Math.round(document.querySelector('#adv-read-body').scrollTop),
+  idx: window.READER ? window.READER.idx : 0,
+}));
+ok(afterReload.st > 0, `刷新后落在上次读到的地方 (scrollTop=${afterReload.st})`);
+ok(Math.abs(afterReload.idx - afterScroll.idx) <= 2,
+   `刷新后位置跟存档一致 (${afterReload.idx} vs ${afterScroll.idx})`);
 
 // ── 5. 窄屏 ───────────────────────────────────────────
 const m = await ctx.newPage();

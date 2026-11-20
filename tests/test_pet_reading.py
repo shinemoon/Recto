@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -145,9 +146,70 @@ ok(len(flow) == 7, f"摊平成一条连续的段落流 got {len(flow)}")
 ok(flow[3]["no"] == 32 and flow[3]["pi"] == 0,
    f"每段带它属于哪一回 got {flow[3]}")
 
-# ── 9. 页面契约 ──────────────────────────────────────────────────
 from recto.app import pet as _petapp  # noqa: E402
 
+js = _petapp._UI_DIR.joinpath("pet.js").read_text("utf-8")
+
+# ── 9. MUD 式阅读窗口 (2026-11-20) ─────────────────────────────────
+#
+# 前台读本改成 MUD 式: 固定高度的窗口 + 窗口内滚动 + 空格翻一屏。
+# 这里只钉**契约** (前端/后端代码里必须有的东西); 真实行为由
+# tools/probe_pet_mudread.mjs 在真浏览器里量。
+
+css = _petapp._UI_DIR.joinpath("pet.css").read_text("utf-8")
+# 窗口高度必须是**固定**的 (height), 不是 max-height ——
+# max-height 会让容器随内容长高, 把整个页面撑出滚动条 (要治的毛病)
+ok("height: 58vh" in css, "正文窗口用固定高度 (height)")
+ok("max-height: 62vh" not in css, "不再用 max-height (会把页面撑高)")
+ok("overflow-anchor: none" in css,
+   "关掉滚动锚定 (追加内容时浏览器会乱调滚动位置)")
+ok("overscroll-behavior: contain" in css,
+   "窗口内滚到底不带动页面 (overscroll)")
+
+js = _petapp._UI_DIR.joinpath("pet.js").read_text("utf-8")
+ok("function readPageDown" in js, "有翻屏函数")
+ok("function readPageUp" in js, "有回看函数")
+ok("function readSync" in js, "有滚动同步函数")
+# 翻页 = 滚一个视口高 (不是推进一段)
+ok("body.clientHeight" in js, "翻屏按视口高度算 (真量, 不猜)")
+# **不许**用 scrollIntoView —— 它会连带把页面卷走
+# (注释里提到它不算 —— 那是在解释为什么不用)
+js_code = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+js_code = re.sub(r"//[^\n]*", "", js_code)
+ok("scrollIntoView" not in js_code,
+   "不用 scrollIntoView (它会连带把页面卷走)")
+# 位置只前进
+ok("bi > READER.idx" in js, "位置只前进 (往回看不抹掉已读的)")
+# 打开页面**不**推进位置 (否则每开一次就凭空多读几段)
+ok("readSync(false, false)" in js, "打开页面不推进位置")
+# 后端: clamp 参数
+ok("clamp" in _petapp._UI_DIR.joinpath("pet.js").read_text("utf-8"),
+   "前端能关掉「一次跳太远就夹住」的闸")
+petpy = (ROOT / "src" / "recto" / "app" / "pet.py").read_text("utf-8")
+ok('"clamp"' in petpy, "后端认 clamp 参数")
+
+# 后端 set_idx: clamp=False 时不夹
+reading.set_idx(0, force=True)
+r = reading.set_idx(500, clamp=False)
+ok(r["idx"] == 500, f"clamp=False 不夹 (读者真读到了) got {r['idx']}")
+# clamp=True: 从**当前**位置算, 一次最多前进 MAX_JUMP 段
+reading.set_idx(0, force=True)
+r = reading.set_idx(5000, clamp=True)
+ok(r["idx"] == reading.MAX_JUMP, f"clamp=True 会夹 got {r['idx']}")
+
+html = _petapp.page_html()
+ok("翻一屏" in html, "提示写明「翻一屏」")
+ok("PageUp" in html, "提示写明 PageUp 回看")
+
+# 程序化滚动期间位置**不**推进 —— 「从头读」复位那一滚不该被当成
+# "读者读到了第 9 段" (真撞过: 复位后位置跳到 9)。
+ok("function readLock" in js, "有程序化滚动的位置锁")
+ok("lockUntil" in js, "位置锁用时间戳 (scroll 事件是异步的, 布尔开关盖不住)")
+ok("readLock()" in js, "复位/打开时加了锁")
+ok("clearTimeout(readSaveTimer)" in js,
+   "复位时撤掉挂着的存盘定时器 (它写的是复位前的位置)")
+
+# ── 9. 页面契约 ──────────────────────────────────────────────────
 html = _petapp.page_html()
 ok('id="pg-drawer"' in html, "页面有人物抽屉")
 ok('class="pg-ico-rail"' in html, "页面有图标入口")
@@ -167,7 +229,6 @@ ok('id="archive-list"' in arch, "档案页有归档列表")
 ok('pet-shared.js' in arch and 'story.js' in arch, "档案页引了共用零件与自己的脚本")
 ok(arch.count("<div") == arch.count("</div>"), "档案页 div 标签配对")
 
-js = _petapp._UI_DIR.joinpath("pet.js").read_text("utf-8")
 ok("function readNext" in js, "前端有推进函数")
 ok("'Space'" in js, "空格键推进")
 ok("/api/reading" in js, "前端调阅读位置接口")
@@ -184,7 +245,6 @@ sjs = _petapp._UI_DIR.joinpath("story.js").read_text("utf-8")
 ok("/api/story/archive" in sjs, "档案页拉按回的归档")
 ok("RCPetUI" in sjs, "档案页用共用零件")
 
-css = _petapp._UI_DIR.joinpath("pet.css").read_text("utf-8")
 ok(".pg-drawer-panel" in css, "抽屉有样式")
 ok(".adv-read-body" in css, "读本有样式")
 ok(css.count("{") == css.count("}"), "css 花括号配对")
