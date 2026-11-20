@@ -12,6 +12,8 @@
 import { chromium, cookie } from './_env.mjs';
 
 const BASE = process.env.RECTO_BASE || '5015';
+// BASE 可能只是端口 ("5015") —— 补成完整地址
+const BASE_URL = /^https?:\/\//.test(BASE) ? BASE : 'http://127.0.0.1:' + BASE;
 const URL = `http://127.0.0.1:${BASE}`;
 
 let PASS = 0, FAIL = 0;
@@ -60,15 +62,24 @@ const adv = (api.adventures || [])[0] || {};
 const g = adv.growth || {};
 ok(!!adv.title, `最新一回有标题 (${adv.title})`);
 ok(!!g.duel || g.tag === 'retire', `最新一回带交手 (${g.duel ? g.duel.result_cn : '退隐'})`);
-const duelBlockShown = await page.$eval('#adventure-latest', (el) =>
+// 交手面板在**档案页** (按回查阅) —— 前台是那条连续的路
+const archPage = await ctx.newPage();
+await archPage.goto(BASE_URL + '/pet/story/', { waitUntil: 'networkidle' });
+await archPage.waitForSelector('#archive-list .arch-item', { timeout: 15000 });
+await archPage.evaluate(() => {
+  document.querySelectorAll('#archive-list .arch-item').forEach((d) => { d.open = true; });
+});
+await archPage.waitForTimeout(300);
+const duelBlockShown = await archPage.$eval('#archive-list', (el) =>
   !!el.querySelector('.adv-duel'));
-ok(duelBlockShown === !!g.duel, '交手面板按数据渲染');
+ok(duelBlockShown === !!g.duel, '交手面板按数据渲染 (档案页)');
+await archPage.close();
 const clock = await page.$eval('#story-clock', (el) => el.textContent || '');
 ok(/岁/.test(clock) && /代/.test(clock), `故事时钟在 (${clock})`);
 const meta = await page.$eval('#story-meta', (el) => el.textContent || '');
 ok(meta.includes('已走 ' + (st.adventure_no || 0) + ' 回'),
    `已走回数与接口一致 (${st.adventure_no})`);
-ok(meta.includes('一小时阅读 = 十天'), '节奏说明在');
+ok(meta.includes('六分钟阅读 = 故事里十天'), '节奏说明在');
 
 // ── 4. 390px ─────────────────────────────────────────
 await page.setViewportSize({ width: 390, height: 780 });

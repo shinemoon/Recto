@@ -1,0 +1,82 @@
+/* 书宠故事档案页 (/pet/story/) —— 按回查阅。
+ *
+ * 与书宠主页共用 pet.css 的卡片/战报/判定样式, 这里只加档案页自己的。
+ */
+
+.rc-pet-story .card-head .mini {
+  margin-left: auto;
+}
+
+/* 每一回一个折叠块 */
+.rc-pet-story .arch-item {
+  margin: 0 0 8px;
+  border: 1px solid var(--rc-outline-variant, rgba(0, 0, 0, .08));
+}
+.rc-pet-story .arch-item > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 11px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+.rc-pet-story .arch-item > summary::-webkit-details-marker { display: none; }
+.rc-pet-story .arch-item > summary:hover { background: color-mix(in oklab, var(--rc-fg) 4%, transparent); }
+.rc-pet-story .arch-no {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rc-pet-story .arch-title {
+  font-size: 1.02rem;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rc-pet-story .arch-place {
+  color: var(--rc-mute);
+  font-size: .86rem;
+  white-space: nowrap;
+}
+.rc-pet-story .arch-at {
+  margin-left: auto;
+  color: var(--rc-mute);
+  font-size: .82rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rc-pet-story .arch-body {
+  padding: 4px 14px 14px;
+  border-top: 1px solid var(--rc-outline-variant, rgba(0, 0, 0, .08));
+}
+.rc-pet-story .arch-text p {
+  margin: 0 0 .8em;
+  font-size: 1rem;
+  line-height: 1.95;
+  text-indent: 2em;
+}
+.rc-pet-story .arch-text p:last-child { margin-bottom: .2em; }
+
+/* 提示条 (没写进正文的交手 / 判定) */
+.rc-pet-story .arch-warn {
+  margin: 8px 0;
+  padding: 7px 11px;
+  font-size: .88rem;
+  color: var(--rc-danger, #a33);
+  background: color-mix(in oklab, var(--rc-danger, #a33) 8%, transparent);
+}
+
+/* 空态 */
+.rc-pet-story .arch-empty {
+  padding: 22px 14px;
+  color: var(--rc-mute);
+  text-align: center;
+}
+
+@media (max-width: 560px) {
+  .rc-pet-story .arch-at { margin-left: 0; }
+  .rc-pet-story .arch-title { white-space: normal; }
+}

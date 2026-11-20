@@ -51,31 +51,28 @@
     </div>
     <div id="chronicle-out" class="adv-out" hidden></div>
 
-    <!-- 读故事: 一段一段往下读, 空格推进; 读完了折叠起来 -->
-    <div class="adv-read" id="adv-read" hidden>
+    <!-- 它走过的路: 一条连续的路, 空格推一段 (MUD 那样的读法)。
+         不分章节 —— 章节在后台, 要按回查去「故事档案」。 -->
+    <div class="adv-read" id="adv-read">
       <div class="adv-read-bar">
-        <span class="adv-read-title" id="adv-read-title">—</span>
+        <span class="adv-read-title" id="adv-read-title">它走过的路</span>
         <span class="adv-read-prog" id="adv-read-prog">—</span>
+        <a class="mini" id="btn-adv-archive" href="/pet/story/">按回查阅</a>
         <button class="mini" id="btn-adv-restart">从头读</button>
-        <button class="mini" id="btn-adv-fold">收起</button>
       </div>
       <div class="adv-read-body" id="adv-read-body" tabindex="0"
            role="article" aria-label="故事正文"></div>
       <div class="adv-read-foot" id="adv-read-foot">
         <button class="primary" id="btn-adv-next">继续 (空格)</button>
-        <span class="cs-dim" id="adv-read-hint">按空格往下读 · 读完自动收起</span>
+        <span class="cs-dim" id="adv-read-hint">按空格往下读一段 · 它走过的路不分章节</span>
       </div>
       <div class="adv-read-done" id="adv-read-done" hidden>
-        <span>这一回读完了。</span>
-        <button class="mini" id="btn-adv-again">再读一遍</button>
+        <span>走到尽头了。</span>
+        <button class="mini" id="btn-adv-again">从头读</button>
       </div>
     </div>
 
     <div id="adventure-latest" class="adv-latest"></div>
-    <details class="tc-sub" id="adv-history">
-      <summary>往期故事</summary>
-      <div id="adventure-list"></div>
-    </details>
     <div class="cs-meta" id="chronicle-state"></div>
     <div class="cs-meta" id="encounter-chips" style="margin-top:4px"></div>
     <p class="tip">

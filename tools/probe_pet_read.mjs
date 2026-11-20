@@ -1,4 +1,4 @@
-/* 书宠页面改版 —— 读故事 + 人物抽屉 (真浏览器探针)。
+/* 书宠页面 —— 读故事 + 人物抽屉 (真浏览器探针)。
  *
  * 跑法: cd tools && node probe_pet_read.mjs
  * 环境: RECTO_BASE (默认 5015)
@@ -6,12 +6,12 @@
  * 验的事:
  *   · 顶签从 4 个变 3 个 (故事 / 世界 / 设置), 「人物」收进图标抽屉
  *   · 图标点开 → 抽屉浮出来, 里面四段 (人物 / 行囊 / 本事 / 陪读) 能切
- *   · 故事卡: 「读这一回」→ 逐段出现, 空格推进, 读完收起
+ *   · 故事: 一条连续的路 (空格推一段) —— 细节由 probe_pet_story_flow.mjs 验
  *   · 位置记在后端 (刷新页面接着上次那段)
  *   · 390px 无横向溢出 / 0 JS 报错
  *
  * 卫生: 只读 + 本地 UI 操作。不点「出门走一趟」(那会真的推演)。
- *      读完的位置会写后端 —— 收尾把位置清回 0。
+ *      阅读位置会写后端 —— 收尾**还原**到跑之前那个值。
  */
 import { chromium, cookie } from './_env.mjs';
 
@@ -22,34 +22,6 @@ let PASS = 0, FAIL = 0;
 function ok(cond, name) {
   if (cond) { PASS++; console.log('PASS', name); }
   else { FAIL++; console.log('FAIL', name); }
-}
-
-async function clearPos(no) {
-  return page.evaluate(async (n) => {
-    const r = await fetch('/pet/api/reading', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ no: n, para: 0 }),
-    });
-    return r.ok;
-  }, no);
-}
-
-/** 把最新一回的阅读位置清零 (探针要可重复跑)。 */
-async function resetLatest() {
-  return page.evaluate(async () => {
-    const r = await fetch('/pet/api/chronicle', { credentials: 'same-origin' });
-    const d = await r.json();
-    const advs = d.adventures || [];
-    if (!advs.length) return 0;
-    const no = advs[0].no;
-    await fetch('/pet/api/reading', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ no: no, para: 0 }),
-    });
-    return no;
-  });
 }
 
 const browser = await chromium.launch({ args: ['--no-sandbox'] });
@@ -64,16 +36,33 @@ page.on('response', (r) => { if (r.status() >= 400) badResponses.push(r.status()
 page.on('pageerror', (e) => pageErrors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error') pageErrors.push(m.text()); });
 
+/** 读当前后端位置 (快照)。 */
+async function readPos() {
+  return page.evaluate(async () => {
+    const r = await fetch('/pet/api/reading', { credentials: 'same-origin' });
+    const d = await r.json();
+    return (d.pos || {}).idx || 0;
+  });
+}
+
+/** 写位置 (收尾还原用; 位置默认只前进, 还原要带 force)。 */
+async function writePos(idx) {
+  return page.evaluate(async (n) => {
+    const r = await fetch('/pet/api/reading', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idx: n, force: true }),
+    });
+    return r.ok;
+  }, idx);
+}
+
 await page.goto(`${URL}/pet/`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#pg-bar');
-await page.waitForTimeout(900);
+await page.waitForTimeout(1200);
 
-// 位置清零 (探针要可重复跑)
-const latestNo = await resetLatest();
-ok(latestNo > 0, `拿到最新一回了 (第 ${latestNo} 回)`);
-await page.reload({ waitUntil: 'domcontentloaded' });
-await page.waitForSelector('#pg-bar');
-await page.waitForTimeout(800);
+const snapIdx = await readPos();
+console.log(`  (快照位置: idx=${snapIdx})`);
 
 // ── 1. 顶签: 4 → 3 ───────────────────────────────────
 const tabs = await page.$$eval('.pg-tab', (els) => els.map((e) => e.textContent.trim()));
@@ -141,97 +130,42 @@ await page.keyboard.press('Escape');
 await page.waitForTimeout(250);
 ok((await page.$eval('#pg-drawer', (e) => e.hidden)) === true, 'Esc 关抽屉');
 
-// ── 4. 读故事: 逐段推进 ───────────────────────────────
-await page.waitForSelector('#adventure-latest .adv-read-entry button', { timeout: 15000 });
-const entry = await page.evaluate(() => {
-  const b = document.querySelector('#adventure-latest .adv-read-entry button');
-  return { text: b?.textContent?.trim() || '', hidden: !b };
-});
-ok(!entry.hidden, '最新一回有「读这一回」入口');
-ok(/读/.test(entry.text), `入口文案: ${entry.text}`);
-
-// 打开页面就自动摊开在没读过的那段上 (位置已清零 → 第一段)
-const auto = await page.evaluate(() => {
-  const box = document.querySelector('#adv-read');
-  return {
-    open: box && !box.hidden,
-    paras: document.querySelectorAll('#adv-read-body p').length,
-    prog: document.querySelector('#adv-read-prog')?.textContent?.trim() || '',
-  };
-});
-ok(auto.open, '打开页面自动摊开读本');
-ok(auto.paras === 1, `自动落在没读过的那段 got ${auto.paras} 段`);
-ok(/1 \/ /.test(auto.prog), `进度显示: ${auto.prog}`);
-
-// 空格推进
-await page.keyboard.press('Space');
-await page.waitForTimeout(250);
-const after1 = await page.evaluate(() => ({
+// ── 4. 读故事: 一条连续的路 ───────────────────────────
+const read = await page.evaluate(() => ({
+  open: !document.querySelector('#adv-read')?.hidden,
   paras: document.querySelectorAll('#adv-read-body p').length,
   prog: document.querySelector('#adv-read-prog')?.textContent?.trim() || '',
 }));
-ok(after1.paras === 2, `空格推进一段 got ${after1.paras}`);
-ok(/2 \/ /.test(after1.prog), `进度跟着走: ${after1.prog}`);
+ok(read.open, '读本摊开着');
+ok(read.paras >= 1, `读本里有正文 (${read.paras} 段)`);
+ok(/^\d+ \/ \d+ 段$/.test(read.prog), `进度按段记 (${read.prog})`);
 
-// 一路推到读完
-for (let i = 0; i < 60; i++) {
-  const done = await page.evaluate(() =>
-    document.querySelector('#adv-read-done')?.hidden === false);
-  if (done) break;
-  await page.keyboard.press('Space');
-  await page.waitForTimeout(45);
-}
-const fin = await page.evaluate(() => ({
-  doneShown: document.querySelector('#adv-read-done')?.hidden === false,
-  readHidden: document.querySelector('#adv-read')?.hidden === true,
-  paras: document.querySelectorAll('#adv-read-body p').length,
-}));
-ok(fin.doneShown, '读到末尾出现「读完了」');
-ok(fin.readHidden, '读完之后读本自动收起');
-ok(fin.paras > 3, `整回都读过 got ${fin.paras} 段`);
+// 空格推进一段
+const before = read.paras;
+await page.keyboard.press('Space');
+await page.waitForTimeout(280);
+const after = await page.evaluate(() => document.querySelectorAll('#adv-read-body p').length);
+ok(after === before + 1, `空格推进一段 (${before} → ${after})`);
 
 // 位置记在后端
-const pos = await page.evaluate(async () => {
-  const r = await fetch('/pet/api/reading', { credentials: 'same-origin' });
-  const d = await r.json();
-  return d.readpos || {};
-});
-const posVals = Object.values(pos);
-ok(posVals.length > 0 && Math.max(...posVals) > 0,
-   `位置记在后端 got ${JSON.stringify(pos)}`);
+await page.waitForTimeout(300);
+const posNow = await readPos();
+ok(posNow > 0, `位置记在后端 (idx=${posNow})`);
 
 // 刷新 → 接着上次那段
 await page.reload({ waitUntil: 'domcontentloaded' });
-await page.waitForSelector('#adventure-latest .adv-read-entry button', { timeout: 15000 });
-await page.waitForTimeout(700);
-const entry2 = await page.evaluate(() =>
-  document.querySelector('#adventure-latest .adv-read-entry button')?.textContent?.trim() || '');
-ok(/再读一遍|接着读/.test(entry2), `刷新后仍认得读过: ${entry2}`);
-
-// 读完了 → 不自动摊开 (别每次进来都顶一脸字)
-const autoAfterDone = await page.evaluate(() =>
-  document.querySelector('#adv-read')?.hidden === true);
-ok(autoAfterDone, '读完那一回后不再自动摊开');
-
-// 「再读一遍」= 从头开始 (不是从末尾)
-await page.click('#adventure-latest .adv-read-entry button');
-await page.waitForTimeout(350);
-const again = await page.evaluate(() => ({
-  paras: document.querySelectorAll('#adv-read-body p').length,
-  prog: document.querySelector('#adv-read-prog')?.textContent?.trim() || '',
-}));
-ok(again.paras === 1, `「再读一遍」从头开始 got ${again.paras} 段 (${again.prog})`);
-
-// 清位置 (收尾)
-await clearPos(latestNo);
-await page.waitForTimeout(300);
+await page.waitForSelector('#adv-read-body p', { timeout: 15000 });
+await page.waitForTimeout(900);
+const afterReload = await page.evaluate(() =>
+  document.querySelectorAll('#adv-read-body p').length);
+ok(afterReload === after, `刷新后接着上次那段 (${afterReload} 段)`);
 
 // ── 5. 窄屏 ───────────────────────────────────────────
 const m = await ctx.newPage();
 await m.setViewportSize({ width: 390, height: 844 });
 await m.goto(`${URL}/pet/`, { waitUntil: 'domcontentloaded' });
 await m.waitForSelector('#pg-bar');
-await m.waitForTimeout(700);
+await m.waitForTimeout(900);
 const mob = await page.evaluate(() => ({
   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   rail: document.querySelectorAll('.pg-ico-btn').length,
@@ -251,6 +185,10 @@ const mdr = await m.evaluate(() => ({
 }));
 ok(Math.abs(mdr.w - mdr.win) < 2, `手机抽屉占满宽 (${mdr.w}/${mdr.win})`);
 ok(mdr.overflow <= 0, '抽屉开着也不横向溢出');
+
+// ── 6. 还原位置 (收尾) ─────────────────────────────────
+await writePos(snapIdx);
+console.log(`  (位置已还原到 idx=${snapIdx})`);
 
 ok(pageErrors.length === 0, `无 JS 报错 (${pageErrors.length}) ${pageErrors.slice(0, 2).join(' | ')}`);
 if (badResponses.length) {

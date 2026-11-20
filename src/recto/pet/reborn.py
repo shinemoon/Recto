@@ -157,7 +157,7 @@ def _clear_story() -> dict[str, Any]:
     try:
         from recto.pet import reading
 
-        reading.clear()
+        reading.reset()
     except Exception as e:  # noqa: BLE001
         log.warning("复位 · 清阅读位置失败: %s", e)
     return out

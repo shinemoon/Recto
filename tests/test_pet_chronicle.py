@@ -288,7 +288,8 @@ from recto.app import pet as _petapp  # noqa: E402
 
 html = _petapp.page_html()
 ok('id="card-chronicle"' in html, "页面有「游历」卡")
-ok('id="btn-chronicle-run"' in html and 'id="adv-history"' in html, "页面有推演按钮与往期")
+ok('id="btn-chronicle-run"' in html, "页面有推演按钮")
+ok('id="adv-history"' not in html, "前台不分章节 (往期挪到档案页)")
 js = _petapp._UI_DIR.joinpath("pet.js").read_text("utf-8")
 ok("loadChronicle" in js and "/api/chronicle/run" in js, "前端接了推演接口")
 ok("chattiness" not in js, "书宠不再有「话痨程度」(它不说话)")

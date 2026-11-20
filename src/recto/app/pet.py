@@ -26,6 +26,7 @@ from recto.pet import life as life_mod
 from recto.pet import lore as lore_mod
 from recto.pet import proper as proper_mod
 from recto.pet import reading as reading_mod
+from recto.pet import story as story_mod
 from recto.pet import reborn as reborn_mod
 from recto.pet import world as world_mod
 
@@ -37,6 +38,9 @@ _UI_DIR = Path(__file__).resolve().parent / "ui" / "assets"
 _ASSETS = {
     "pet.css": "text/css; charset=utf-8",
     "pet.js": "text/javascript; charset=utf-8",
+    "pet-shared.js": "text/javascript; charset=utf-8",
+    "story.css": "text/css; charset=utf-8",
+    "story.js": "text/javascript; charset=utf-8",
 }
 
 
@@ -50,7 +54,30 @@ def page_html() -> str:
         body_class="rc-pet-page",
         head_extra=(
             '<link rel="stylesheet" href="/pet/static/pet.css">\n'
+            # 共用零件必须**先**加载 (pet.js 在 init 里就用它)
+            '<script src="/pet/static/pet-shared.js"></script>\n'
             '<script src="/pet/static/pet.js" defer></script>'
+        ),
+    )
+
+
+def story_page_html() -> str:
+    """故事档案页 (按回查阅)。
+
+    前台那条路不分章节 —— 要按回看 (第几回 / 交手 / 判定 / 来处),
+    来这个单独页面。
+    """
+    frag = (_UI_DIR / "story.html").read_text("utf-8")
+    return shell.document(
+        title="故事档案",
+        body=frag,
+        active="pet",
+        body_class="rc-pet-page rc-pet-story-page",
+        head_extra=(
+            '<link rel="stylesheet" href="/pet/static/pet.css">\n'
+            '<link rel="stylesheet" href="/pet/static/story.css">\n'
+            '<script src="/pet/static/pet-shared.js"></script>\n'
+            '<script src="/pet/static/story.js" defer></script>'
         ),
     )
 
@@ -277,29 +304,64 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
         except ValueError:
             limit = 20
         return 200, {"adventures": chronicle_mod.adventures(limit=limit),
-                     "cycles": chronicle_mod.cycles(limit=8),
-                     "readpos": reading_mod.all_positions()}
+                     "cycles": chronicle_mod.cycles(limit=8)}
 
-    # 故事读到哪了 (一段一段读的那种进度)
+    # ── 故事 (前台那条连续的路) ─────────────────────────
+    #  前台不划分章节 —— 摊平成一条段落流, 空格推一段。
+    #  按回查 (第几回 / 交手 / 判定 / 来处) 走档案页 /api/story/archive。
+    if path == "/story":
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(getattr(h, "path", "")).query)
+        try:
+            limit = max(1, min(500, int((q.get("limit") or ["200"])[0])))
+        except ValueError:
+            limit = 200
+        chs = story_mod.chapters(limit=limit)
+        flow = story_mod.flatten(chs)
+        pos = reading_mod.get()
+        # 老档 (按回记段数) → 迁成全局段序号, 一次性
+        if pos.get("legacy"):
+            try:
+                idx = story_mod.legacy_global_index(
+                    reading_mod.legacy_positions(), chs)
+                pos = reading_mod.set_idx(idx, force=True)
+            except Exception:  # noqa: BLE001 — 迁不动就当没读过, 别拖垮页面
+                pos = {"idx": 0, "at": "", "legacy": True}
+        return 200, {
+            "chapters": chs,
+            "flow": flow,
+            "total": len(flow),
+            "read": pos,
+            "legacy": bool(pos.get("legacy")),
+        }
+
+    # 档案页: 按回组织, 带交手 / 判定 / 来处
+    if path == "/story/archive":
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(getattr(h, "path", "")).query)
+        try:
+            limit = max(1, min(500, int((q.get("limit") or ["200"])[0])))
+        except ValueError:
+            limit = 200
+        return 200, {"archive": story_mod.archive(limit=limit)}
+
+    # 故事读到哪了 (全局段序号)
+    #
+    # 位置是**高水位** —— 只前进: 回头重读不该抹掉"已经读到哪儿"。
+    # ``force=true`` 才允许往回写 (「从头读」那一下 / 探针还原)。
     if path == "/reading":
         if method == "POST":
             body = _body(h)
             try:
-                no = int(body.get("no") or 0)
+                idx = int(body.get("idx") or 0)
             except (TypeError, ValueError):
-                no = 0
-            try:
-                para = int(body.get("para") or 0)
-            except (TypeError, ValueError):
-                para = 0
-            return 200, {"ok": True, "pos": reading_mod.set_pos(no, para)}
-        q = urllib.parse.parse_qs(urllib.parse.urlparse(getattr(h, "path", "")).query)
-        try:
-            no = int((q.get("no") or ["0"])[0])
-        except ValueError:
-            no = 0
-        return 200, {"pos": reading_mod.get(no),
-                     "readpos": reading_mod.all_positions()}
+                idx = 0
+            force = body.get("force") is True
+            return 200, {"ok": True, "pos": reading_mod.set_idx(idx, force=force)}
+        return 200, {"pos": reading_mod.get()}
+
+    # 老接口 (按回记段数) —— 留着但明说不再支持, 别让人以为位置还在按回记
+    if path == "/reading/legacy":
+        return 200, {"ok": False,
+                     "error": "位置改记全局段序号, 请用 /api/reading (idx)"}
 
     # 补写: 上一回判成长落了地、故事却没写出来的那一趟 (不重判成长)
     if path == "/adventure/backfill":
@@ -366,6 +428,12 @@ def dispatch(h) -> bool:
     # 页面
     if rest in ("/", ""):
         h._send(200, page_html().encode("utf-8"), "text/html; charset=utf-8")  # noqa: SLF001
+        return True
+
+    # 故事档案页 (按回查阅) —— 前台那条路不分章节, 要按回看来这儿
+    if rest in ("/story", "/story/"):
+        h._send(200, story_page_html().encode("utf-8"),  # noqa: SLF001
+                "text/html; charset=utf-8")
         return True
 
     # 资产

@@ -2022,14 +2022,14 @@ def state_view() -> dict[str, Any]:
     }
 
 
-def _readpos_map() -> dict[str, int]:
-    """每回读到第几段 (给页面一次拿全)。"""
+def _readpos_map() -> dict[str, Any]:
+    """读到哪儿了 (全局段序号)。"""
     try:
         from recto.pet import reading as reading_mod
 
-        return reading_mod.all_positions()
+        return reading_mod.get()
     except Exception:  # noqa: BLE001 — 读不到就当没读过, 不拖垮页面
-        return {}
+        return {"idx": 0, "at": "", "legacy": False}
 
 
 # ------------------------------------------------------------------ 心跳

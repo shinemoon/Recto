@@ -14,7 +14,12 @@ const state = {
   ready: false,
   char: null,
   schema: null,
+  story: null,
 };
+
+/* 顶层 const 不是 window 的属性 —— 探针要读现状, 这里挂一份。
+   (经典脚本里 window.state = state 只是多一个引用, 不影响页面行为) */
+window.state = state;
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
@@ -29,6 +34,13 @@ function setStatus(el, msg, kind) {
 }
 
 const PET_BASE = window.RC_PET_BASE || '/pet';
+
+/* 共用零件 (交手战报 / 判定 / 来处 / 类型徽标) —— 与「故事档案」页同一份,
+   见 pet-shared.js。两个页面各自复制一份就会各自漂移。 */
+const RCP = window.RCPetUI;
+if (!RCP) {
+  console.error('pet-shared.js 没加载 —— 战报/判定/来处会渲染不出来');
+}
 
 async function api(url, opts) {
   const res = await fetch(PET_BASE + url, Object.assign({
@@ -933,6 +945,19 @@ $('#btn-models-toggle').onclick = () => {
   $('#btn-models-toggle').textContent = b.classList.contains('hidden') ? '展开' : '收起';
 };
 
+/* ── 共用零件的全局别名 (探针与页面都按全局函数调) ─────────────── */
+const signed = RCP ? RCP.signed : function (n) { return String(n || 0); };
+const d20Verdict = RCP ? RCP.d20Verdict : function () { return ''; };
+const rollRow = RCP ? RCP.rollRow : function () { return ''; };
+const rollsBlock = RCP ? RCP.rollsBlock : function () { return ''; };
+const diceLine = RCP ? RCP.diceLine : function () { return ''; };
+const fightersBlock = RCP ? RCP.fightersBlock : function () { return ''; };
+const duelRound = RCP ? RCP.duelRound : function () { return ''; };
+const duelBlock = RCP ? RCP.duelBlock : function () { return ''; };
+const checksBlock = RCP ? RCP.checksBlock : function () { return ''; };
+const kindBadge = RCP ? RCP.kindBadge : function () { return ''; };
+const echoBlock = RCP ? RCP.echoBlock : function () { return ''; };
+
 /* ───────────────────────── 游历 (后台推演) ───────────────────────── */
 
 function fmtMin(n) {
@@ -947,268 +972,56 @@ function advParagraphs(body) {
   }).join('');
 }
 
-/* ── 掷骰 (d20) 的展示零件 ──────────────────────────────────────
-   后端把每一次掷骰拆成 mods (根骨 / 技能 / 禀赋 / 情境), 这里只负责画。
-   不在这里算任何数 —— 页面上的每一个数都是后端掷出来的。 */
-
-const SRC_CN = { attr: '根骨', skill: '技能', trait: '禀赋', situ: '情境', gear: '器物' };
-
-function signed(n) {
-  n = Number(n) || 0;
-  return (n > 0 ? '+' : '') + n;
-}
-
-function d20Verdict(c) {
-  if (c.crit) return '大成功';
-  if (c.fumble) return '大失败';
-  const kind = String(c.kind || '');
-  if (kind === 'attack') return c.success ? '中' : '不中';
-  if (kind === 'perform') return c.success ? '成了' : '没成';
-  return c.success ? '过' : '没过';
-}
-
-function rollRow(c) {
-  if (!c) return '';
-  const mods = (c.mods || []).map(function (m) {
-    return '<span class="d20-mod" data-src="' + esc(m.src || '') + '" title="' +
-      esc(SRC_CN[m.src] || m.src || '') + '">' + esc(m.name) + ' <b>' +
-      signed(m.value) + '</b></span>';
-  }).join('');
-  const bonus = Number(c.bonus || 0)
-    ? '<span class="d20-mod" data-src="situ">情境 <b>' + signed(c.bonus) + '</b></span>'
-    : '';
-  const cls = c.crit ? 'crit' : (c.fumble ? 'fumble' : (c.success ? 'ok' : 'err'));
-  const dc = Number(c.dc || 0)
-    ? '= ' + c.total + ' vs ' + c.dc +
-      (c.dc_label ? ' <i>' + esc(c.dc_label) + '</i>' : '')
-    : '= ' + c.total;
-  return '<div class="d20-row ' + cls + '">' +
-    '<span class="d20-k">' + esc(c.label || c.kind_cn || '检定') + '</span>' +
-    '<span class="d20-face" title="d20">' + esc(String(c.d20)) + '</span>' +
-    '<span class="d20-mods">' + mods + bonus + '</span>' +
-    '<span class="d20-tot">' + dc + '</span>' +
-    '<span class="d20-v">' + esc(d20Verdict(c)) + '</span>' +
-    '</div>';
-}
-
-function rollsBlock(rolls) {
-  if (!rolls || !rolls.length) return '';
-  return '<div class="d20-rolls">' + rolls.map(rollRow).join('') + '</div>';
-}
-
-function diceLine(dice) {
-  if (!dice || !dice.faces) return '';
-  return '<div class="d20-dice">伤害骰 ' + esc(dice.text || '') + '</div>';
-}
-
-/** 双方交手数据 (护体 / 命中 / 伤害骰) —— 点开才看 */
-function fightersBlock(f, init) {
-  if (!f || !f.me) return '';
-  function side(k, label) {
-    const x = f[k] || {};
-    const dmg = x.damage || {};
-    return '<div class="duel-side"><b>' + esc(x.name || label) + '</b>' +
-      '<span>护体 <b>' + (x.ac == null ? '—' : x.ac) + '</b></span>' +
-      '<span>命中 <b>' + signed(x.attack) + '</b></span>' +
-      '<span>伤害 <b>' + esc(dmg.text || '—') + '</b></span>' +
-      '<span>卸力 <b>' + (x.pierce == null ? '—' : x.pierce) + '</b></span>' +
-      (init && init[k] ? '<span>先攻 <b>' + init[k].total + '</b></span>' : '') +
-      '</div>';
-  }
-  return '<details class="duel-stats"><summary>交手数据与规则</summary>' +
-    '<div class="duel-sides">' + side('me', '我方') + side('foe', '对方') + '</div>' +
-    (init && init.text ? '<div class="cs-dim">' + esc(init.text) + '</div>' : '') +
-    '</details>';
-}
-
-/** 一拍的正文 + 掷骰明细 */
-function duelRound(r, i) {
-  const tag = r.side === 'me' ? '我' : '敌';
-  const move = r.move ? '<span class="duel-move">「' + esc(r.move) + '」</span>' : '';
-  return '<li class="duel-round" data-kind="' + esc(r.kind || '') + '">' +
-    '<span class="duel-r">' + (r.r || i + 1) + '</span>' +
-    '<span class="duel-side-tag">' + tag + '</span>' +
-    '<div class="duel-body"><div class="duel-text">' + move + esc(r.text || '') +
-    '</div>' + rollsBlock(r.rolls) + diceLine(r.dice) + '</div>' +
-    '</li>';
-}
-
-/** 这一回真打的那一场 (后端按 d20 算出来的战报, 不是编的) */
-// 这一趟的来处: 读的是哪一本、哪一章、撞见哪些语料。全部来自账本, 不是模型编的。
-function echoBlock(e) {
-  if (!e || (!(e.books || []).length && !(e.terms || []).length
-    && !(e.spark || []).length)) return '';
-  const books = (e.books || []).map(function (b) {
-    const bits = [];
-    if (b.chapter_label) bits.push('读到 ' + b.chapter_label);
-    if (b.chapters > 0) bits.push('推了 ' + b.chapters + ' 章');
-    if (b.percent_to != null) {
-      bits.push((b.percent_from != null && b.percent_from !== b.percent_to
-        ? b.percent_from + '% → ' : '') + b.percent_to + '%');
-    }
-    if (b.minutes) bits.push(b.minutes + ' 分钟');
-    if (b.notes) bits.push('划线 ' + b.notes);
-    if (b.bookmarks) bits.push('书签 ' + b.bookmarks);
-    return '<li><b>' + esc(b.title || '') + '</b>' +
-      (b.author ? '<span class="echo-au">' + esc(b.author) + '</span>' : '') +
-      (bits.length ? '<span class="echo-meta">' + esc(bits.join(' · ')) + '</span>' : '') +
-      ((b.motif || []).length
-        ? '<span class="echo-motif">' + b.motif.map(function (m) {
-            return '<span class="adv-chip">' + esc(m) + '</span>';
-          }).join('') + '</span>'
-        : '') + '</li>';
-  }).join('');
-  const terms = (e.terms || []).slice(0, 10).map(function (t) {
-    return '<span class="adv-chip echo-term">' + esc(t.term) +
-      (t.count ? ' <b>' + t.count + '</b>' : '') + '</span>';
-  }).join('');
-  // 读到的东西化成了什么 —— 这一层是给读者看的: 故事里的那个人、那处地、
-  // 那件物, 都是从这段时间的阅读里长出来的 (见 pet/spark.py)。
-  const CAT_CN = {person: '人', place: '地', object: '物', org: '势力',
-                  event: '事', work: '书文', term: '名目', time: '时节'};
-  const spark = (e.spark || []).map(function (x) {
-    return '<li><span class="echo-cat">' + esc(CAT_CN[x.cat] || x.cat || '') + '</span>' +
-      '<span class="echo-trace">' + esc(x.trace || '') + '</span>' +
-      (x.image ? '<span class="echo-img">' + esc(x.image) + '</span>' : '') + '</li>';
-  }).join('');
-  return '<div class="adv-echo"><div class="adv-echo-h">这一趟的来处' +
-    (e.minutes ? '<span class="adv-echo-m">这段日子读了 ' + e.minutes + ' 分钟</span>' : '') +
-    '</div>' + (books ? '<ul class="adv-echo-books">' + books + '</ul>' : '') +
-    (terms ? '<div class="adv-echo-terms"><span class="adv-echo-l">' +
-      (e.terms_days ? '近 ' + e.terms_days + ' 天撞见' : '撞见') + '</span>' +
-      terms + '</div>' : '') +
-    (spark ? '<div class="adv-echo-spark"><span class="adv-echo-l">化成了</span>' +
-      '<ul class="echo-spark-list">' + spark + '</ul></div>' : '') +
-    '</div>';
-}
-
-/** 「读这一回」的入口 (带读到哪了)。 */
-function readEntry(a) {
-  if (!a) return '';
-  const paras = splitParas(a.body);
-  if (!paras.length) return '';
-  const done = readPos(a.no);
-  const finished = done >= paras.length;
-  const label = finished ? '再读一遍' : (done > 0 ? '接着读' : '读这一回');
-  const sub = finished
-    ? ('已读完 · 共 ' + paras.length + ' 段')
-    : (done > 0 ? ('读到第 ' + done + ' / ' + paras.length + ' 段') : ('共 ' + paras.length + ' 段'));
-  return '<div class="adv-read-entry">' +
-    '<button class="primary" data-adv-read="' + esc(a.no) + '">' + esc(label) + '</button>' +
-    '<span class="cs-dim">' + esc(sub) + '</span>' +
-    '</div>';
-}
-
-function kindBadge(g) {
-  if (!g || !g.kind) return '';
-  return '<span class="adv-kind" title="' + esc(g.kind_why || '') + '">' +
-    esc(g.kind_cn || '') + ' · ' + esc(({
-      fight: '动手', talk: '会人', observe: '观事',
-      learn: '学艺', rescue: '救人', travel: '行路'
-    })[g.kind] || '') + '</span>';
-}
-
-function duelBlock(d) {
-  if (!d || !d.foe) return '';
-  const rounds = d.rounds || [];
-  const res = d.result === 'win' ? 'ok' : (d.result === 'lose' ? 'err' : 'warn');
-  const hd = rounds.slice(0, 2);
-  return '<div class="adv-duel">' +
-    '<div class="adv-duel-h"><span class="pill ' + res + '">' +
-      esc(d.result_cn || '') + '</span>' +
-      '<b>' + esc(d.foe.name || '对手') + '</b>' +
-      '<span class="cs-dim">' + esc(d.foe.arena || '') +
-      (d.foe.weapon_cn ? ' · ' + esc(d.foe.weapon_cn) : '') + '</span>' +
-      '<span class="cs-dim">' + esc(d.summary || '') + '</span></div>' +
-    '<div class="adv-duel-r">' + hd.map(function (r) {
-      return '<span>' + esc(r.text || '') + '</span>';
-    }).join('') + '</div>' +
-    (d.moves && d.moves.length
-      ? '<div class="adv-chips">' + d.moves.map(function (m) {
-          return '<span class="adv-chip ok">使 ' + esc(m) + '</span>';
-        }).join('') + '</div>'
-      : '') +
-    (rounds.length
-      ? '<details class="duel-log"><summary>完整战报 · ' + rounds.length + ' 拍 · ' +
-        (d.rolls || 0) + ' 次掷骰</summary>' +
-        '<ol class="duel-rounds">' + rounds.map(duelRound).join('') + '</ol>' +
-        '</details>'
-      : '') +
-    fightersBlock(d.fighters, d.initiative) +
-    '<div class="cs-dim adv-duel-f">气血 ' + (d.hp ? d.hp.from + ' → ' + d.hp.to +
-      ' / ' + d.hp.max : '—') + (d.fame ? ' · 声望 +' + d.fame : '') +
-      (d.neili ? ' · 内力 ' + d.neili.from + ' → ' + d.neili.to + ' / ' + d.neili.max : '') +
-      '</div>' +
-    '</div>';
-}
-
-/** 路上的坎 (不打斗的判定) */
-function checksBlock(list) {
-  if (!list || !list.length) return '';
-  return '<div class="adv-checks">' +
-    '<div class="adv-checks-h"><b>路上的坎</b>' +
-    '<span class="cs-dim">' + list.map(function (c) {
-      return esc(c.label || '') + ' ' + (c.success ? '✓' : '✗');
-    }).join(' · ') + '</span></div>' +
-    '<ol class="adv-check-list">' + list.map(function (c) {
-      const pill = c.fumble ? 'err' : (c.success ? 'ok' : 'warn');
-      return '<li class="adv-check"><span class="pill ' + pill + '">' +
-        esc(c.degree_cn || (c.success ? '过' : '没过')) + '</span>' +
-        '<b>' + esc(c.label || '') + '</b>' +
-        '<span class="cs-dim">' + esc(c.target || '') + '</span>' +
-        (c.white ? '<span class="adv-chip">白检定</span>'
-                 : '<span class="adv-chip warn">红检定 · 一次定生死</span>') +
-        '<span class="adv-check-out">' + esc(c.outcome || '') + '</span>' +
-        rollRow(c) + '</li>';
-    }).join('') + '</ol></div>';
-}
-
-
-/* ══════════════ 读故事 (逐段推进) ══════════════
+/* ══════════════ 读故事 (一条连续的路) ══════════════
  *
- * 故事是一段正文, 不是一张卡。读者从**没读过的那段**开始, 按空格往下推进,
- * 读完自动收起 —— 收起后卡片回到"摘要"状态 (标题 / 本回所显 / 来处)。
+ * **不分章节**: 读者看到的是「它走过的路」, 一条往下滚的正文, 像 MUD
+ * 那样按空格推一段。章节是**后台**的事 —— 要按回查 (第几回 / 交手 /
+ * 判定 / 来处), 去档案页 `/pet/story/`。
  *
- * 位置记在后端 (`/pet/api/reading`) 而不是 localStorage: "它走过的路"不该
- * 跟着换设备消失, 也不该被清缓存抹掉。
+ * 空格推**一段** (不是一行): 一段就是一次呼吸, 一次呼吸读不完。
+ *
+ * 段落切分在**后台**做 (`/api/story` 给的是已经切好的 flow) —— 位置
+ * (读到第几段) 是跨端共用的索引, 两边各切一次迟早错位。
+ *
+ * 位置记在后端 (`/pet/api/reading`, 全局段序号) 而不是 localStorage:
+ * "它走过的路"不该跟着换设备消失, 也不该被清缓存抹掉。
  */
 
 const READER = {
-  no: 0,          // 第几回
-  paras: [],      // 段落数组
-  para: 0,        // 已读到第几段 (0 = 一段都还没读)
-  done: false,    // 这一回读完了
-  open: false,    // 读本是不是展开着
+  flow: [],        // 全书段落流 (后端给)
+  total: 0,        // 总段数
+  idx: 0,          // 已读到第几段 (1 基: 第 idx 段正在读)
+  drawn: 0,        // 已经画到第几段 (只往后追加, 不整篇重画)
+  done: false,     // 走到尽头了
+  open: false,     // 读本是不是展开着
 };
 
-function readPos(no) {
-  const rp = (state.chronicle && state.chronicle.readpos) || {};
-  const v = rp[String(no)];
-  return Number(v) || 0;
+/* 探针要读读本现状 (顶层 const 不是 window 的属性) */
+window.READER = READER;
+
+function readIdx() {
+  const r = (state.story && state.story.read) || {};
+  return Number(r.idx) || 0;
 }
 
-function splitParas(body) {
-  return String(body || '')
-    .split(/\n{2,}/)
-    .map(function (p) { return p.trim(); })
-    .filter(function (p) { return p.length > 0; });
-}
-
-/** 把读本铺出来 (位置 = 没读过的那段)。 */
-function readOpen(no, paras) {
+/** 摊开读本 (从**没读过的那段**开始)。 */
+function readOpen(flow, total, idx) {
   const box = $('#adv-read');
   const body = $('#adv-read-body');
   if (!box || !body) return;
-  READER.no = Number(no) || 0;
-  READER.paras = paras || [];
-  // 从**没读过的那段**开始: 上次读完 k 段 → 这次先看见第 k+1 段。
+  READER.flow = flow || [];
+  READER.total = Number(total) || READER.flow.length;
+  // 从**没读过的那段**开始: 上次读到第 k 段 → 这次先看见第 k+1 段。
   // (所以屏幕上一开始就有一段字, 不是空白)
-  const total = READER.paras.length;
-  const read = readPos(READER.no);
-  // 已经读完 → 当作"再读一遍" (从头开始), 否则从**没读过的那段**接上
-  READER.para = total ? (read >= total ? 1 : Math.min(read + 1, total)) : 0;
-  READER.done = total > 0 && READER.para >= total;
+  const read = Number(idx) || 0;
+  READER.idx = READER.total
+    ? (read >= READER.total ? READER.total : Math.min(read + 1, READER.total))
+    : 0;
+  READER.done = READER.total > 0 && READER.idx >= READER.total;
   READER.open = true;
+  READER.drawn = 0;
+  const blank = $('#adv-read-body');
+  if (blank) blank.innerHTML = '';
   box.hidden = false;
   readRender();
 }
@@ -1220,105 +1033,95 @@ function readRender() {
   const prog = $('#adv-read-prog');
   const title = $('#adv-read-title');
   if (!body) return;
-  const total = READER.paras.length;
-  const adv = ((state.chronicle && state.chronicle.adventures) || [])
-    .find(function (a) { return Number(a.no) === Number(READER.no); });
-  if (title) title.textContent = adv ? ('第 ' + adv.no + ' 回 · ' + (adv.title || '')) : '故事';
+  const total = READER.total;
+  if (title) title.textContent = '它走过的路';
   // 只铺到当前段 —— 后面还没读的段不占屏幕 (读者自己一段一段解锁)
-  body.innerHTML = READER.paras.slice(0, READER.para).map(function (p) {
-    return '<p>' + esc(p) + '</p>';
-  }).join('');
-  if (prog) {
-    prog.textContent = total ? (READER.para + ' / ' + total + ' 段') : '—';
+  //
+  // **只往后追加**, 不整篇重画: 这条路可能有几百段, 每按一次空格就
+  // 重建全部 DOM 会明显卡 (真量过: 600+ 段时每按一次重建上千个节点)。
+  // 所以记着"已经画到第几段", 只把新的那几段接上去。
+  if (READER.drawn > READER.idx) {
+    // 往回翻 (Alt+左) —— 少画几段
+    READER.drawn = READER.idx;
+    const keep = body.querySelectorAll('p');
+    for (let i = keep.length - 1; i >= READER.idx; i--) {
+      if (keep[i] && keep[i].parentNode === body) body.removeChild(keep[i]);
+    }
+  } else {
+    for (let i = READER.drawn; i < READER.idx; i++) {
+      const item = READER.flow[i];
+      if (!item) continue;
+      const el = document.createElement('p');
+      el.textContent = item.text;
+      body.appendChild(el);
+    }
+    READER.drawn = READER.idx;
   }
-  const finished = total > 0 && READER.para >= total;
+  if (prog) {
+    prog.textContent = total ? (READER.idx + ' / ' + total + ' 段') : '—';
+  }
+  const finished = total > 0 && READER.idx >= total;
   if (foot) foot.hidden = finished;
   if (doneBox) doneBox.hidden = !finished;
   // 滚到刚解锁的那段
   const last = body.lastElementChild;
-  if (last && READER.para > 0) {
+  if (last && READER.idx > 0) {
     try { last.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (e) { /* 老浏览器 */ }
   }
 }
 
-/** 推进一段 (空格 / 点按钮)。读完 → 记位置 + 收起。 */
+/** 推进一段 (空格 / 点按钮)。走到尽头 → 记位置 + 收尾。 */
 function readNext() {
   if (!READER.open) return;
-  if (READER.para >= READER.paras.length) { readFinish(); return; }
-  READER.para += 1;
+  if (READER.idx >= READER.total) { readFinish(); return; }
+  READER.idx += 1;
   readRender();
   readSave();
-  if (READER.para >= READER.paras.length) readFinish();
+  if (READER.idx >= READER.total) readFinish();
 }
 
 /** 回退一段 (往回看, 不改位置)。 */
 function readPrev() {
-  if (!READER.open || READER.para <= 1) return;
-  READER.para -= 1;
+  if (!READER.open || READER.idx <= 1) return;
+  READER.idx -= 1;
   readRender();
   // 往回看**不**改位置 (读到哪里只前进) —— 否则回头看一眼就把进度抹了
 }
 
-/** 读完了: 记位置 + 收起读本 (故事回到摘要状态)。 */
+/** 走到尽头: 记位置。 */
 function readFinish() {
   READER.done = true;
   readSave();
-  readFold();
 }
 
-function readSave() {
-  const no = READER.no;
-  if (!no) return;
+function readSave(force) {
+  const total = READER.total;
+  if (!total) return;
   // 存的是"**读完**了几段" —— 屏幕上最后那段正在读, 还没算读完
-  const total = READER.paras.length;
-  const finished = READER.para >= total && total > 0;
-  const para = finished ? total : Math.max(0, READER.para - 1);
+  const finished = READER.idx >= total;
+  const idx = finished ? total : Math.max(0, READER.idx - 1);
   api('/api/reading', {
     method: 'POST',
-    body: JSON.stringify({ no: no, para: para }),
+    body: JSON.stringify({ idx: idx, force: force === true }),
   }).then(function (r) {
     const p = (r || {}).pos || {};
-    if (state.chronicle) {
-      state.chronicle.readpos = state.chronicle.readpos || {};
-      state.chronicle.readpos[String(no)] = Number(p.para) || para;
-    }
+    if (state.story) state.story.read = p;
   }).catch(function () { /* 位置记不上不影响读 */ });
 }
 
-/** 收起读本 (回到摘要)。 */
-function readFold() {
-  const box = $('#adv-read');
-  if (box) box.hidden = true;
-  READER.open = false;
-}
-
-/** 展开读本 (从没读过的那段开始)。 */
-function readExpand() {
-  const adv = ((state.chronicle && state.chronicle.adventures) || [])[0];
-  if (!adv) return;
-  readOpen(adv.no, splitParas(adv.body));
-}
-
-/** 打开页面时: 自动把读本摊开在**没读过的那段**上。 */
-function readAutoOpen() {
-  const advs = (state.chronicle && state.chronicle.adventures) || [];
-  if (!advs.length) return;
-  const adv = advs[0];
-  const paras = splitParas(adv.body);
-  if (!paras.length) return;
-  // 已经读完了 → 不自动摊开 (读完了就让它收着, 别每次进来都顶一脸字)
-  if (readPos(adv.no) >= paras.length) return;
-  readOpen(adv.no, paras);
-}
-
+/** 从头读 (回到第一段)。 */
 function readRestart() {
-  READER.para = READER.paras.length ? 1 : 0;
+  READER.idx = READER.total ? 1 : 0;
   READER.done = false;
+  READER.drawn = 0;
+  const body = $('#adv-read-body');
+  if (body) body.innerHTML = '';
   readRender();
-  readSave();
+  // 「从头读」是**明确**的动作 —— 位置回到 0 (平时位置只前进)
+  readSave(true);
 }
 
-/* 键盘: 空格推进 (不在输入框里时) */
+/* 键盘: 空格推进一段 (不在输入框里时) */
 document.addEventListener('keydown', function (e) {
   if (!READER.open) return;
   const t = e.target;
@@ -1334,22 +1137,9 @@ document.addEventListener('keydown', function (e) {
 });
 
 document.addEventListener('click', function (e) {
-  const rd = e.target.closest('[data-adv-read]');
-  if (rd) {
-    const no = Number(rd.dataset.advRead);
-    const adv = ((state.chronicle && state.chronicle.adventures) || [])
-      .find(function (x) { return Number(x.no) === no; });
-    if (adv) {
-      readOpen(no, splitParas(adv.body));
-      const box = $('#adv-read');
-      if (box) box.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    }
-    return;
-  }
   if (e.target.closest('#btn-adv-next')) { readNext(); return; }
   if (e.target.closest('#btn-adv-restart')) { readRestart(); return; }
   if (e.target.closest('#btn-adv-again')) { readRestart(); return; }
-  if (e.target.closest('#btn-adv-fold')) { readFold(); return; }
   // 读本正文区点一下也算推进 (但别把点按钮算进去)
   const body = $('#adv-read-body');
   if (body && body.contains(e.target) && !e.target.closest('button')) {
@@ -1441,92 +1231,42 @@ function renderChronicle(v) {
         '<span class="cs-meta-v">近 7 天没有记录 (打开有语料的书才会记)</span></div>';
   }
 
-  // 最新一回
-  const latest = (v.adventures || [])[0];
   // 上一回合判了成长、故事却没写出来 → 给一个补写入口 (不重判成长)
   const bf = $('#btn-chronicle-backfill');
   if (bf) bf.hidden = !st.last_story_error;
+
+  // 正文不再按回摆成卡片 —— 前台是**一条连续的路** (见 loadStory)。
+  // 「第几回 / 交手 / 判定 / 来处」是**后台**的事, 去档案页看。
   const boxLatest = $('#adventure-latest');
   if (boxLatest) {
-    if (!latest) {
-      boxLatest.innerHTML = '<p class="tip">还没有游历。它会在下一次推演时自己出门 ——' +
-        ' 也可以点上面的「现在推演一回」。</p>';
-    } else {
-      const g = latest.growth || {};
-      const show = [];
-      if (g.days) show.push('故事推进 ' + g.days + ' 日');
-      if (g.exp) show.push('修为 +' + g.exp);
-      (g.skills || []).forEach(function (k) {
-        show.push((k.name || k.id) + ' ' + k.from + '→' + k.to + ' 级');
-      });
-      // 练了但没升级的那几门 —— 「本事在长」不该只在升级那一次才看得见
-      (g.practice || []).forEach(function (k) {
-        if (k.leveled) return;
-        if (g.skills && g.skills.some(function (x) { return x.id === k.id; })) return;
-        show.push((k.name || k.id) + ' 熟练 +' + k.gain);
-      });
-      (g.attrs || []).forEach(function (a) {
-        show.push((a.name || a.key) + ' ' + a.from + '→' + a.to);
-      });
-      if (g.vein) show.push('通经 ' + g.vein + ' 层');
-      if (g.trait) show.push('觉醒「' + g.trait + '」');
-      if (g.tag === 'retire') show.push('退隐 · 待传承');
-      // 掷出来的事 (交手 / 路上的坎) 没写进正文 —— 如实标出来, 不装作打过
-      const warns = [];
-      if (g.duel_omitted) {
-        warns.push('这一回真打了一场, 正文里却没写出来 (战报仍在下面)');
-      }
-      if (g.checks_omitted) {
-        warns.push('这一回路上的坎没写进正文 (判定仍在下面)');
-      }
-      boxLatest.innerHTML =
-        '<article class="adv-card' + (g.tag === 'retire' ? ' is-retire' : '') + '"><header>' +
-        '<span class="adv-no">第 ' + latest.no + ' 回</span>' +
-        kindBadge(g) +
-        '<h3>' + esc(latest.title) + '</h3>' +
-        (latest.place ? '<span class="adv-place">' + esc(latest.place) + '</span>' : '') +
-        '<span class="adv-at">' + esc(String(latest.at || '').replace('T', ' ').slice(0, 16)) +
-        '</span></header>' +
-        (show.length
-          ? '<div class="adv-growth"><span class="adv-growth-l">本回所显</span>' +
-            show.map(function (t) {
-              return '<span class="adv-chip ok">' + esc(t) + '</span>';
-            }).join('') + '</div>'
-          : '') +
-        (warns.length
-          ? warns.map(function (t) {
-              return '<div class="adv-warn">' + esc(t) + '</div>';
-            }).join('')
-          : '') +
-        echoBlock(g.echo) +
-        duelBlock(g.duel) +
-        readEntry(latest) +
-        checksBlock(g.checks) +
-        (latest.terms && latest.terms.length
-          ? '<div class="adv-chips">' + latest.terms.map(function (t) {
-              return '<span class="adv-chip">' + esc(t) + '</span>';
-            }).join('') + '</div>'
-          : '') +
-        '</article>';
-    }
+    const n = (state.story && state.story.total) || 0;
+    boxLatest.innerHTML = n
+      ? '<div class="adv-latest-note">已经走了 ' + n + ' 段。' +
+        '<a href="/pet/story/">按回查阅</a></div>'
+      : '<p class="tip">还没有出门。它会在下一次推演时自己上路 ——' +
+        ' 也可以点上面的「出门走一趟」。</p>';
   }
+}
 
-  // 往期
-  const list = $('#adventure-list');
-  if (list) {
-    const older = (v.adventures || []).slice(1);
-    list.innerHTML = older.length
-      ? older.map(function (a) {
-          const gg = a.growth || {};
-          return '<details class="adv-item"><summary><b>第 ' + a.no + ' 回</b> ' +
-            kindBadge(gg) + ' ' +
-            esc(a.title) + '<span class="adv-at">' +
-            esc(String(a.at || '').replace('T', ' ').slice(0, 16)) + '</span></summary>' +
-            echoBlock(gg.echo) +
-            readEntry(a) +
-            checksBlock(gg.checks) + '</details>';
-        }).join('')
-      : '<p class="tip">还没有更早的游历。</p>';
+/** 故事: 拉那条连续的路, 摊开读本。 */
+async function loadStory() {
+  try {
+    const v = await api('/api/story');
+    state.story = v;
+    const flow = v.flow || [];
+    const total = Number(v.total) || flow.length;
+    const read = (v.read || {}).idx || 0;
+    if (!total) {
+      const body = $('#adv-read-body');
+      if (body) body.innerHTML = '';
+      const box = $('#adv-read');
+      if (box) box.hidden = true;
+      READER.open = false;
+      return;
+    }
+    readOpen(flow, total, read);
+  } catch (e) {
+    setStatus($('#chronicle-status'), e.message, 'err');
   }
 }
 
@@ -1540,7 +1280,7 @@ async function loadChronicle() {
     if ($('#ch-interval')) $('#ch-interval').value = c.interval_min || 120;
     if ($('#ch-minmin')) $('#ch-minmin').value = c.min_minutes || 0;
     if ($('#ch-search')) $('#ch-search').checked = c.search !== false;
-    readAutoOpen();
+    await loadStory();
   } catch (e) {
     setStatus($('#chronicle-status'), e.message, 'err');
   }

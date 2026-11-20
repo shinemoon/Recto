@@ -140,12 +140,21 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 
 ---
 
-## T4 · 历史回合的战斗记录可查看 `todo`
+## T4 · 历史回合的战斗记录可查看 `done` (2026-11-20)
 
 **目标**：往期游历里，每回若打过，提供折叠入口查看完整战报
 （逐拍、掷骰、气血变化），与最新一回一致。
 
-**现状**：战报只挂在最新一回（`adv-hero`）。
+**落点**：由 **T16 的故事档案页**（`/pet/story/`）一并解决 —— 前台那条路
+不分章节，按回查阅就去档案页，每回一个折叠块，展开即见交手战报 /
+路上的坎 / 这一趟的来处 / 本回所显。
+
+* 后端：`pet/story.py` 的 `archive()` 走 `chronicle.adventures()`（那里面
+  已经把老记录缺失的「交手有没有写进正文」两面旗补算过）
+* 前端：`app/ui/assets/story.js` + `pet-shared.js`（战报/判定/来处/徽标
+  与主页共用一份零件）
+* 验收：探针 `probe_pet_story_flow.mjs` 24 项（含「展开的那回带战报 / 判定 /
+  来处 / 所显」）
 
 ---
 
@@ -498,3 +507,47 @@ life / reborn / world / chronicle` 的临时文件名原本只有 pid —— **�
 3. 原子写的临时名只带 pid 不够 —— 同进程多线程会撞。
 4. `prefers-color-scheme` 不跟随 `color-scheme`；`::highlight()` 不支持逗号选择器
    但支持 var() 继承 —— 这三条是实测出来的，不是查文档。
+
+
+---
+
+## T16 § 故事不分章节：一条连续的路 + 档案页（2026-11-20）
+
+**起因**：用户「书宠经历不要显式的分'章节'，你就参考 mud 的逻辑，滚动故事即可
+（后台可以按照章节组织，但是需要打开单独页面来看），空格不是一行一个，而是段落。」
+
+### 三个要求怎么落的
+
+1. **前台不分章节** —— 故事页不再有「第 N 回」的卡片与往期列表，正文是**一条连续的路**。
+2. **后台按回组织，但要单独页面看** —— 新增档案页 `/pet/story/`：按回摆，每回一个
+   折叠块，带交手战报 / 路上的坎 / 这一趟的来处 / 本回所显。读本工具条上有个
+   「按回查阅」入口。
+3. **空格推一段** —— 段落 = 空行分隔的一段（不是一行）。
+
+### 关键决定
+
+| 决定 | 为什么 |
+|---|---|
+| **分段在后台做** | 位置（读到第几段）是跨端共用的索引；两边各切一次迟早错位 |
+| 位置改记**全局段序号** | 一条连续的路只有一个游标；按回记要另开一套映射 |
+| 位置**只前进** | 位置是"已经读过的最远处"；回头重读不该抹掉已读的地方 |
+| 老档**自动迁移** | 老格式按回记段数 → `legacy_global_index` 换算成全局序号（一次性） |
+| DOM **只往后追加** | 600+ 段时每按一次空格就重建上千个节点 → 明显卡 |
+| 零件搬进 `pet-shared.js` | 主页与档案页共用战报/判定/来处/徽标；复制一份必然各自漂移 |
+| 新标题**不带「第N回」** | 回数是后台的事；提示词 `skills/adventure.md` 同步改了 |
+
+### 落地
+
+- 新 `src/recto/pet/story.py`（`chapters` / `archive` / `flatten` / `split_paras` / `clean_title`）
+- `src/recto/pet/reading.py` 重写（全局段序号 + 高水位 + 老档迁移）
+- 新接口：`GET /pet/api/story`、`GET /pet/api/story/archive`、`GET/POST /pet/api/reading`（`idx`）
+- 新页面：`/pet/story/`（`story.html` / `story.css` / `story.js`）
+- 前端：`pet.js` 换成连续读本；`pet-shared.js` 收走共用零件
+
+### 验收
+
+- `tests/test_pet_reading.py` 55 项（全局序号 / 只前进 / 老档迁移 / 页面契约）
+- 新探针 `tools/probe_pet_story_flow.mjs` 24 项（连续的路 / 空格推整段 / 档案页 / 手机）
+- 改 `tools/probe_pet_read.mjs`（28）、`probe_pet_kind.mjs`（19）、`probe_pet_spark.mjs`（12）、
+  `probe_pet_watch.mjs`（13）指到档案页
+- 全套 python 测试绿（只有 `test_excerpt_persist` 那 2 项**既有**失败，基线同样红）
