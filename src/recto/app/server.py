@@ -22,7 +22,7 @@ import traceback
 import urllib.parse
 from http.server import ThreadingHTTPServer
 
-from recto.app import console, corpus, excerpts, pet, reader, webauth
+from recto.app import console, corpus, excerpts, pet, reader, s3link, webauth
 from recto.core import paths
 from recto.core.config import get_config
 
@@ -113,9 +113,34 @@ class Handler(console.Handler):
             return True
         return reader.handle(self)
 
+    # ---- RectoLink (/s3/v1) —— 设备侧接口, 走自己的令牌, 不用网页登录 ----
+    def _serve_s3(self) -> bool:
+        path = urllib.parse.urlparse(self.path).path
+        if not (path == s3link.PREFIX or path.startswith(s3link.PREFIX + "/")):
+            return False
+        u = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(u.query)
+        body: dict = {}
+        if self.command in ("POST", "PUT"):
+            try:
+                body = self._read_json()
+            except Exception:  # noqa: BLE001 — 坏 body 当空 body
+                body = {}
+        token = self.headers.get("X-S3-Token") or ""
+        try:
+            status, payload = s3link.handle(self.command, self.path, query, body, token)
+        except s3link.S3Error as exc:
+            status, payload = exc.status, s3link._err(exc.code, exc.msg)
+        except Exception as exc:  # noqa: BLE001 — 设备不该看到 traceback
+            status, payload = 500, s3link._err("internal", f"{type(exc).__name__}: {exc}")
+        self._json(status, payload)
+        return True
+
     # ---- 派发顺序: 内置阅读器 → 书宠 → 语料 → 摘录 → 控制台 ------------
     def do_GET(self):  # noqa: N802 — BaseHTTPRequestHandler 契约
         path = urllib.parse.urlparse(self.path).path
+        if self._serve_s3():
+            return
         if self._serve_read():
             return
         if self._serve_pet():
@@ -128,6 +153,8 @@ class Handler(console.Handler):
 
     def do_POST(self):  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
+        if self._serve_s3():
+            return
         if self._serve_read():
             return
         if self._serve_pet():
