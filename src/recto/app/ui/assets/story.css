@@ -52,13 +52,7 @@
   padding: 4px 14px 14px;
   border-top: 1px solid var(--rc-outline-variant, rgba(0, 0, 0, .08));
 }
-.rc-pet-story .arch-text p {
-  margin: 0 0 .8em;
-  font-size: 1rem;
-  line-height: 1.95;
-  text-indent: 2em;
-}
-.rc-pet-story .arch-text p:last-child { margin-bottom: .2em; }
+/* (正文的排版规则统一放在文件末尾那一段 `.arch-text p` 里 —— 别在这里再写一遍) */
 
 /* 提示条 (没写进正文的交手 / 判定) */
 .rc-pet-story .arch-warn {
@@ -102,8 +96,34 @@
 }
 .rc-pet-story .arch-order button:hover { color: var(--rc-fg); }
 
-/* 档案页正文也紧凑一点 (与前台同一口径) */
-.rc-pet-story .arch-text p {
-  font-size: .96rem; line-height: 1.8;
-  margin: 0 0 .8em;
+/* ── 档案页正文排版 (与前台读本同一套口径) ────────────────────────────
+ * 前台是"读", 这里是"查" —— 但版式规则相同:
+ *   · 衬线字体 (中文长文耐读)
+ *   · 版心 36em (一行 ~36 字, 超过 45 字眼睛会找不到下一行起点)
+ *   · 两端对齐 + 末行左对齐 + 避头尾 + 中西文自动间距
+ * 与前台用同一个 `--rc-serif` / 同一组 clreq 属性 —— 两处看着像一本书。
+ *
+ * **三处 `.arch-text p` 合并成一处** (原先散在文件三段, 后写的覆盖先写的,
+ * 改版式时很容易漏掉其中一段 —— 2026-11-21 就是这么漏的)。
+ */
+.rc-pet-story .arch-text {
+  font-family: var(--rc-serif);
 }
+.rc-pet-story .arch-text p {
+  max-width: 36em;
+  margin: 0 auto .8em;
+  font-size: .96rem; line-height: 1.8;
+  text-indent: 2em;
+  text-align: justify;
+  text-justify: inter-ideograph;
+  text-align-last: left;
+  line-break: strict;
+  word-break: normal;
+  overflow-wrap: break-word;
+  text-spacing-trim: space-first;
+  text-autospace: normal;
+  hanging-punctuation: allow-end last;
+  text-wrap: pretty;
+  font-kerning: normal;
+}
+.rc-pet-story .arch-text p:last-child { margin-bottom: .2em; }

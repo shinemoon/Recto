@@ -937,6 +937,48 @@
 }
 .rc-pet .adv-read-body p:last-child { margin-bottom: .2em; }
 
+/* ── 正文排版 (中文长文) ────────────────────────────────────────────
+ * 参考 W3C《中文排版需求》(clreq) —— 与阅读器的正文同一套口径。
+ *
+ * **为什么原先难看**: 桌面版一行 78 个字 (版心 1083px / 字号 14.7px),
+ * 中文长文一行超过 45 字, 右边缘全是参差的短头 —— 眼睛找不到下一行的起点。
+ * 而且原来是 `text-align: start` 左对齐 + 无衬线, 更像"日志"不像"书"。
+ *
+ * 七条规则 (全部是渐进增强, 不支持的浏览器按普通规则排):
+ *   1. 版心收窄: 一行 30~45 字最好读 → 正文块 max-width 36em 并居中
+ *   2. 两端对齐 + 末行左对齐 (汉字等宽, 伸缩只发生在标点处, clreq 3.1.2)
+ *   3. 避头尾 line-break: strict (行首不排句读, 行末不排开引号)
+ *   4. 中西文自动间距 text-autospace: normal (clreq 3.2.4)
+ *   5. 行首标点压缩 text-spacing-trim: space-first (clreq 3.2.5, 保留首行缩进)
+ *   6. 行末标点悬挂 hanging-punctuation: allow-end (clreq 3.1.3)
+ *   7. 首行缩进 2 字符 (中文段落标记, 已在上面)
+ *
+ * 字体走衬线 (`--rc-serif`) —— 中文长文比无衬线耐读; 没有衬线中文的
+ * 环境自动退回无衬线 (serif 链末尾有 generic fallback)。
+ */
+.rc-pet .adv-read-body {
+  font-family: var(--rc-serif);
+}
+.rc-pet .adv-read-body > p {
+  max-width: 36em;                 /* 一行 36 字 */
+  margin-left: auto; margin-right: auto;
+  text-align: justify;
+  text-justify: inter-ideograph;  /* 汉字之间均匀伸缩, 不拉西文词距 */
+  text-align-last: left;           /* 末行不撑满 (否则最后一行拉得很散) */
+  line-break: strict;
+  word-break: normal;
+  overflow-wrap: break-word;
+  hyphens: none;
+  text-spacing-trim: space-first;
+  text-autospace: normal;
+  hanging-punctuation: allow-end last;
+  text-wrap: pretty;               /* 避免末段只剩一两个字的孤行 */
+  font-kerning: normal;
+}
+/* 内嵌块 (判定 / 启发 / 交手) 跟正文**同宽同左缘** —— 它是旁注, 不是横幅。
+   旁注用无衬线, 跟正文衬线分开, 一眼分得出"这是正文, 那是旁注"。 */
+.rc-pet .adv-in { font-family: var(--rc-sans); }
+
 /* 档案页入口 (在读本工具条上) */
 .rc-pet .adv-read-bar a.mini {
   font-size: 11px; padding: 3px 9px; text-decoration: none;
@@ -1280,6 +1322,11 @@ body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body p {
   font-size: .92rem; line-height: 1.72;
   margin: 0 0 .68em;
 }
+/* 一屏版: 版心跟着字号一起收 (34em @ .92rem ≈ 500px) —— 桌面上一行 ~33 字,
+   手机上 18~20 字 (版心本来就窄, max-width 不起作用)。 */
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body > p {
+  max-width: 34em;
+}
 body.rc-pet-page:not(.rc-pet-story-page) .adv-read-foot { padding: 5px 12px 6px; gap: 8px; }
 body.rc-pet-page:not(.rc-pet-story-page) .adv-read-foot button { min-height: 30px; font-size: 12px; }
 body.rc-pet-page:not(.rc-pet-story-page) .adv-read-done { padding: 6px 12px; }
@@ -1335,11 +1382,14 @@ body.rc-pet-page:not(.rc-pet-story-page) .pg-diag > summary {
 /* 内嵌块: 跟在那一段正文后面 —— 那一段就是这件事发生的地方。
    宽度**贴着内容** (fit-content), 不要拉成整条横幅 —— 那样看着像
    另一段正文, 不像"这一段的旁注"。
-   左边留一点缩进 = "这是上面那段的事"。 */
+   左缘跟正文对齐 (同样的版心 + auto margin), 再往右缩 1.6em ——
+   "这是上面那段的事" 的旁注感。 */
 .rc-pet .adv-inline {
   display: flex; flex-direction: column; align-items: flex-start;
   gap: 4px;
-  margin: -.35em 0 .85em 1.6em;
+  max-width: 36em;
+  margin: -.35em auto .85em auto;
+  padding-left: 1.6em;
 }
 .rc-pet .adv-in {
   display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px;

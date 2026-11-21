@@ -1509,9 +1509,16 @@ async function loadStory() {
     if (shown) {
       // growth_shown 是**已经算好的字符串列表** (后端给的) —— 直接用,
       // 不要在这儿再算一遍 (两处算就两处漂)。
-      const chips = (latest.growth_shown || []).filter(function (x) {
+      // 模型自报可能一条都不给 (实测真的会留空) —— 那就按账本折算, 别空着。
+      // 账本 (growth) 是唯一事实; 自报只挑"写进故事的那几条"。
+      let picks = (latest.growth_shown || []).filter(function (x) {
         return !!String(x || '').trim();
       });
+      if (!picks.length) {
+        picks = (RCP && RCP.growthChips ? RCP.growthChips(latest.growth) : [])
+          .filter(function (x) { return !!String(x || '').trim(); });
+      }
+      const chips = picks;
       shown.innerHTML = chips.length
         ? '<span class="adv-shown-l">这一趟长出来的</span>' +
           chips.map(function (t) {

@@ -120,6 +120,9 @@ ok("RCP.duelBlock(g.duel)" in js, "完整交手战报在「这一趟的账」里
 ok("RCP.echoBlock(g.echo)" in js, "来处在「这一趟的账」里")
 ok('id="adv-shown"' in html, "有「这一趟长出来的」")
 ok("growth_shown" in js, "「这一趟长出来的」用后端算好的")
+ok("RCP.growthChips(latest.growth)" in js,
+   "模型自报留空时按账本折算 (自报不可信)")
+ok("if (!picks.length)" in js, "只有自报为空才折算 (不覆盖模型挑的那几条)")
 
 # ── 5. 字体紧凑 ──────────────────────────────────────────────────
 ok(".adv-read-body p {" in css, "正文有样式")

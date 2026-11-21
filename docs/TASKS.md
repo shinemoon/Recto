@@ -758,3 +758,74 @@ score = 关键词命中数 × 4 + 最长公共子串长度
 - `tools/probe_pet_style.mjs` **基线就红**：它直接点 `#llm-base` / 量 `#pet-state`，
   但那两块都在**默认收起的「设置」页签**里 → 祖先 `.pg-pane` 是 `display:none`
   → 量出 0×0、click 等到超时。改成先切页签 → 9/9 全绿
+
+## T20 § 书宠正文排版（中文长文 / clreq）— `done` (2026-11-21)
+
+### 用户口径
+
+> 「正文排版要美观，字体可稍紧凑」
+
+T19 把判定 / 启发嵌回了正文对应那一段，但正文本身还是"日志"的样子：
+桌面 **一行 78 字**（版心 1083px ÷ 字号 14.7px）、左对齐、无衬线。
+中文长文一行超过 45 字，右边缘全是参差的短头 —— 眼睛找不到下一行的起点。
+
+### 七条规则（全部渐进增强，与阅读器正文同一套口径）
+
+| 规则 | 为什么 |
+|---|---|
+| 版心上限 **36em** 并居中 | 一行 ~36 字；超过 45 字读起来会串行 |
+| 两端对齐 + 末行左对齐 | 汉字等宽，伸缩只发生在标点处（clreq 3.1.2） |
+| `line-break: strict` | 行首不排句读、行末不排开引号 |
+| `text-autospace: normal` | 中西文之间不再贴在一起（clreq 3.2.4） |
+| `text-spacing-trim: space-first` | 行首标点压缩，但保留首行缩进（clreq 3.2.5） |
+| `hanging-punctuation: allow-end last` | 行末标点悬挂，右边缘齐（clreq 3.1.3） |
+| 衬线 `--rc-serif` + `text-wrap: pretty` | 中文长文比无衬线耐读；避免末段孤行 |
+
+一屏版（`body.rc-pet-page:not(.rc-pet-story-page)`）另给 **34em**，跟着 `.92rem`
+一起收 —— 桌面一行 ~33 字，手机上 18~20 字（版心本来就窄，max-width 不起作用）。
+
+### 内嵌块（判定 / 启发 / 交手）
+
+原先 `margin-left: 1.6em` 是"跟着正文左缘缩进"。版心居中了以后这个写法会
+**漂到版心外面**去 → 改成同样的 `max-width + auto margin`，再 `padding-left: 1.6em`：
+左缘与正文同一条竖线，内容缩进一格，仍是"上面那段的事"的旁注感。
+旁注用 `--rc-sans`，与正文衬线分开 —— 一眼分得出"这是正文，那是旁注"。
+
+### 档案页
+
+`.arch-text p` 原先在 story.css 里**写了三处**（后写的覆盖先写的），改版式时极易漏掉其中一段
+—— 2026-11-21 就是这么漏的。合并成末尾一处，与前台同一组 clreq 属性；
+字号 `.96rem` / 行高 1.8，比前台读本（`.92rem` / 1.72）略松（前台是"读"，这里是"查"）。
+
+### 落地
+
+- `src/recto/app/ui/assets/pet.css`：新「正文排版 (中文长文)」段 + 一屏版 34em + 内嵌块改版心对齐
+- `src/recto/app/ui/assets/story.css`：三处 `.arch-text p` 合并为一处，补 clreq 属性
+- `tests/test_pet_story_type.py`（新，28 项）—— 渐进增强属性拿不到 computed，只能验 CSS 声明
+- `tools/probe_story_type.mjs`（36 项，真浏览器双视口 × 前台/档案页）：
+  一行字数（18~45 之间）、justify、衬线落地、首行缩进 2 字符、`line-break: strict`、0 JS 报错
+- `tools/measure_story_type.mjs`：只量不判的测量工具（调版心/字号时用）
+
+### 验收
+
+- `test_pet_story_type` 28/28 · 全套 python 测试绿（仅 `test_excerpt_persist` 那 2 项既有失败，
+  stash 对照基线同样红）
+- 探针 `probe_story_type` **36/36**：前台 1280 一行 37 字、390 一行 ~19 字；
+  档案页 1280 一行 37 字、390 一行 18~22 字；两处 `font-family` 都落到 `Source Serif 4`
+- CSS 是静态资产（每请求读盘 + `no-store`）→ **刷新即生效，不用重启**
+
+### 顺手修的真 bug：「这一趟长出来的」整条空白
+
+验收探针 `probe_pet_story_flow` 报 `FAIL 「这一趟长出来的」有内容 ()`。
+查下来不是 CSS，是 T19 留下的一个洞：这一条只吃**模型自报**的 `growth_shown`
+（`skills/adventure.md` 里让模型"照 growth 里的名字抄 1~2 条"），
+而这一回实测它**一条都没给** —— 于是账本里有 `修为 +28`、`医术 熟练 +9`、
+`追踪 熟练 +9`，界面上却什么也不显示。
+
+模型自报不可信这件事在 T19 就已经记过一次（`duel_shown` 三回全留空），
+`growth_shown` 是同一个病。修法是**只在内报为空时**按账本折算
+（`RCP.growthChips(latest.growth)`，与档案页同一份实现），模型挑了就用它挑的 ——
+自报的用处是"挑出写进故事的那两三条"，不是"决定有没有成长"。
+
+`tests/test_pet_latest.py` 加两条钉住这个顺序（自报优先 + 只在自己为空时折算），
+免得以后有人把它改成"一律按账本"（那样就把"写进故事"与"实际长进"混成一回事了）。
