@@ -20,6 +20,12 @@ page.on('pageerror', (e) => errs.push(String(e)));
 await page.goto(`${URL}/pet/`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(600);
 
+// **先切到「设置」页签**: #pet-state 与 #llm-base 都在那一页签里,
+// 默认显示的是「故事」页签 → 祖先 .pg-pane display:none → 量出来 0×0,
+// playwright 的 click 也会一直等到超时。
+await page.click('.pg-tab[data-pg="setup"]');
+await page.waitForTimeout(250);
+
 // 状态药丸: 用的是全局 .pill (Material chip)
 const pill = await page.$eval('#pet-state', (el) => {
   const cs = getComputedStyle(el);
@@ -34,6 +40,11 @@ ok(pill.w > 20, `药丸有宽度 (${pill.w}px)`);
 ok(pill.radius === '0px', `药丸跟着全站走直角 (${pill.radius})`);
 
 // 聚焦指示线
+const llmVisible = await page.$eval('#llm-base', (el) => {
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0;
+});
+ok(llmVisible, '切到「设置」页签后端点输入可见');
 await page.click('#llm-base');
 await page.waitForTimeout(150);
 const focused = await page.$eval('#llm-base', (el) => getComputedStyle(el).boxShadow);

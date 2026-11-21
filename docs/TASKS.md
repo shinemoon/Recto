@@ -692,3 +692,69 @@ life / reborn / world / chronicle` 的临时文件名原本只有 pid —— **�
 - 既有 pet 探针无回归（`probe_pet_read` / `mudread` / `read_reset` / `read_sticky` /
   `story_flow` 的失败**基线同样红** —— 故事已读完 idx=695/695 的数据状态）
 - 全套 python 测试绿（只有 `test_excerpt_persist` 那 2 项**既有**失败）
+---
+
+## T19 § 前台只显示最新一回 + 判定/启发嵌在正文对应位置 — `done` (2026-11-21)
+
+### 用户口径
+
+> 「书宠经历不要显式地分『章节』，参考 mud 的逻辑，滚动故事即可（后台可以按照章节组织，
+> 但是需要打开单独页面来看），空格不是一行一个，而是段落」
+
+上一轮（T16/T17/T18）做的是「全书摊平成一条连续的路」。这一轮改口径：
+**前台只显示最新的一回** —— 因为「掷出来的事」本来就有它发生的那一段，
+摊平全书时无法把判定/启发放回它该在的位置。
+
+### 关键决定
+
+| 决定 | 为什么 |
+|---|---|
+| 前台 = **最新一回** | 判定/启发/交手都要**回到正文里对应的那一段**；摊平全书时做不到 |
+| 位置改记 **(回号, 段号)** | 全局段序号在「新回一出来」时会跳 —— 读者还没读新回，位置却显示「读完了」 |
+| **锚不上就不锚** | 锚错比不锚更坏：模型自报「已写进正文」不可信（实测三回全留空），只能靠文本核实 |
+| 锚点要**分得出高低** | 一段 3 字公共子串就命中地名 ≠ 那件事写在那儿；要比第二名高 ≥2 分 |
+| 档案页加**正序/倒序** | 后台按回查时，"最新在前"和"最早在前"各有用途；记在 URL (`?ord=desc`) |
+
+### 锚点算法（`story._anchor`）
+
+```
+score = 关键词命中数 × 4 + 最长公共子串长度
+接受 = score ≥ 4  且  score − 第二名 ≥ 2
+```
+
+- 化身自带 **keys**（几个普通词，人名地名已过滤）→ 权重最高
+- 否则按最长公共子串（≥3 字）
+- 锚不上 → 收进正文末尾的「补记」区，明说「正文里没写这几件」
+
+### 落地
+
+- `src/recto/pet/story.py`：新增 `latest()` / `_inline_blocks()` / `_anchor()` /
+  `_anchor_keys()` / `_spark_keys_map()` / `migrate_position()`
+- `src/recto/pet/reading.py`：存档格式 **v3 = `{v, round, idx}`**；`set_pos()` 取代
+  `set_idx()`（后者留成显式废弃的兼容层）；v1/v2 老档一次性迁移
+- `src/recto/pet/chronicle.py`：化身的 `keys` 落进 `growth.echo.spark`
+- `src/recto/app/pet.py`：新接口 `GET /api/story/latest`；`/api/reading` 收 `(round, idx)`
+- `src/recto/app/ui/assets/pet-shared.js`：`checkInline` / `sparkInline` / `duelInline`
+  （轻量一行，掷骰明细塞 title，完整战报留档案页）
+- `src/recto/app/ui/assets/pet.{html,js,css}`：标题 + 类型徽标 + 「这一趟长出来的」+
+  内嵌块渲染 + 「这一趟的账」折叠块
+- `src/recto/app/ui/assets/story.{html,js,css}`：档案页正序/倒序切换
+- `tests/test_pet_latest.py`（新，58 项）/ `tests/test_pet_reading.py`（110 项）
+- 探针：`probe_pet_story_flow`（45 项）/ `onescreen`（21）/ `mudread`（20）/ `read`（29）/
+  `read_reset`（6）/ `read_sticky`（6）
+
+### 验收
+
+- 全套 python 测试绿（`test_pet_latest` 58 / `test_pet_reading` 110 /
+  `test_pet_onescreen` 43）—— 只有 `test_excerpt_persist` 那 2 项**既有**失败
+  （stash 对照基线同样红）
+- 探针全绿：story_flow 45 / onescreen 21 / mudread 20 / read 29 / read_reset 6 /
+  read_sticky 6 / story 34 / char 59 / kind 19 / spark 12 / ui 36 / style 9
+- 实测（生产 5015）：第 34 回 15 段 · 6 组内嵌块 · 位置记 `round=34 idx=15` ·
+  刷新后落回同一段 · 空格翻一屏 Δ374px · 页面自己没被卷走
+
+### 顺手修的既有失败
+
+- `tools/probe_pet_style.mjs` **基线就红**：它直接点 `#llm-base` / 量 `#pet-state`，
+  但那两块都在**默认收起的「设置」页签**里 → 祖先 `.pg-pane` 是 `display:none`
+  → 量出 0×0、click 等到超时。改成先切页签 → 9/9 全绿

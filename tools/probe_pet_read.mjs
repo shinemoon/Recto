@@ -41,7 +41,8 @@ async function readPos() {
   return page.evaluate(async () => {
     const r = await fetch('/pet/api/reading', { credentials: 'same-origin' });
     const d = await r.json();
-    return (d.pos || {}).idx || 0;
+    const p = d.pos || {};
+    return { round: p.round || 0, idx: p.idx || 0 };
   });
 }
 
@@ -62,7 +63,7 @@ await page.waitForSelector('#pg-bar');
 await page.waitForTimeout(1200);
 
 const snapIdx = await readPos();
-console.log(`  (快照位置: idx=${snapIdx})`);
+console.log(`  (快照位置: round=${snapIdx.round} idx=${snapIdx.idx})`);
 
 // ── 1. 顶签: 4 → 3 ───────────────────────────────────
 const tabs = await page.$$eval('.pg-tab', (els) => els.map((e) => e.textContent.trim()));
@@ -152,13 +153,23 @@ const afterScroll = await page.evaluate(() => {
   return { st: b.scrollTop, ch: b.clientHeight, idx: window.READER ? window.READER.idx : 0 };
 });
 const delta = afterScroll.st - beforeScroll.st;
-ok(delta > 0 && Math.abs(delta - afterScroll.ch) < afterScroll.ch * 0.15,
-   `空格翻一屏 (Δ${Math.round(delta)} vs 视口 ${afterScroll.ch})`);
+// 一屏 = 视口高, 但**内容不够长时滚不满一屏** (最新那一回可能就十几段) ——
+// 那就滚到尽头。
+const maxScroll = await page.evaluate(() => {
+  const b = document.querySelector('#adv-read-body');
+  return Math.max(0, b.scrollHeight - b.clientHeight);
+});
+const expect = Math.min(afterScroll.ch, maxScroll);
+ok(delta > 0 && Math.abs(delta - expect) < Math.max(12, expect * 0.15),
+   `空格翻一屏 (Δ${Math.round(delta)} vs 期望 ${Math.round(expect)} · 视口 ${afterScroll.ch})`);
 
 // 位置记在后端
-await page.waitForTimeout(300);
+// (存盘有 600ms 防抖 —— 滚动是连续的, 一次翻屏连着滚很多事件)
+// 原来只等 300ms, 常常读到**上一次**的位置 —— 之前这条断言是
+// "恰好"过了 (位置本来就残留着 695)。现在等够防抖。
+await page.waitForTimeout(900);
 const posNow = await readPos();
-ok(posNow > 0, `位置记在后端 (idx=${posNow})`);
+ok(posNow.idx > 0, `位置记在后端 (round=${posNow.round} idx=${posNow.idx})`);
 
 // 刷新 → 接着上次读到的地方 (位置 = 窗口底压着的那一段)
 await page.reload({ waitUntil: 'domcontentloaded' });
@@ -200,7 +211,7 @@ ok(mdr.overflow <= 0, '抽屉开着也不横向溢出');
 
 // ── 6. 还原位置 (收尾) ─────────────────────────────────
 await writePos(snapIdx);
-console.log(`  (位置已还原到 idx=${snapIdx})`);
+console.log(`  (位置已还原到 round=${snapIdx.round} idx=${snapIdx.idx})`);
 
 ok(pageErrors.length === 0, `无 JS 报错 (${pageErrors.length}) ${pageErrors.slice(0, 2).join(' | ')}`);
 if (badResponses.length) {

@@ -249,6 +249,57 @@ window.RCPetUI = (function () {
     return warns;
   }
 
+  /* ── 内嵌块 (前台: 最新一回) ───────────────────────────────────
+     判定 / 化身 / 交手 都要**回到正文里对应的那一段** —— 那一段就是
+     这件事发生的地方。内嵌块因此必须**轻**: 一行能读完, 掷骰明细塞进
+     title (悬停可见), 完整战报留在档案页。 */
+
+  /** 路上的坎 —— 内嵌。掷骰明细塞 title, 不占版面。 */
+  function checkInline(c) {
+    if (!c) return '';
+    const pill = c.fumble ? 'err' : (c.success ? 'ok' : 'warn');
+    const res = c.success ? '过了' : '没过';
+    const out = c.outcome || c.hint || '';
+    const dice = c.total != null && c.dc != null
+      ? ('d20 ' + c.d20 + (c.mod ? ' +' + c.mod : '') + ' = ' + c.total +
+         ' / ' + (c.dc_label || c.dc))
+      : '';
+    return '<div class="adv-in adv-in-check" title="' + esc(dice || res) + '">' +
+      '<span class="adv-in-tag ' + pill + '">路上的坎</span>' +
+      '<b>' + esc(c.label || '') + '</b>' +
+      '<span class="adv-in-res">' + esc(res) + '</span>' +
+      (out ? '<span class="adv-in-out">' + esc(out) + '</span>' : '') +
+      '</div>';
+  }
+
+  /** 化身 (这一趟读到的化成的东西) —— 内嵌。 */
+  function sparkInline(s) {
+    if (!s) return '';
+    return '<div class="adv-in adv-in-spark">' +
+      '<span class="adv-in-tag">化成了</span>' +
+      '<span class="adv-in-cat">' + esc(CAT_CN[s.cat] || s.cat || '') + '</span>' +
+      '<span class="adv-in-trace">' + esc(s.trace || '') + '</span>' +
+      (s.image ? '<span class="adv-in-img">' + esc(s.image) + '</span>' : '') +
+      '</div>';
+  }
+
+  /** 交手 —— 内嵌 (一行; 完整战报去档案页)。 */
+  function duelInline(d) {
+    if (!d || !d.foe) return '';
+    const res = d.result === 'win' ? 'ok' : (d.result === 'lose' ? 'err' : 'warn');
+    const hp = d.hp || {};
+    return '<div class="adv-in adv-in-duel">' +
+      '<span class="adv-in-tag ' + res + '">动了手</span>' +
+      '<b>' + esc(d.foe.name || '对手') + '</b>' +
+      '<span class="adv-in-res">' + esc(d.result_cn || '') + '</span>' +
+      (hp.from != null && hp.to != null
+        ? '<span class="adv-in-out">气血 ' + hp.from + ' → ' + hp.to + '</span>' : '') +
+      ((d.moves || []).length
+        ? '<span class="adv-in-out">使过 ' + esc((d.moves || []).slice(0, 2).join(' / ')) +
+          '</span>' : '') +
+      '</div>';
+  }
+
   const api = {
     esc: esc,
     signed: signed,
@@ -260,6 +311,9 @@ window.RCPetUI = (function () {
     duelRound: duelRound,
     duelBlock: duelBlock,
     checksBlock: checksBlock,
+    checkInline: checkInline,
+    sparkInline: sparkInline,
+    duelInline: duelInline,
     kindBadge: kindBadge,
     echoBlock: echoBlock,
     growthChips: growthChips,

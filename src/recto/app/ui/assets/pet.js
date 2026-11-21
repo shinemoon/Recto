@@ -990,17 +990,20 @@ function advParagraphs(body) {
  *
  * **位置 = 窗口底压着的那一段**: 眼睛看到屏幕底就等于读到那儿了。
  *
- * **段落切分在后台做** (`/api/story` 给的是已经切好的 flow) —— 位置
- * (读到第几段) 是跨端共用的索引, 两边各切一次迟早错位。
+ * **段落切分与内嵌锚点在后台做** (`/api/story/latest` 给的是最新一回 +
+ * 已算好锚点的 flow) —— 位置 (读到第几段) 是跨端共用的索引, 两边各算一次
+ * 迟早错位。判定 / 启发 / 交手都**嵌在正文里对应的那一段**。
  *
  * **位置记在后端** (`/pet/api/reading`, 全局段序号) 而不是 localStorage:
  * "它走过的路"不该跟着换设备消失, 也不该被清缓存抹掉。
  */
 
 const READER = {
-  flow: [],        // 全书段落流 (后端给)
-  total: 0,        // 总段数
-  idx: 0,          // 已读到第几段 (= 窗口底压着的那一段)
+  flow: [],        // 最新一回的段落组 (后端给): [{text, blocks:[...]}]
+  total: 0,        // 这一回有几段
+  round: 0,        // 这一回是第几回 (位置记的是 (回号, 段号))
+  savedRound: 0,   // 存档里的回号 (与 round 不同 = 换了更新的一回 → 从头读)
+  idx: 0,          // 已读到第几段 (= 窗口底压着的那一段, 本回内)
   drawn: 0,        // DOM 里画到第几段 (段是连续的 1..drawn)
   done: false,     // 走到尽头了
   open: false,     // 读本是不是展开着
@@ -1038,15 +1041,22 @@ window.READER = READER;
  *
  * 打开时**对齐到存档位置**: 窗口底落在上次读到的那一段的下沿, 读者
  * 看到的还是上次那一屏, 再按空格就往下走。
+ *
+ * 位置是 **(回号, 段号)**: 换到更新的一回 → 那一回从第 0 段起 (新内容);
+ * 同一回里 → 接着上次读到的那段。
  */
-function readOpen(flow, total, idx) {
+function readOpen(flow, total, idx, round) {
   const box = $('#adv-read');
   const body = $('#adv-read-body');
   if (!box || !body) return;
   READER.flow = flow || [];
   READER.total = Number(total) || READER.flow.length;
-  const read = Math.max(0, Number(idx) || 0);
-  READER.idx = read;
+  READER.round = Number(round) || 0;
+  // 存档是 (回号, 段号) —— 回号对不上 (= 换了更新的一回) → 从头读
+  const savedRound = Number(READER.savedRound) || 0;
+  let read = Math.max(0, Number(idx) || 0);
+  if (savedRound && savedRound !== READER.round) read = 0;
+  READER.idx = Math.min(read, READER.total);
   READER.done = false;
   READER.open = true;
   READER.drawn = 0;
@@ -1055,11 +1065,11 @@ function readOpen(flow, total, idx) {
   body.innerHTML = '';
   box.hidden = false;
   // 先画够一屏 + 后面一截 (滚动要有料)
-  readEnsure(Math.min(READER.total, read + READER_LOOKAHEAD));
+  readEnsure(Math.min(READER.total, READER.idx + READER_LOOKAHEAD));
   // 对齐到存档位置 (从没用过 → 从头看)
   // **加锁**: 这一滚是程序化对齐, 不是读者在读 —— 不该算进度。
   readLock();
-  readScrollToBottom(read);
+  readScrollToBottom(READER.idx);
   // **打开时不推进位置** —— 见 readSync 的 advance 说明
   readSync(false, false);
   // 之前挂着的存盘定时器 (读别的页面时排的) 得撤掉 ——
@@ -1077,6 +1087,18 @@ function readRectOf(el) {
   return { top: base + r.top, bot: base + r.bottom };
 }
 
+/* 内嵌块 (判定 / 启发 / 交手) 的渲染 —— 零件在 pet-shared.js (与档案页共用) */
+function readInlineHtml(blocks) {
+  if (!blocks || !blocks.length || !RCP) return '';
+  return blocks.map(function (b) {
+    const d = b.data || {};
+    if (b.type === 'check') return RCP.checkInline(d);
+    if (b.type === 'spark') return RCP.sparkInline(d);
+    if (b.type === 'duel') return RCP.duelInline(d);
+    return '';
+  }).join('');
+}
+
 /** 往后面补画段 (滚到画出来的尽头时要续)。 */
 function readEnsure(upto) {
   const body = $('#adv-read-body');
@@ -1087,8 +1109,19 @@ function readEnsure(upto) {
     const item = READER.flow[i];
     if (!item) break;
     const el = document.createElement('p');
-    el.textContent = item.text;
+    el.textContent = item.text || '';
     body.appendChild(el);
+    // 内嵌块**跟在那一段后面** —— 那一段就是这件事发生的地方。
+    const inl = readInlineHtml(item.blocks);
+    if (inl) {
+      const box = document.createElement('div');
+      // 锚不上的那些 (正文里真没写那件事) → 标成"末尾补记",
+      // 读者一眼看得出"这件事没写进正文里"。
+      box.className = 'adv-inline' + (item.tail ? ' adv-inline-tail' : '');
+      box.innerHTML = (item.tail
+        ? '<div class="adv-inline-tag">正文里没写这几件 · 补记</div>' : '') + inl;
+      body.appendChild(box);
+    }
     const rc = readRectOf(el);
     if (rc) { READER.tops.push(rc.top); READER.bots.push(rc.bot); }
   }
@@ -1263,7 +1296,8 @@ function readSave(force) {
     method: 'POST',
     // clamp=false: 读者真读到了那儿 (拖滚动条一次滑到底是合法的) ——
     // 后端那个"一次跳太远就夹住"的闸是给手滑/脚本用的, 这里不适用。
-    body: JSON.stringify({ idx: idx, force: force === true, clamp: false }),
+    body: JSON.stringify({ round: READER.round, idx: idx,
+                            force: force === true, clamp: false }),
   }).then(function (r) {
     const p = (r || {}).pos || {};
     if (state.story) state.story.read = p;
@@ -1430,38 +1464,110 @@ function renderChronicle(v) {
   const bf = $('#btn-chronicle-backfill');
   if (bf) bf.hidden = !st.last_story_error;
 
-  // 正文不再按回摆成卡片 —— 前台是**一条连续的路** (见 loadStory)。
-  // 「第几回 / 交手 / 判定 / 来处」是**后台**的事, 去档案页看。
+  // 前台显示的是**最新的一回** (见 loadStory); 往期去档案页按回查。
   const boxLatest = $('#adventure-latest');
   if (boxLatest) {
-    const n = (state.story && state.story.total) || 0;
-    boxLatest.innerHTML = n
-      ? '<div class="adv-latest-note">已经走了 ' + n + ' 段。' +
+    const L = state.story && state.story.latest;
+    const rounds = (L && L.rounds) || 0;
+    boxLatest.innerHTML = L && (L.paras || []).length
+      ? '<div class="adv-latest-note">已经走了 ' + rounds + ' 回 · 这一回 ' +
+        (L.paras || []).length + ' 段。' +
         '<a href="/pet/story/">按回查阅</a></div>'
       : '<p class="tip">还没有出门。它会在下一次推演时自己上路 ——' +
         ' 也可以点上面的「出门走一趟」。</p>';
   }
 }
 
-/** 故事: 拉那条连续的路, 摊开读本。 */
+/**
+ * 故事: 拉**最新的一回**, 摊开读本。
+ *
+ * 判定 / 启发 / 交手 已经由后端算好锚点 (嵌在哪一段), 前端只画。
+ */
 async function loadStory() {
   try {
-    const v = await api('/api/story');
+    const v = await api('/api/story/latest');
     state.story = v;
-    const flow = v.flow || [];
-    const total = Number(v.total) || flow.length;
-    const read = (v.read || {}).idx || 0;
+    const latest = v.latest || {};
+    const flow = latest.flow || [];
+    const total = Number(latest.total) || (latest.paras || []).length;
+    const read = v.read || {};
+    // 存档的 (回号, 段号) —— 回号对不上就从头读 (换了更新的一回)
+    READER.savedRound = Number(read.round) || 0;
+    const savedIdx = Number(read.idx) || 0;
+    // 标题 / 类型徽标 / 本回所显
+    const title = $('#adv-read-title');
+    if (title) title.textContent = latest.title || '最新一回';
+    const kind = $('#adv-read-kind');
+    if (kind) {
+      const k = (RCP && latest.kind) ? RCP.kindBadge({
+        kind: latest.kind, kind_cn: latest.kind_cn, kind_why: latest.kind_why
+      }) : '';
+      if (k) { kind.innerHTML = k; kind.hidden = false; }
+      else { kind.innerHTML = ''; kind.hidden = true; }
+    }
+    const shown = $('#adv-shown');
+    if (shown) {
+      // growth_shown 是**已经算好的字符串列表** (后端给的) —— 直接用,
+      // 不要在这儿再算一遍 (两处算就两处漂)。
+      const chips = (latest.growth_shown || []).filter(function (x) {
+        return !!String(x || '').trim();
+      });
+      shown.innerHTML = chips.length
+        ? '<span class="adv-shown-l">这一趟长出来的</span>' +
+          chips.map(function (t) {
+            return '<span class="adv-chip ok">' + esc(t) + '</span>';
+          }).join('')
+        : '';
+      shown.hidden = !chips.length;
+    }
     if (!total) {
       const body = $('#adv-read-body');
       if (body) body.innerHTML = '';
+      const acct = $('#adv-account');
+      if (acct) { acct.hidden = true; }
       const box = $('#adv-read');
       if (box) box.hidden = true;
       READER.open = false;
       return;
     }
-    readOpen(flow, total, read);
+    readOpen(flow, total, savedIdx, Number(latest.no) || 0);
+    renderAccount(latest);
   } catch (e) {
     setStatus($('#chronicle-status'), e.message, 'err');
+  }
+}
+
+/**
+ * 这一趟的账 —— 跟在正文后面。
+ *
+ * 判定 / 启发已经**嵌进正文里对应的那一段**了 (后端算好锚点);
+ * 这里放的是**没嵌进去的那些**: 完整交手战报 / 这一趟的来处 / 漏写提醒。
+ */
+function renderAccount(latest) {
+  const box = $('#adv-account');
+  const body = $('#adv-account-body');
+  const sum = $('#adv-account-sum');
+  if (!box || !body) return;
+  const g = latest.growth || {};
+  const parts = [];
+  const warns = RCP ? RCP.growthWarns(g) : [];
+  if (warns.length) {
+    parts.push(warns.map(function (t) {
+      return '<div class="arch-warn">' + esc(t) + '</div>';
+    }).join(''));
+  }
+  if (RCP && g.duel) parts.push(RCP.duelBlock(g.duel));
+  if (RCP && g.echo) parts.push(RCP.echoBlock(g.echo));
+  const html = parts.join('');
+  body.innerHTML = html;
+  box.hidden = !html.trim();
+  if (sum) {
+    const bits = [];
+    if (g.duel) bits.push('交手');
+    if (g.echo && (g.echo.books || []).length) bits.push('来处');
+    if (warns.length) bits.push('漏写提醒');
+    sum.textContent = bits.length ? ('这一趟的账 · ' + bits.join(' / '))
+                                  : '这一趟的账';
   }
 }
 

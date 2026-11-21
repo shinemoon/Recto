@@ -306,9 +306,9 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
         return 200, {"adventures": chronicle_mod.adventures(limit=limit),
                      "cycles": chronicle_mod.cycles(limit=8)}
 
-    # ── 故事 (前台那条连续的路) ─────────────────────────
-    #  前台不划分章节 —— 摊平成一条段落流, 空格推一段。
-    #  按回查 (第几回 / 交手 / 判定 / 来处) 走档案页 /api/story/archive。
+    # ── 故事 (前台: 最新的一回) ─────────────────────────
+    #  前台只显示**最新的一回**; 判定 / 启发 / 交手 都嵌在正文对应位置。
+    #  按回查 (第几回 / 交手战报 / 来处 / 往期) 走档案页 /api/story/archive。
     if path == "/story":
         q = urllib.parse.parse_qs(urllib.parse.urlparse(getattr(h, "path", "")).query)
         try:
@@ -318,14 +318,6 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
         chs = story_mod.chapters(limit=limit)
         flow = story_mod.flatten(chs)
         pos = reading_mod.get()
-        # 老档 (按回记段数) → 迁成全局段序号, 一次性
-        if pos.get("legacy"):
-            try:
-                idx = story_mod.legacy_global_index(
-                    reading_mod.legacy_positions(), chs)
-                pos = reading_mod.set_idx(idx, force=True)
-            except Exception:  # noqa: BLE001 — 迁不动就当没读过, 别拖垮页面
-                pos = {"idx": 0, "at": "", "legacy": True}
         return 200, {
             "chapters": chs,
             "flow": flow,
@@ -343,9 +335,22 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
             limit = 200
         return 200, {"archive": story_mod.archive(limit=limit)}
 
-    # 故事读到哪了 (全局段序号)
+    # 前台显示的那一回 —— **最新的一回** (判定 / 启发 / 交手 嵌在正文位置)
+    if path == "/story/latest":
+        latest = story_mod.latest()
+        pos = reading_mod.get()
+        # 老档 (v1 按回记段数 / v2 全局段序号) → 迁成 (回号, 段号), 一次性。
+        # 迁不动就当没读过 —— 别拖垮页面。
+        if pos.get("legacy"):
+            try:
+                pos = story_mod.migrate_position(pos, latest)
+            except Exception:  # noqa: BLE001
+                pos = reading_mod.get()
+        return 200, {"latest": latest, "read": pos}
+
+    # 故事读到哪了 —— (回号, 段号)
     #
-    # 位置是**高水位** —— 只前进: 回头重读不该抹掉"已经读到哪儿"。
+    # 位置是**高水位** —— 同一回里只前进: 回头重读不该抹掉"已经读到哪儿"。
     # ``force=true`` 才允许往回写 (「从头读」那一下 / 探针还原)。
     if path == "/reading":
         if method == "POST":
@@ -354,18 +359,22 @@ def _api(h, path: str, query: str) -> tuple[int, dict]:
                 idx = int(body.get("idx") or 0)
             except (TypeError, ValueError):
                 idx = 0
+            try:
+                rnd = int(body.get("round") or 0)
+            except (TypeError, ValueError):
+                rnd = 0
             force = body.get("force") is True
             # clamp=false: 读者真读到了那儿 (拖滚动条一次滑到底是合法的)
             # —— 后端那个"一次跳太远就夹住"的闸是给手滑/脚本用的。
             clamp = body.get("clamp") is not False
             return 200, {"ok": True,
-                         "pos": reading_mod.set_idx(idx, force=force, clamp=clamp)}
+                         "pos": reading_mod.set_pos(rnd, idx, force=force, clamp=clamp)}
         return 200, {"pos": reading_mod.get()}
 
     # 老接口 (按回记段数) —— 留着但明说不再支持, 别让人以为位置还在按回记
     if path == "/reading/legacy":
         return 200, {"ok": False,
-                     "error": "位置改记全局段序号, 请用 /api/reading (idx)"}
+                     "error": "位置改记 (回号, 段号), 请用 /api/reading (round, idx)"}
 
     # 补写: 上一回判成长落了地、故事却没写出来的那一趟 (不重判成长)
     if path == "/adventure/backfill":

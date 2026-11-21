@@ -40,7 +40,8 @@ async function readPos() {
   return page.evaluate(async () => {
     const r = await fetch('/pet/api/reading', { credentials: 'same-origin' });
     const d = await r.json();
-    return (d.pos || {}).idx || 0;
+    const p = d.pos || {};
+    return { round: p.round || 0, idx: p.idx || 0 };
   });
 }
 async function writePos(idx) {
@@ -59,7 +60,7 @@ await page.waitForSelector('#adv-read-body p', { timeout: 15000 });
 await page.waitForTimeout(1200);
 
 const snapIdx = await readPos();
-console.log(`  (快照位置: idx=${snapIdx})`);
+console.log(`  (快照位置: round=${snapIdx.round} idx=${snapIdx.idx})`);
 
 // ── 1. 窗口存在且有内容 ───────────────────────────────────────
 const base = await page.evaluate(() => {
@@ -106,8 +107,15 @@ const after = await page.evaluate(() => {
 });
 const delta = after.st - before.st;
 ok(delta > 0, `空格让窗口往下滚 (Δ${Math.round(delta)}px)`);
-ok(Math.abs(delta - after.ch) < after.ch * 0.15,
-   `翻的正好是一屏 (Δ${Math.round(delta)} vs 视口 ${after.ch})`);
+// 一屏 = 视口高, 但**内容不够长时滚不满一屏** (最新那一回可能就十几段) ——
+// 那就滚到尽头。这是内容长度决定的, 不是滚动坏了。
+const maxScroll = await page.evaluate(() => {
+  const b = document.querySelector('#adv-read-body');
+  return Math.max(0, b.scrollHeight - b.clientHeight);
+});
+const expect = Math.min(after.ch, maxScroll);
+ok(Math.abs(delta - expect) < Math.max(12, expect * 0.15),
+   `翻的是一屏 (Δ${Math.round(delta)} vs 期望 ${Math.round(expect)} · 视口 ${after.ch})`);
 ok(after.pageY === before.pageY,
    `页面自己没被卷走 (pageY ${before.pageY} → ${after.pageY})`);
 
@@ -139,7 +147,8 @@ const after10 = await page.evaluate(() => {
 });
 ok(after10.winH === mid.winH, `窗口高度没变 (${mid.winH} → ${after10.winH})`);
 ok(after10.pageH === mid.pageH, `页面总高没变 (${mid.pageH} → ${after10.pageH})`);
-ok(after10.st > mid.st, `窗口确实往下走了 (${Math.round(mid.st)} → ${Math.round(after10.st)})`);
+// 走到尽头之后不该再"往下走" (内容就那么多) —— 但**位置**仍要算读完
+ok(after10.st >= mid.st, `窗口没往回卷 (${Math.round(mid.st)} → ${Math.round(after10.st)})`);
 ok(after10.idx > 0, `位置前进了 (idx=${after10.idx})`);
 
 // ── 4. PageUp 回看, 但位置只前进 ────────────────────────────────
@@ -157,7 +166,7 @@ ok(afterUp.idx >= after10.idx, `回看不把位置拉回去 (idx ${after10.idx} 
 // ── 5. 位置记在后端 + 刷新接着 ─────────────────────────────────
 await page.waitForTimeout(600);
 const posNow = await readPos();
-ok(posNow > 0, `位置记在后端 (idx=${posNow})`);
+ok(posNow.idx > 0, `位置记在后端 (round=${posNow.round} idx=${posNow.idx})`);
 
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#adv-read-body p', { timeout: 15000 });
@@ -171,8 +180,8 @@ const afterReload = await page.evaluate(() => {
   };
 });
 ok(afterReload.st > 0, `刷新后落在上次读到的地方 (scrollTop=${afterReload.st})`);
-ok(Math.abs(afterReload.idx - posNow) <= 2,
-   `刷新后位置跟存档一致 (${afterReload.idx} vs ${posNow})`);
+ok(Math.abs(afterReload.idx - posNow.idx) <= 2,
+   `刷新后位置跟存档一致 (${afterReload.idx} vs ${posNow.idx})`);
 
 // ── 6. 窄屏 ────────────────────────────────────────────────────
 const m = await ctx.newPage();
@@ -193,7 +202,7 @@ ok(mob.h > 200 && mob.h < mob.win, `手机窗口高度合理 (${mob.h} / 视口 
 
 // ── 7. 还原位置 ─────────────────────────────────────────────────
 await writePos(snapIdx);
-console.log(`  (位置已还原到 idx=${snapIdx})`);
+console.log(`  (位置已还原到 round=${snapIdx.round} idx=${snapIdx.idx})`);
 
 ok(pageErrors.length === 0, `无 JS 报错 (${pageErrors.length}) ${pageErrors.slice(0, 2).join(' | ')}`);
 if (badResponses.length) {

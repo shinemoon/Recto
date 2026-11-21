@@ -20,17 +20,18 @@ async function readPos(page) {
   return page.evaluate(async () => {
     const r = await fetch('/pet/api/reading', { credentials: 'same-origin' });
     const d = await r.json();
-    return (d.pos || {}).idx || 0;
+    const p = d.pos || {};
+    return { round: p.round || 0, idx: p.idx || 0 };
   });
 }
-async function writePos(page, idx) {
-  return page.evaluate(async (n) => {
+async function writePos(page, v) {
+  return page.evaluate(async (p) => {
     await fetch('/pet/api/reading', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idx: n, force: true, clamp: false }),
+      body: JSON.stringify({ round: p.round, idx: p.idx, force: true, clamp: false }),
     });
-  }, idx);
+  }, v);
 }
 
 const page = await ctx.newPage();
@@ -43,7 +44,7 @@ await page.waitForSelector('#adv-read-body p', { timeout: 15000 });
 await page.waitForTimeout(1300);
 
 const snap = await readPos(page);
-console.log(`  (快照位置: idx=${snap})`);
+console.log(`  (快照位置: round=${snap.round} idx=${snap.idx})`);
 
 // 先往前读几屏
 for (let i = 0; i < 3; i++) {
@@ -52,7 +53,8 @@ for (let i = 0; i < 3; i++) {
 }
 await page.waitForTimeout(900);
 const posMoved = await readPos(page);
-ok(posMoved > snap, `往前翻了, 位置前进 (${snap} → ${posMoved})`);
+ok(posMoved.idx > snap.idx,
+   `往前翻了, 位置前进 (${snap.idx} → ${posMoved.idx})`);
 
 // 「从头读」→ 位置回到 0, 窗口回到顶部
 await page.click('#btn-adv-restart');
@@ -68,17 +70,17 @@ const afterReset = await page.evaluate(() => {
 });
 ok(afterReset.st === 0, `「从头读」把窗口拉回顶部 (scrollTop=${afterReset.st})`);
 const posReset = await readPos(page);
-ok(posReset === 0, `「从头读」把位置归零 (idx=${posReset})`);
+ok(posReset.idx === 0, `「从头读」把位置归零 (idx=${posReset.idx})`);
 ok(/^0 \/ /.test(afterReset.prog), `进度显示归零 (${afterReset.prog})`);
 
 // 复位后按空格 → 从头往下读
 await page.keyboard.press('Space');
 await page.waitForTimeout(900);
 const posAfter = await readPos(page);
-ok(posAfter > 0, `复位后空格能往下读 (idx=${posAfter})`);
+ok(posAfter.idx > 0, `复位后空格能往下读 (idx=${posAfter.idx})`);
 
 await writePos(page, snap);
-console.log(`  (位置已还原到 idx=${snap})`);
+console.log(`  (位置已还原到 round=${snap.round} idx=${snap.idx})`);
 
 ok(pageErrors.length === 0, `无 JS 报错 (${pageErrors.length}) ${pageErrors.slice(0, 2).join(' | ')}`);
 

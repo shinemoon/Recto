@@ -53,20 +53,30 @@
     </div>
     <div id="chronicle-out" class="adv-out" hidden></div>
 
-    <!-- 它走过的路: 一条连续的路, 空格推一段 (MUD 那样的读法)。
-         不分章节 —— 章节在后台, 要按回查去「故事档案」。 -->
+    <!-- 它走过的路: **最新的一回**。判定 / 启发 / 交手都**嵌在正文里
+         对应的那一段** —— 那一段就是这件事发生的地方。
+         要按回查全部 (交手战报 / 来处 / 往期) 去「故事档案」。 -->
     <div class="adv-read" id="adv-read">
       <div class="adv-read-bar">
-        <span class="adv-read-title" id="adv-read-title">它走过的路</span>
+        <span class="adv-read-title" id="adv-read-title">最新一回</span>
+        <span class="adv-kind" id="adv-read-kind" hidden></span>
         <span class="adv-read-prog" id="adv-read-prog">—</span>
         <a class="mini" id="btn-adv-archive" href="/pet/story/">按回查阅</a>
         <button class="mini" id="btn-adv-restart">从头读</button>
       </div>
+      <div class="adv-shown" id="adv-shown"></div>
       <div class="adv-read-body" id="adv-read-body" tabindex="0"
            role="article" aria-label="故事正文"></div>
+      <!-- 这一趟的账: 判定 / 启发 已经嵌在正文里对应的那一段;
+           这里是**没嵌进去的**那些 (交手战报 / 来处 / 漏写的提醒)。
+           默认收起 —— 展开时自己滚, 不许把正文窗口挤扁。 -->
+      <details class="adv-account" id="adv-account">
+        <summary id="adv-account-sum">这一趟的账</summary>
+        <div class="adv-account-body" id="adv-account-body"></div>
+      </details>
       <div class="adv-read-foot" id="adv-read-foot">
         <button class="primary" id="btn-adv-next">翻页 (空格)</button>
-        <span class="cs-dim" id="adv-read-hint">按空格翻一屏 · PageUp 回看 · 它走过的路不分章节</span>
+        <span class="cs-dim" id="adv-read-hint">按空格翻一屏 · PageUp 回看 · 判定与启发嵌在正文里</span>
       </div>
       <div class="adv-read-done" id="adv-read-done" hidden>
         <span>走到尽头了。</span>

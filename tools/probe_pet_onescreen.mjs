@@ -43,7 +43,8 @@ async function readPos() {
   return page.evaluate(async () => {
     const r = await fetch('/pet/api/reading', { credentials: 'same-origin' });
     const d = await r.json();
-    return (d.pos || {}).idx || 0;
+    const p = d.pos || {};
+    return { round: p.round || 0, idx: p.idx || 0 };
   });
 }
 async function writePos(idx) {
@@ -62,7 +63,7 @@ await page.waitForSelector('#adv-read-body p', { timeout: 15000 });
 await page.waitForTimeout(1200);
 
 const snapIdx = await readPos();
-console.log(`  (快照位置: idx=${snapIdx})`);
+console.log(`  (快照位置: round=${snapIdx.round} idx=${snapIdx.idx})`);
 
 // 从**开头**开始测 —— 读者本来可能已经读到尽头 (那样翻屏测不出来)。
 // 收尾会还原到 snapIdx。
@@ -152,8 +153,14 @@ const after = await page.evaluate(() => {
   return { st: b.scrollTop, ch: b.clientHeight, pageY: window.scrollY };
 });
 ok(after.st > before.st, `空格让窗口往下滚 (Δ${Math.round(after.st - before.st)}px)`);
-ok(Math.abs((after.st - before.st) - after.ch) < after.ch * 0.15,
-   `翻的正好是一屏 (Δ${Math.round(after.st - before.st)} vs 视口 ${after.ch})`);
+// 内容不够长时滚不满一屏 —— 滚到尽头就是"翻完了一屏"
+const maxScroll = await page.evaluate(() => {
+  const b = document.querySelector('#adv-read-body');
+  return Math.max(0, b.scrollHeight - b.clientHeight);
+});
+const expect = Math.min(after.ch, maxScroll);
+ok(Math.abs((after.st - before.st) - expect) < Math.max(12, expect * 0.15),
+   `翻的是一屏 (Δ${Math.round(after.st - before.st)} vs 期望 ${Math.round(expect)})`);
 ok(after.pageY === before.pageY, '页面自己没被卷走');
 
 // ── 4. 档案页不受影响 ─────────────────────────────────────────
@@ -198,7 +205,7 @@ ok(mob.scrollbarPx >= 8, `窄屏也有可见滚动条 (${mob.scrollbarPx}px)`);
 
 // ── 6. 还原位置 ───────────────────────────────────────────────
 await writePos(snapIdx);
-console.log(`  (位置已还原到 idx=${snapIdx})`);
+console.log(`  (位置已还原到 round=${snapIdx.round} idx=${snapIdx.idx})`);
 
 ok(pageErrors.length === 0, `无 JS 报错 (${pageErrors.length}) ${pageErrors.slice(0, 2).join(' | ')}`);
 if (badResponses.length) {

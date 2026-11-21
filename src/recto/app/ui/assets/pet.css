@@ -932,7 +932,7 @@
   box-shadow: inset 0 0 0 2px var(--rc-primary, var(--rc-accent));
 }
 .rc-pet .adv-read-body p {
-  margin: 0 0 1.05em; font-size: 1.05rem; line-height: 2.0;
+  margin: 0 0 .78em; font-size: .96rem; line-height: 1.78;
   text-indent: 2em;
 }
 .rc-pet .adv-read-body p:last-child { margin-bottom: .2em; }
@@ -1277,8 +1277,8 @@ body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body::-webkit-scrollbar-thumb
   background-clip: content-box;
 }
 body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body p {
-  font-size: 1rem; line-height: 1.85;
-  margin: 0 0 .8em;
+  font-size: .92rem; line-height: 1.72;
+  margin: 0 0 .68em;
 }
 body.rc-pet-page:not(.rc-pet-story-page) .adv-read-foot { padding: 5px 12px 6px; gap: 8px; }
 body.rc-pet-page:not(.rc-pet-story-page) .adv-read-foot button { min-height: 30px; font-size: 12px; }
@@ -1320,3 +1320,133 @@ body.rc-pet-page:not(.rc-pet-story-page) .pg-diag > summary {
   }
   body.rc-pet-page:not(.rc-pet-story-page) .pg-gauges { grid-template-columns: 1fr 1fr 1fr; }
 }
+
+/* ══════════════ 前台: 最新一回 + 内嵌块 (2026-11-21) ══════════════
+ *
+ * 用户口径: 「首页改成显示最新的一回, 和后面逐回显示唯一区别在于那些
+ * 所有的判定和启发, 都把它嵌入到对应的正文位置去」
+ *
+ * 所以前台不再是"一条连续的路", 而是**最新那一回**的正文:
+ *  · 判定 (路上的坎) / 启发 (化身) / 交手 → **内嵌在对应那一段后面**
+ *  · 「本回所显」→ 收在正文窗口上方一条 (一行)
+ *  · 往期 → 档案页 (/pet/story/), 那里可选正序 / 倒序
+ */
+
+/* 内嵌块: 跟在那一段正文后面 —— 那一段就是这件事发生的地方。
+   宽度**贴着内容** (fit-content), 不要拉成整条横幅 —— 那样看着像
+   另一段正文, 不像"这一段的旁注"。
+   左边留一点缩进 = "这是上面那段的事"。 */
+.rc-pet .adv-inline {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 4px;
+  margin: -.35em 0 .85em 1.6em;
+}
+.rc-pet .adv-in {
+  display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px;
+  width: fit-content; max-width: 100%;
+  padding: 3px 10px;
+  font-size: 12.5px; line-height: 1.55;
+  color: var(--rc-dim);
+  background: color-mix(in oklab, var(--rc-fg) 4%, transparent);
+  border-left: 2px solid color-mix(in oklab, var(--rc-fg) 22%, transparent);
+}
+.rc-pet .adv-in b { font-weight: 600; color: var(--rc-fg); }
+.rc-pet .adv-in-tag {
+  flex: 0 0 auto;
+  font-size: 10px; letter-spacing: .08em;
+  padding: 1px 6px; line-height: 1.5;
+  color: var(--rc-fg);
+  background: color-mix(in oklab, var(--rc-fg) 8%, transparent);
+  border: 1px solid color-mix(in oklab, var(--rc-fg) 16%, transparent);
+  white-space: nowrap;
+}
+.rc-pet .adv-in-tag.ok {
+  color: var(--rc-fg);
+  background: color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 16%, transparent);
+  border-color: color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 34%, transparent);
+}
+.rc-pet .adv-in-tag.warn {
+  background: color-mix(in oklab, #c98a2b 16%, transparent);
+  border-color: color-mix(in oklab, #c98a2b 34%, transparent);
+}
+.rc-pet .adv-in-tag.err {
+  background: color-mix(in oklab, var(--rc-danger, #a33) 16%, transparent);
+  border-color: color-mix(in oklab, var(--rc-danger, #a33) 34%, transparent);
+}
+.rc-pet .adv-in-res { color: var(--rc-fg); font-weight: 600; }
+.rc-pet .adv-in-out { color: var(--rc-mute); }
+.rc-pet .adv-in-cat {
+  font-size: 10.5px; color: var(--rc-mute);
+  border-left: 1px solid color-mix(in oklab, var(--rc-fg) 16%, transparent);
+  padding-left: 8px;
+}
+.rc-pet .adv-in-trace { color: var(--rc-fg); }
+.rc-pet .adv-in-img { color: var(--rc-mute); }
+
+/* 锚不上的那些 → 收在末尾, 标成"补记" (老实说它没写进正文) */
+.rc-pet .adv-inline-tail {
+  margin-top: .6em;
+  padding-top: .5em;
+  border-top: 1px dashed color-mix(in oklab, var(--rc-fg) 18%, transparent);
+}
+.rc-pet .adv-inline-tag {
+  font-size: 10.5px; letter-spacing: .08em;
+  color: var(--rc-mute);
+  margin-bottom: 1px;
+}
+
+/* 三种内嵌块各有一点颜色差 —— 读者一眼分得出"这是掷出来的"/
+   "这是读到的" / "这是打出来的", 不至于混成一片。 */
+.rc-pet .adv-in-check {
+  border-left-color: color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 46%, transparent);
+}
+.rc-pet .adv-in-spark {
+  border-left-color: color-mix(in oklab, #7aa2c8 46%, transparent);
+}
+.rc-pet .adv-in-duel {
+  border-left-color: color-mix(in oklab, var(--rc-danger, #a33) 40%, transparent);
+}
+
+/* 「这一趟长出来的」—— 正文窗口上方一条 */
+.rc-pet .adv-shown {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--rc-outline-variant, rgba(0, 0, 0, .08));
+  background: color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 6%, transparent);
+}
+.rc-pet .adv-shown-l {
+  font-size: 10.5px; letter-spacing: .1em; color: var(--rc-mute);
+  white-space: nowrap;
+}
+
+/* ── 字体紧凑一点 (用户口径: 「字体也要稍微紧凑一点」) ────────────────
+   正文 1.05rem / line-height 2.0 → .96rem / 1.78;
+   段距 1.05em → .78em。整段读下来少两行, 但还是能一口气读完一屏。
+   (紧凑的那套在上面 —— 这里只留归档, 免得两处各写一份改一处漏一处) */
+
+/* 「这一趟的账」—— 跟在正文后面 (交手战报 / 来处 / 漏写提醒)
+   默认收起 —— 展开时自己滚, 不许把正文窗口挤扁。 */
+.rc-pet .adv-account {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 14px;
+  border-top: 1px solid var(--rc-outline-variant, rgba(0, 0, 0, .08));
+}
+.rc-pet .adv-account > summary {
+  padding: 5px 0;
+  font-size: 11.5px; font-weight: 500;
+  color: var(--rc-mute);
+  cursor: pointer;
+  list-style: none;
+}
+.rc-pet .adv-account > summary::-webkit-details-marker { display: none; }
+.rc-pet .adv-account > summary:hover { color: var(--rc-fg); }
+.rc-pet .adv-account-body {
+  max-height: 190px; overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding-bottom: 6px;
+}
+.rc-pet .adv-account-body .adv-duel,
+.rc-pet .adv-account-body .adv-echo,
+.rc-pet .adv-account-body .adv-checks { margin-top: 8px; }

@@ -11,9 +11,14 @@
   </div>
   <div class="card-body">
     <div class="cs-meta" id="archive-meta"></div>
+    <div class="arch-order" role="group" aria-label="排序">
+      <span class="arch-order-l">顺序</span>
+      <button class="mini is-on" id="arch-ord-asc" data-ord="asc">正序 · 最早在前</button>
+      <button class="mini" id="arch-ord-desc" data-ord="desc">倒序 · 最新在前</button>
+    </div>
     <div id="archive-list"></div>
     <p class="tip">
-      前台读的是<b>一条连续的路</b> (不分章节, 按空格往下推一段);
+      前台看的是<b>最新的一回</b> (判定与启发都嵌在正文里);
       这里按回摆 —— 要查某一趟的交手战报、路上的坎、这一趟的来处, 来这儿。
     </p>
   </div>

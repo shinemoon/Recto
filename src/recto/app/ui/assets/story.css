@@ -80,3 +80,30 @@
   .rc-pet-story .arch-at { margin-left: 0; }
   .rc-pet-story .arch-title { white-space: normal; }
 }
+/* 排序 (正序 / 倒序) —— 档案页可切换 */
+.rc-pet-story .arch-order {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+  margin: 0 0 10px;
+}
+.rc-pet-story .arch-order-l {
+  font-size: 10.5px; letter-spacing: .1em; color: var(--rc-mute);
+}
+.rc-pet-story .arch-order button {
+  min-height: 26px; padding: 1px 10px;
+  font-size: 11.5px; line-height: 1.4;
+  color: var(--rc-dim);
+  background: transparent;
+  border: 1px solid var(--rc-outline-variant, rgba(0, 0, 0, .1));
+}
+.rc-pet-story .arch-order button.is-on {
+  color: var(--rc-fg);
+  background: color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 14%, transparent);
+  border-color: color-mix(in oklab, var(--rc-primary, var(--rc-accent)) 34%, transparent);
+}
+.rc-pet-story .arch-order button:hover { color: var(--rc-fg); }
+
+/* 档案页正文也紧凑一点 (与前台同一口径) */
+.rc-pet-story .arch-text p {
+  font-size: .96rem; line-height: 1.8;
+  margin: 0 0 .8em;
+}

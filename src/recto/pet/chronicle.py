@@ -725,8 +725,11 @@ def _echo(ev: dict[str, Any], enc: dict[str, Any] | None = None) -> dict[str, An
         # **这一趟的来处变成了什么** —— 读到的东西在它世界里的化身。
         # 页面上要能看出"故事里的那个人/那处地是从哪儿长出来的", 这是
         # "关联淡"最直接的解药: 光给模型看没用, 得让读者也看得见。
+        # **keys** 是化身自带的几个普通词 (人名地名已过滤掉) —— 前台要靠它
+        # 把这条化身**锚回正文里对应的那一段**, 锚不准就退到 n-gram 匹配。
         "spark": [{"cat": str(e.get("cat") or ""), "trace": str(e.get("trace") or ""),
-                   "image": str(e.get("image") or "")}
+                   "image": str(e.get("image") or ""),
+                   "keys": [str(k) for k in (e.get("keys") or [])][:4]}
                   for e in ((ev.get("_spark") or {}).get("echo") or [])],
         "twists": [str(t) for t in ((ev.get("_spark") or {}).get("twists") or [])],
     }
