@@ -1107,12 +1107,12 @@ body.rc-pet-page:not(.rc-pet-story-page) .rc-main {
   overflow: hidden;
 }
 /* 顶栏也压扁一点 (书宠页自己的东西已经够满) */
-body.rc-pet-page:not(.rc-pet-story-page) .rc-top-in { padding: 3px 16px 0; gap: 16px; }
-body.rc-pet-page:not(.rc-pet-story-page) .rc-brand { font-size: 17px; padding-bottom: 4px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-top-in { padding: 3px 16px 0; gap: 0 12px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-brand { font-size: 17px; padding-bottom: 0; }
 body.rc-pet-page:not(.rc-pet-story-page) .rc-brand .rc-logo { height: 18px; }
-body.rc-pet-page:not(.rc-pet-story-page) .rc-nav a { padding: 7px 13px 9px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-nav a { padding: 6px 12px 8px; }
 body.rc-pet-page:not(.rc-pet-story-page) .rc-nav a[aria-current="page"]::after { bottom: 3px; }
-body.rc-pet-page:not(.rc-pet-story-page) .rc-user { padding-bottom: 6px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-user { padding-bottom: 0; }
 body.rc-pet-page:not(.rc-pet-story-page) .rc-foot { display: none; }
 
 /* 故事分区自己撑满, 别的分区 (世界 / 设置) 照旧滚 */

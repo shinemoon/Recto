@@ -292,7 +292,7 @@ check("排版值写进 CSS 变量", "--rv-para" in _js and "--rv-pad" in _js
       and "--rv-w', L.w" in _js and "--rv-font" in _js)
 check("行间距真的用变量", "line-height: var(--rv-lh)" in _css)
 check("段间距真的用变量", "margin: 0 0 var(--rv-para, 1.05em)" in _css)
-check("上下边距真的用变量", "padding: var(--rv-pad) 1rem calc(var(--rv-pad)" in _css)
+check("上下边距真的用变量", "padding: calc(var(--rv-pad) + var(--rv-bar-h, 44px)) 1rem calc(var(--rv-pad)" in _css)
 check("字号默认跟随视口 (手机更小)", "matchMedia('(max-width: 620px)')" in _js)
 check("点面板外收起", "if (typoEl.contains(ev.target)) return;" in _js)
 check("顶栏收起时关掉面板", "if (hide) hideTypo();" in _js)
@@ -388,8 +388,16 @@ check("页高 = 整个视口高 (不扣顶栏)",
       and "var h = Math.max(220, Math.round(window.innerHeight));" in _js
       and "height: var(--rv-page-h, 100dvh);" in _css)
 check("正文上下边距取同一个值 (垂直居中)",
-      "padding: max(var(--rv-pad), env(safe-area-inset-top, 0px), "
-      "env(safe-area-inset-bottom, 0px)) 0;" in _css)
+      "calc(max(var(--rv-pad), env(safe-area-inset-top, 0px), "
+      "env(safe-area-inset-bottom, 0px)) + var(--rv-chrome-b, 2.6rem))" in _css
+      and "env(safe-area-inset-bottom, 0px)) + var(--rv-chrome-b, 2.6rem));" in _css)
+# 2026-11-21: 上下各留一条**余量带** —— 顶部那条放浮层顶栏 (原先盖住第一行 8px),
+# 底部那条放页码提示 + 书宠小图标 (原先压掉最后一行最多 20px)。两条一样宽 → 仍然垂直居中。
+check("翻页模式上下各留一条余量带 (浮层不压字)",
+      "var(--rv-chrome-b, 2.6rem)" in _css
+      and _css.count("var(--rv-chrome-b, 2.6rem)") >= 2)
+check("滚动模式顶部留出浮层顶栏的高度",
+      "calc(var(--rv-pad) + var(--rv-bar-h, 44px))" in _css)
 check("逐设备记住页号 (块级游标会差一页)",
       "recto.pg." in _js and "function pageSig" in _js and "function pageHintRead" in _js)
 # 2026-11-06 定位: 刷新后落到半路 → 页号提示原来存"整篇文档的绝对页号",

@@ -288,6 +288,73 @@ _SHELL_JS = r"""
     show((location.hash || '').replace('#', ''), { silent: true });
   });
 
+  // ---------- 顶栏自动隐藏 (2026-11-21) ----------
+  // 往下读的时候把顶栏收起来, 往上滑 / 回到顶部唤出。
+  // 手机上顶栏原本占三行 (品牌 + 导航 + 用户) ≈ 146px, 吃掉近两成屏高;
+  // 收起来之后正文能多出那一整块。
+  //
+  // 两条硬规矩:
+  //   ① 收起只是 transform, **不改变文档流** —— 正文不会跟着往上跳。
+  //   ② 页面自己滚不动的时候 (书宠页是内部滚动) 不接管 —— 那是另一套滚动容器。
+  var top = document.querySelector('.rc-top');
+  var topProg = document.querySelector('.rc-top-prog');
+  var tucked = false;
+  var lastTopY = window.scrollY;
+
+  function setTucked(hide) {
+    if (!top || hide === tucked) return;
+    tucked = hide;
+    top.classList.toggle('is-tucked', hide);
+    document.body.classList.toggle('rc-top-tucked', hide);
+    top.setAttribute('aria-hidden', hide ? 'true' : 'false');
+  }
+
+  function syncTopProg() {
+    if (!topProg) return;
+    var h = document.documentElement.scrollHeight - window.innerHeight;
+    var f = h > 8 ? Math.min(1, Math.max(0, window.scrollY / h)) : 0;
+    topProg.style.width = (f * 100) + '%';
+  }
+
+  if (top) {
+    window.addEventListener('scroll', function () {
+      var y = window.scrollY;
+      syncTopProg();
+      // 只有页面自己在滚时才管 —— 内部滚动的分区 (书宠/阅读器) 不归这里
+      var de = document.documentElement;
+      var pageScrolls = de.scrollHeight > de.clientHeight + 4;
+      if (!pageScrolls) { lastTopY = y; return; }
+      if (y <= 24) setTucked(false);
+      else if (y > lastTopY + 6) setTucked(true);
+      else if (y < lastTopY - 6) setTucked(false);
+      lastTopY = y;
+    }, { passive: true });
+    // 换面板会 scrollTo(0) —— 落到顶上, 顶栏要回来
+    window.addEventListener('recto:pane', function () { setTucked(false); lastTopY = window.scrollY; });
+    syncTopProg();
+  }
+
+  // ---------- 窄屏: 选中的导航项自动滚到看得见的地方 ----------
+  // 导航在窄屏上是横向可滚的容器 (六个标签放不下)。切面板/换页之后,
+  // 当前项可能在容器外看不见 —— 把它带进来。
+  function revealActiveNav() {
+    var nav = document.querySelector('.rc-nav');
+    if (!nav) return;
+    var cur = nav.querySelector('a[aria-current="page"]');
+    if (!cur) return;
+    var navR = nav.getBoundingClientRect();
+    var curR = cur.getBoundingClientRect();
+    if (curR.left >= navR.left - 1 && curR.right <= navR.right + 1) return;
+    try {
+      cur.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    } catch (e) {
+      nav.scrollLeft = cur.offsetLeft - nav.clientWidth / 2 + cur.clientWidth / 2;
+    }
+  }
+  window.addEventListener('recto:pane', function () { setTimeout(revealActiveNav, 0); });
+  if (document.readyState !== 'loading') setTimeout(revealActiveNav, 0);
+  else document.addEventListener('DOMContentLoaded', function () { setTimeout(revealActiveNav, 0); });
+
   // Material 水波纹 —— 纯装饰, 不改变点击行为, 500ms 后自删
   document.addEventListener('pointerdown', function (ev) {
     if (ev.button !== undefined && ev.button !== 0) return;
@@ -348,6 +415,7 @@ def document(*, title: str, body: str, active: str = "", kicker: str = "",
 </head><body class="{_e(body_class)}">
 <div class="rc-shell">
   <div class="rc-top"><div class="rc-top-in">{brand()}{nav}</div></div>
+  <div class="rc-top-prog" aria-hidden="true"></div>
   <main class="rc-main"{start_attr}>{subnav}{body}</main>
   {_footer() if footer else ''}
 </div>

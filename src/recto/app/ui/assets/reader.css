@@ -288,9 +288,14 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
  *   6. 行末标点悬挂 hanging-punctuation: allow-end (3.1.3, Safari 支持)
  *   7. 首行缩进 2 字符只加给中文段落 (.rv-cjk)，且由读者在排版面板开关
  * 支持的浏览器生效，不支持的按普通规则排 —— 全部是渐进增强。 */
-.rv-main { padding: var(--rv-pad) 1rem calc(var(--rv-pad) + 3.4rem); }
-/* 滚动模式下「上下边距」也只看 --rv-pad: 顶栏是浮层不计入版面。
- * 底部那 3.4rem 是文档收尾留白 (放"继续下滑"提示, 不属于正文边距)。 */
+/* 滚动模式: 上下边距只由 --rv-pad 决定 (顶栏是浮层, 不占版面),
+ * 但**顶部要躲开那条浮层顶栏** —— 顶栏高 ~44px (手机上 ~57px),
+ * 而 --rv-pad 只有 16~22px, 于是开书第一行正好被顶栏压住 8px。
+ * 底部那 3.4rem 是文档收尾留白 (放"继续下滑"提示, 不属于正文边距)。
+ * 顶栏收起时正文**不跟着跳** —— 边距是静态的, 只是多留了一点, 无妨。 */
+.rv-main {
+  padding: calc(var(--rv-pad) + var(--rv-bar-h, 44px)) 1rem calc(var(--rv-pad) + 3.4rem);
+}
 .rv-page { max-width: var(--rv-w); margin: 0 auto; font-size: var(--rv-fs); line-height: var(--rv-lh);
   font-family: var(--rv-font, inherit);
   text-align: justify; text-justify: inter-ideograph;
@@ -469,7 +474,15 @@ html:has(body.rv-body)::-webkit-scrollbar-corner,
   /* overflow: clip (无 overflow 容器) —— 页外内容只裁不滚;
      用 hidden 的话它是可编程滚动容器, Tab 聚焦页外链接会被浏览器滚走 */
   overflow: clip;
-  padding: max(var(--rv-pad), env(safe-area-inset-top, 0px), env(safe-area-inset-bottom, 0px)) 0;
+  /* 上下各留一条**余量带** (band), 正文停在这两条带之间 —— 于是:
+     · 顶部那条带放浮层顶栏 (原先是直接盖在第一行字上, 实测压掉 8px);
+     · 底部那条带放页码提示 + 书宠小图标 (实测最狠的一页压掉最后一行 20px);
+     · 上下一样宽 → 正文仍然在视口里**垂直居中** (用户口径: 真正的垂直中线对齐)。
+     余量带高度 = 页码 + 小图标那一叠 (~40px)。 */
+  padding:
+    calc(max(var(--rv-pad), env(safe-area-inset-top, 0px), env(safe-area-inset-bottom, 0px)) + var(--rv-chrome-b, 2.6rem))
+    0
+    calc(max(var(--rv-pad), env(safe-area-inset-top, 0px), env(safe-area-inset-bottom, 0px)) + var(--rv-chrome-b, 2.6rem));
   box-sizing: border-box;
   position: relative;
 }

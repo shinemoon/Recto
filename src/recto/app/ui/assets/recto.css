@@ -53,7 +53,18 @@ hr { border: 0; border-top: 1px solid var(--rc-outline-variant); margin: var(--r
 /* ------------------------------------------------------------------ 2 外壳 */
 .rc-shell { min-height: 100vh; display: flex; flex-direction: column; }
 
-/* 顶栏 (Top app bar): surface 色 + 高度阴影, 不用下边框 */
+/* 顶栏 (Top app bar): surface 色 + 高度阴影, 不用下边框。
+ *
+ * **可以自动隐藏** (2026-11-21): 往下读的时候收起来, 往上滑 / 回到顶部唤出。
+ * 手机上顶栏原本就占 146px (品牌一行 + 导航一行 + 用户一行) —— 三行吃掉
+ * 近两成屏高, 正文被挤到下面去。现在:
+ *   · 品牌与用户并到导航那一行 (省一整行)
+ *   · 下滑时整条顶栏上移收起, 顶部留一条 2px 进度细线当"还在上面"的提示
+ *   · 收起时正文**不跟着跳** (顶栏是 sticky, 收起只是 transform)
+ *
+ * 收起态的类名是 `.is-tucked` —— 与阅读器自己的 `.rv-bar.is-hidden` 分开,
+ * 两套外壳各管各的。
+ */
 .rc-top {
   position: sticky; top: 0; z-index: 30;
   background: color-mix(in srgb, var(--rc-surface) 92%, var(--rc-bg));
@@ -61,7 +72,21 @@ hr { border: 0; border-top: 1px solid var(--rc-outline-variant); margin: var(--r
   -webkit-backdrop-filter: saturate(1.3) blur(12px);
   box-shadow: var(--rc-elev-2);
   padding: env(safe-area-inset-top) 0 0;
+  transition: transform .22s cubic-bezier(.2,0,0,1), box-shadow .22s ease;
 }
+/* 收起: 整条上移 (不占版面 —— sticky 元素 transform 不影响文档流),
+   阴影也收掉, 否则会留一条横线在视口中间。 */
+.rc-top.is-tucked {
+  transform: translateY(calc(-100% - env(safe-area-inset-top)));
+  box-shadow: none;
+}
+/* 收起时用顶部一条 2px 细线当进度提示 (跟阅读器同一条思路) */
+.rc-top-prog {
+  position: fixed; top: 0; left: 0; height: 2px; width: 0; z-index: 31;
+  background: var(--rc-primary); opacity: 0;
+  transition: opacity .2s ease, width .1s linear; pointer-events: none;
+}
+.rc-top.is-tucked ~ .rc-top-prog, body.rc-top-tucked .rc-top-prog { opacity: .7; }
 
 .rc-top-in {
   max-width: var(--rc-measure); margin: 0 auto;
@@ -686,7 +711,19 @@ pre:empty::before { content: "—"; color: var(--rc-mute); }
     var(--rc-surface-2) 62%);
   display: grid; place-items: center; overflow: hidden;
 }
-.bk-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 封面图铺满整个封面框。
+ *
+ * 原来写的是 `width:100%; height:100%; object-fit:cover`, 但外层是
+ * `display:grid; place-items:center` —— 居中的网格项**高度不定**,
+ * 于是 `height:100%` 解析不出来, 图退回按原始比例算高 (实测 556×800 的封面
+ * 在 173px 宽处高 249px), 比封面框 (231px) 高 18px, 底下那一截被裁掉。
+ *
+ * 改成绝对定位铺满: 尺寸不再依赖百分比解析, object-fit 负责裁切。
+ */
+.bk-cover img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
 .bk-ph {
   font-family: var(--rc-heading); font-size: 2.4rem; font-weight: 500;
   color: color-mix(in srgb, var(--rc-primary) 70%, var(--rc-fg)); opacity: .85;
@@ -1032,10 +1069,45 @@ body.rc-auth {
 
 /* ------------------------------------------------------------- 12 响应式 */
 @media (max-width: 860px) {
-  .rc-top-in { padding: 6px 14px 0; gap: 10px; }
-  .rc-brand { font-size: 19px; padding-bottom: 7px; }
+  /* 顶栏压成**两行**: 第一行 = 品牌 + 用户 (右边), 第二行 = 导航 (横向可滚)。
+   *
+   * 原来在窄屏上是三行 (品牌 / 导航 / 用户) —— 390px 屏上实测顶栏 146px,
+   * 吃掉视口的 19%。现在把用户挪到品牌那一行, 顶栏降到 ~104px,
+   * 而且**下滑时整条收起来**, 那 146px 全部还给正文。
+   */
+  .rc-top-in {
+    padding: 6px 14px 0; gap: 0 10px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "brand user" "nav nav";
+    align-items: center;
+  }
+  .rc-brand { grid-area: brand; font-size: 19px; padding-bottom: 0; }
   .rc-brand .rc-logo { height: 20px; }
   .rc-brand small { display: none; }
+  /* 用户组挪到第一行右侧 */
+  .rc-user {
+    grid-area: user;
+    padding-bottom: 0;
+    justify-self: end;
+    align-self: center;
+  }
+  /* 导航独占第二行, 横向可滚 (标签放不下时不换行) */
+  .rc-nav {
+    grid-area: nav;
+    margin: 4px -14px 0;
+    padding: 0 14px;
+    width: calc(100% + 28px);
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .rc-nav::-webkit-scrollbar { display: none; }
+  /* 导航项改成"贴着左边的胶囊", 末尾留白让最后一个标签不贴边 */
+  .rc-nav a { padding: 9px 12px 11px; }
+  .rc-nav a[aria-current="page"]::after { width: 20px; bottom: 4px; }
+  .rc-nav .rc-nav-sep { margin: 10px 8px; }
+  /* 选中项自动滚到看得见的地方 (横滚容器里很常见) */
   .rc-main { padding: 20px 16px 56px; }
   .rc-head h1 { font-size: calc(var(--rc-fs) * 1.5); }
   .tl-item { padding: 14px; }
@@ -1069,7 +1141,7 @@ body.rc-auth {
 
 @media (max-width: 600px) {
   .rc-nav { gap: 0; }
-  .rc-nav a { padding: 11px 12px 13px; }
+  .rc-nav a { padding: 9px 11px 11px; }
   .rc-nav a[aria-current="page"]::after { width: 20px; }
   .grid.two, .grid.three { grid-template-columns: 1fr; }
   .cards { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
