@@ -1071,4 +1071,252 @@ body.pg-drawer-open { overflow: hidden; }
 }
 
 /* 抽屉里的小段切换不产生横向溢出 */
-.pg-drawer-body .models-wrap { max-width: 100%; }
+.pg-drawer-body .models-wrap { max-width: 100%; }/* ══════════════ 一屏装下 (2026-11-21) ═══════════════════════════════
+ *
+ * 用户口径: 「书宠的阅读界面我希望一个屏幕可以装下, 即尽量 compact,
+ * 然后页面要有 scrollbar」。
+ *
+ * 之前的样子 (1280×900 实测):
+ *   页面总高 1535px —— 视口 900, 得滚掉 635px 才够看正文。
+ *   正文窗口上方堆着 325px 的"壳": HUD(123) + 页签(43) + 图标栏(40)
+ *   + 卡头(59) + 故事概览(32) + 行动行(42)。
+ *   正文窗口自己 522px (58vh), 底下还有状态/语料/说明 200+px。
+ *
+ * 改法 (**整页一屏, 页面不再需要滚**):
+ *   ① 页面自己变成 flex 列, 高度 = 100vh (不是 min-height) → 页面不滚,
+ *      滚的是**正文窗口**。页面上再挂一条**可见的滚动条**给正文窗口。
+ *   ② 壳压扁: HUD 一行(头像+名字+量条+chip), 页签与图标栏并成一行,
+ *      行动行与概览压成一行。
+ *   ③ 正文窗口吃掉剩余高度 (flex: 1 1 auto), 不用 vh 猜。
+ *
+ * **滚动条**: Chromium 默认是 overlay 滚动条 (不占位, 常常看不见)。
+ * 这里改成**占位式** (`scrollbar-gutter: stable`) + 自己画一根细条 ——
+ * 用户要"页面要有 scrollbar", 指的是能看见自己在哪、能拖着走。
+ *
+ * 窄屏 (<= 860px): 一屏装不下那么多 —— 退回"页面可滚", 但窗口仍然固定高,
+ * 滚动条照样可见。
+ */
+
+/* ── 页面骨架: 一屏 = 100vh, 内部自己分区 ───────────────────── */
+body.rc-pet-page:not(.rc-pet-story-page) { overflow: hidden; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-shell { height: 100vh; min-height: 0; overflow: hidden; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-main {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+  padding: 10px 16px 12px;
+  overflow: hidden;
+}
+/* 顶栏也压扁一点 (书宠页自己的东西已经够满) */
+body.rc-pet-page:not(.rc-pet-story-page) .rc-top-in { padding: 3px 16px 0; gap: 16px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-brand { font-size: 17px; padding-bottom: 4px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-brand .rc-logo { height: 18px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-nav a { padding: 7px 13px 9px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-nav a[aria-current="page"]::after { bottom: 3px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-user { padding-bottom: 6px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-foot { display: none; }
+
+/* 故事分区自己撑满, 别的分区 (世界 / 设置) 照旧滚 */
+body.rc-pet-page:not(.rc-pet-story-page) .rc-pet {
+  max-width: none; width: 100%;
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
+/* 只有故事页是"一屏装下"; 世界/设置内容长, 让它自己滚 */
+body.rc-pet-page:not(.rc-pet-story-page) .pg-pane {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 滚动条可见 (用户要) —— 占位式, 不遮内容 */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--rc-fg) 26%, transparent) transparent;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .pg-pane::-webkit-scrollbar { width: 10px; height: 10px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-pane::-webkit-scrollbar-track { background: transparent; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-pane::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--rc-fg) 22%, transparent);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .pg-pane::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--rc-fg) 34%, transparent);
+  background-clip: content-box;
+}
+
+/* ── HUD 压扁成一行 ────────────────────────────────────────── */
+body.rc-pet-page:not(.rc-pet-story-page) .pg-bar {
+  grid-template-columns: 34px minmax(0, 1fr) minmax(210px, 1.15fr) auto;
+  grid-template-areas: "face id gauges chips";
+  gap: 6px 12px;
+  padding: 7px 12px;
+  margin-bottom: 6px;
+  flex: 0 0 auto;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .pg-face { width: 34px; height: 34px; font-size: 15px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-name { font-size: 1.05rem; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-name-row { gap: 6px; flex-wrap: nowrap; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-sub { margin-top: 1px; font-size: 11px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-gauges { gap: 4px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-gauge { grid-template-columns: 34px 1fr 54px; gap: 6px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-gauge-l,
+body.rc-pet-page:not(.rc-pet-story-page) .pg-gauge-v { font-size: 10px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-chips { gap: 4px; flex-wrap: nowrap; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-chip { font-size: 10.5px; padding: 1px 6px; }
+
+/* ── 页签 + 图标栏并成一行 ─────────────────────────────────── */
+body.rc-pet-page:not(.rc-pet-story-page) .pg-tabs {
+  margin: 0 0 6px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: auto;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .pg-tab { padding: 6px 13px; min-height: 32px; font-size: 12.5px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-ico-rail {
+  display: inline-flex;
+  vertical-align: middle;
+  margin: 0 0 6px 8px;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .pg-ico-btn { min-height: 32px; padding: 0 10px; font-size: 12px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-ico { width: 16px; height: 16px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-ico svg { width: 16px; height: 16px; }
+/* 页签与图标栏要在同一行 —— 用一个 flex 包裹层 (见 pet.html) */
+body.rc-pet-page:not(.rc-pet-story-page) .pg-toprow {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 0 10px;
+  margin: 0 0 6px;
+  flex: 0 0 auto;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .pg-toprow .pg-tabs,
+body.rc-pet-page:not(.rc-pet-story-page) .pg-toprow .pg-ico-rail { margin: 0; }
+
+/* ── 故事卡: 头与身都压扁, 读本吃掉剩余高度 ───────────────── */
+/* 故事分区: 内容**刚好**装下 (常态), 展开诊断块时允许它自己滚。
+   `overflow: hidden` 会把诊断内容裁掉 (展开后内容比一屏高) —— 改成 auto,
+   配合下面的 min-height, 展开时正文窗口不会被挤扁。 */
+body.rc-pet-page:not(.rc-pet-story-page) .rc-pane-story.is-on {
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+}
+body.rc-pet-page:not(.rc-pet-story-page) #card-chronicle {
+  display: flex; flex-direction: column;
+  flex: 1 1 auto; min-height: 0;
+  margin: 0;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .rc-pane-story #card-chronicle .card-head { padding: 8px 12px; gap: 8px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-pane-story #card-chronicle .card-head h2 { font-size: 13px; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-pane-story #card-chronicle .card-head .hint { display: none; }
+body.rc-pet-page:not(.rc-pet-story-page) .rc-pane-story #card-chronicle .card-body {
+  padding: 10px 12px;
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
+
+/* 概览 + 行动行压成一行 */
+body.rc-pet-page:not(.rc-pet-story-page) .story-meta {
+  padding: 0 0 6px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  gap: 3px 10px;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .pg-actions { margin: 0 0 6px; gap: 6px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-actions button { min-height: 32px; font-size: 12.5px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-main-act { padding-inline: 14px; }
+
+/* 读本吃掉剩余高度 (不是 vh 猜的)。
+   `min-height` 是底线 —— 展开诊断块时, 读本不许被挤成一条缝,
+   多出来的内容让故事分区自己滚。 */
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read {
+  margin: 0;
+  flex: 1 1 auto; min-height: 320px;
+  display: flex; flex-direction: column;
+}
+/* 诊断块展开时: 它自己滚 (限高), 不许把正文窗口挤扁。
+   限高取 200px —— 展开后正文窗口还剩 ~320px (能读), 诊断内容自己滚。 */
+body.rc-pet-page:not(.rc-pet-story-page) .pg-diag-body {
+  max-height: 200px; overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .pg-diag-body::-webkit-scrollbar { width: 8px; }
+body.rc-pet-page:not(.rc-pet-story-page) .pg-diag-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--rc-fg) 22%, transparent);
+  border: 2px solid transparent; background-clip: content-box;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-bar { padding: 5px 12px 4px; gap: 5px 10px; }
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-title { font-size: .88rem; }
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-prog { font-size: .78rem; }
+/* mini 按钮: 全站按钮默认 min-height 40px —— 读本工具条里它会把整行撑到 52px。
+   这里压到 28px, 一屏才装得下。 */
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-bar .mini,
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-foot .mini {
+  min-height: 28px; padding: 1px 8px; font-size: 11px; line-height: 1.4;
+}
+
+/* 正文窗口: 高度由 flex 给, 滚动条**看得见** */
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body {
+  flex: 1 1 auto; min-height: 0;
+  height: auto;                /* 覆盖上面的 58vh —— 由 flex 决定 */
+  padding: 10px 14px 10px;
+  overflow-y: scroll;          /* 一直占位, 滚条不会忽然出现/消失 */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--rc-fg) 26%, transparent) transparent;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body::-webkit-scrollbar { width: 10px; height: 10px; }
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--rc-fg) 5%, transparent);
+}
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--rc-fg) 24%, transparent);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--rc-fg) 36%, transparent);
+  background-clip: content-box;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body p {
+  font-size: 1rem; line-height: 1.85;
+  margin: 0 0 .8em;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-foot { padding: 5px 12px 6px; gap: 8px; }
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-foot button { min-height: 30px; font-size: 12px; }
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-done { padding: 6px 12px; }
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-hint { font-size: .78rem; }
+
+/* 读本下面那几块 (状态 / 语料 / 说明) 收进**折叠块** (pg-diag),
+   默认收起 —— 一屏装下时它们是负担, 但不该消失 (要查模型名、失败原因)。
+   <details> 没 open 时 UA 自己就藏内容, 不必再 display:none (那样展开也出不来)。 */
+body.rc-pet-page:not(.rc-pet-story-page) .pg-diag {
+  margin: 6px 0 0; padding: 0 10px;
+  flex: 0 0 auto;
+}
+body.rc-pet-page:not(.rc-pet-story-page) .pg-diag > summary {
+  padding: 5px 0; font-size: 11.5px; font-weight: 500;
+  color: var(--rc-mute);
+}
+
+/* ── 窄屏: 一屏装不下, 退回"页面可滚" ─────────────────────── */
+@media (max-width: 860px) {
+  body.rc-pet-page:not(.rc-pet-story-page) { overflow: auto; }
+  body.rc-pet-page:not(.rc-pet-story-page) .rc-shell { height: auto; min-height: 100vh; overflow: visible; }
+  body.rc-pet-page:not(.rc-pet-story-page) .rc-main { overflow: visible; display: block; padding: 12px 12px 40px; }
+  body.rc-pet-page:not(.rc-pet-story-page) .rc-pet { display: block; }
+  body.rc-pet-page:not(.rc-pet-story-page) .pg-pane { overflow: visible; }
+  body.rc-pet-page:not(.rc-pet-story-page) .rc-pane-story.is-on { display: block; }
+  body.rc-pet-page:not(.rc-pet-story-page) #card-chronicle { display: block; }
+  body.rc-pet-page:not(.rc-pet-story-page) .rc-pane-story #card-chronicle .card-body { display: block; }
+  body.rc-pet-page:not(.rc-pet-story-page) .adv-read { display: block; }
+  body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body {
+    height: 56vh; min-height: 280px;
+    flex: none;
+    overflow-y: scroll;
+  }
+  /* 窄屏上壳还是压扁的 */
+  body.rc-pet-page:not(.rc-pet-story-page) .pg-bar {
+    grid-template-columns: 34px minmax(0, 1fr);
+    grid-template-areas: "face id" "gauges gauges" "chips chips";
+  }
+  body.rc-pet-page:not(.rc-pet-story-page) .pg-gauges { grid-template-columns: 1fr 1fr 1fr; }
+}

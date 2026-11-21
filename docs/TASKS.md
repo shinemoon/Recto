@@ -637,3 +637,58 @@ life / reborn / world / chronicle` 的临时文件名原本只有 pid —— **�
 - `tests/test_pet_reading.py` 55 → **76** 项（新增 MUD 窗口契约 21 项）
 - 改 `tools/probe_pet_story_flow.mjs`（27）、`tools/probe_pet_read.mjs`（29）
 - 全套 python 测试绿（只有 `test_excerpt_persist` 那 2 项**既有**失败，基线同样红）
+---
+
+## T18 § 书宠阅读界面「一屏装下 + 可见滚动条」— `done` (2026-11-21)
+
+### 用户口径
+
+> 「书宠的阅读界面我希望一个屏幕可以装下，即尽量 compact，
+> 然后页面要有 scrollbar」
+
+### 改之前的样子（1280×900 实测）
+
+| 东西 | 高度 | 说明 |
+|---|---|---|
+| 页面总高 | **1535px** | 视口 900 —— 得滚掉 635px 才够看正文 |
+| HUD | 123px | 头像/名/量条/chips 挤成两行 |
+| 页签 + 图标栏 | 43 + 40px | 各占一行 |
+| 卡头 + 概览 + 行动行 | 59 + 32 + 42px | 正文窗口上方堆着 325px 的「壳」 |
+| 正文窗口 | 522px | `height: 58vh`（猜的） |
+| 读本下面 | 200+px | 状态 / 语料 / 说明 |
+| 滚动条 | **看不见** | Chromium 默认 overlay 滚动条（不占位） |
+
+### 关键决定
+
+| 决定 | 为什么 |
+|---|---|
+| **页面变成 flex 列 + `height: 100vh`** | 页面自己不滚，滚的是正文窗口 —— 这才是「一个屏幕装下」的真义 |
+| 滚动条用 **占位式**（`scrollbar-gutter: stable` + `overflow-y: scroll`） | 用户要「页面要有 scrollbar」= 要**看得见**、能拖着走；overlay 滚动条既看不见又不占位 |
+| 正文窗口高度由 **flex** 给，不用 `vh` 猜 | 壳的高度会随内容变（chip 换行、按钮换行），`vh` 是猜的、flex 是真的 |
+| 诊断信息收进**折叠块**（默认收起），展开时自己滚（限高 200px） | 一屏装下时它们是负担，但**不该消失**（要查模型名、失败原因、语料遭遇）；限高 = 展开时不挤扁正文窗口 |
+| 页签与图标栏并成一行（新增 `.pg-toprow`） | 少占一行是一行 |
+| 窄屏 (≤860px) **退回页面可滚** | 一屏装不下那么多；硬塞会把正文挤成一条缝 |
+| 档案页用 `:not(.rc-pet-story-page)` 排除 | 档案页内容长（37 回），不受一屏布局影响 |
+
+### 落地
+
+- `src/recto/app/ui/assets/pet.css`：新增「一屏装下」整段（页面骨架 / 壳压扁 /
+  正文窗口 flex / 占位式滚动条 / 诊断折叠块 / 窄屏退回）
+- `src/recto/app/ui/assets/pet.html`：页签与图标栏包进 `.pg-toprow`；
+  状态 / 语料 / 说明包进 `#pet-diag` 折叠块（新增 `.pg-diag-body` 限高滚动容器）
+- `tests/test_pet_onescreen.py`（新，43 项）：钉一屏与滚动条的契约
+- `tools/probe_pet_onescreen.mjs`（新，21 项）：真浏览器量（一屏 / 滚动条占位 /
+  翻一屏 / 档案页不受影响 / 窄屏 / 0 JS 报错）
+- `tests/test_probe_hygiene.py`：加一条 —— 探针写 `/pet/api/reading` 必须
+  `readPos()` 快照 + `writePos()` 写回（位置是只前进的高水位，探针翻了不还原
+  会把用户顶到半路）
+
+### 验收
+
+- 实测 1280×900：页面 `scrollHeight == clientHeight == 900`（**不滚**），
+  正文窗口 476px，滚动条占位 10px，空格翻一屏 Δ476px = 视口高
+- 窄屏 390px：页面可滚、无横向溢出、滚动条仍占位 10px
+- 深色皮肤：滚动条滑块用 `color-mix(var(--rc-fg) …)` → 深浅都看得见
+- 既有 pet 探针无回归（`probe_pet_read` / `mudread` / `read_reset` / `read_sticky` /
+  `story_flow` 的失败**基线同样红** —— 故事已读完 idx=695/695 的数据状态）
+- 全套 python 测试绿（只有 `test_excerpt_persist` 那 2 项**既有**失败）

@@ -102,6 +102,34 @@ def case_reader_progress_probes_restore():
     ok(not late, f"写回发生在快照之后 (违规: {late})")
 
 
+def case_pet_reading_position_probes_restore():
+    """书宠读本的探针会真的写阅读位置 (/pet/api/reading) —— 必须快照 + 还原。
+
+    位置是**只前进**的高水位: 探针往前翻了十几屏, 用户下次打开书宠
+    就直接落到半路, 自己读的地方被顶掉。
+
+    这一族的接口是 `/pet/api/reading` (不是阅读器的 `/progress`),
+    所以上面那条规则抓不到 —— 单独来一条。
+    """
+    probes = []
+    for p in sorted(TOOLS.glob("*.mjs")):
+        txt = p.read_text("utf-8", errors="replace")
+        if "/pet/api/reading" in txt and re.search(r"method:\s*'POST'", txt):
+            probes.append((p, txt))
+    ok(bool(probes), f"找到写书宠阅读位置的探针 ({len(probes)} 个)")
+    bad = [p.name for p, t in probes
+           if "readPos(" not in t or "writePos(" not in t]
+    ok(not bad, f"全部快照+写回阅读位置 (漏: {bad})")
+    # 写回必须发生在快照之后 (收尾写回, 不能开头就写回去)
+    late = []
+    for p, t in probes:
+        calls = [m.start() for m in re.finditer(r"writePos\(", t)]
+        first_read = [m.start() for m in re.finditer(r"readPos\(", t)]
+        if calls and first_read and max(calls) < max(first_read):
+            late.append(p.name)
+    ok(not late, f"写回发生在快照之后 (违规: {late})")
+
+
 def case_reader_time_probes_restore():
     """要在阅读器里待很久的探针会真的给书写入阅读时长 —— 必须快照 + 还原。
 
