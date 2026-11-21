@@ -239,12 +239,14 @@ POST bookstore/open/cloud/bookshelf/upsert  type=1
 
 ## 约定
 
-- 分支：日常在 `pet` 分支工作。**`master` 上还没有 pet 模块**（书宠 / 其页面 / 其测试整套
-  都只在 `pet` 分支），所以书宠相关任务只推 `pet`；不要把单个 commit cherry-pick 到 `master`
-  —— 那会把 README 弄冲突、把 pet 文件做成 DU（deleted by us）。
+- 分支：日常在 `pet` 分支工作。`master` 上**有** pet 模块，但停在合并点 `7c01b7c`
+  （T16 之后的书宠改动都只在 `pet` 上），所以书宠相关任务只推 `pet`；不要把单个 commit
+  cherry-pick 到 `master` —— 那会把 README 弄冲突、把 pet 文件做成 DU（deleted by us）。
+  要让 `master` 追上，就等一次整体合并（像 `7c01b7c` 那次），别逐个搬。
 - 非书宠的功能（阅读器 / 云端同步 / 摘录 / 语料）照旧在 `master` 上做，需要时合并进 `pet`。
 - 提交前 `git status -sb` 确认分支。**切换分支前先确认生产服务能不能跟着换**
-  （`checkout master` 会把 `src/recto/pet/` 从工作树删掉，5015 一重启就挂）。
+  （`checkout master` 会把 `src/recto/pet/` 退回 `7c01b7c` 那份旧代码 —— T16 之后的
+  故事读本 / 排版 / 判定嵌入全没了，5015 一重启就退化）。
 - 每轮收工更新本表状态。
 
 ---
