@@ -1503,6 +1503,7 @@ cd tools && npm i playwright@1.55.0        # 一次就够（或 export PLAYWRIGH
 npx playwright install chromium-headless-shell
 
 cd .. && node tools/probe_all_pages.mjs    # 页面/导航/溢出
+node tools/probe_spacing.mjs       # 版面呼吸: 相邻块之间的最小间距
 node tools/probe_logo.mjs                  # 标志: 加载/比例/尺寸/深色反相/favicon
 node tools/probe_reader_paged.mjs          # 阅读器左右翻页
 node tools/probe_reader_seam.mjs           # 左右翻页: 列距/落点是否与 stride 一致

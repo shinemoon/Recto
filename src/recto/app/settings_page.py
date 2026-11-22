@@ -42,8 +42,14 @@ input.st-in[type=number]{-moz-appearance:textfield;text-align:right;
 input.st-in[type=number]::-webkit-outer-spin-button,
 input.st-in[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 
-/* 一行字段: 左侧文字说明, 右侧固定宽控件 */
+/* 一行字段: 左侧文字说明, 右侧固定宽控件。
+ * 在**单列块**里与开关行同一节奏 (8px 上下内边距 + 一条分隔线)。
+ * 原来只有 min-height 没有 padding/分隔线 → 夹在开关行之间时上下一齐贴死
+ * (实测相邻两行间距 0px, 看着像一行挤了两段文字)。
+ * 只管 `.st-block` 里的 —— `.mk-opts` 是多列网格, 那里加分隔线会变成一排随机下划线。 */
 .st-row{display:flex;align-items:center;gap:10px;min-height:40px;min-width:0}
+.st-block>.st-row{min-height:46px;padding:8px 0;border-bottom:1px solid var(--rc-line)}
+.st-block>.st-row:last-child{border-bottom:0}
 .st-row>span{flex:1 1 auto;min-width:0;font-size:var(--rc-fs-sm);color:var(--rc-dim);
   display:flex;flex-direction:column;gap:2px}
 .st-row>span small{color:var(--rc-mute);font-size:var(--rc-fs-xs);line-height:1.5}
@@ -71,8 +77,8 @@ input.m3[type=checkbox]:focus-visible{outline:2px solid color-mix(in srgb,var(--
   outline-offset:2px}
 .st-sw.compact{min-height:0;padding:0;border:0;gap:0}
 
-.st-two{display:grid;gap:6px 28px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
-  margin-top:6px;align-items:start}
+.st-two{display:grid;gap:14px 28px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  margin-top:12px;align-items:start}
 .st-block{min-width:0}
 .st-h{font-size:var(--rc-fs-xs);letter-spacing:.08em;color:var(--rc-mute);
   margin:16px 0 6px;text-transform:none}
@@ -97,12 +103,12 @@ input.m3[type=checkbox]:focus-visible{outline:2px solid color-mix(in srgb,var(--
   margin-top:8px}
 .mk-style{border:1px solid var(--rc-line);border-radius:var(--rc-radius-card,12px);
   padding:10px 12px 8px;min-width:0;background:color-mix(in srgb,var(--rc-fg) 2%,transparent)}
-.mk-style-hd{display:flex;align-items:center;gap:10px;min-height:26px}
+.mk-style-hd{display:flex;align-items:center;gap:10px;min-height:26px;margin-bottom:4px}
 .mk-style-t{flex:1 1 auto;min-width:0;font-size:var(--rc-fs-sm);color:var(--rc-fg);
   font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mk-style-t small{font-weight:400;color:var(--rc-mute);font-size:var(--rc-fs-xs);
   margin-left:4px;letter-spacing:.04em}
-.mk-col{display:flex;align-items:center;gap:10px;min-height:32px;margin-top:2px;min-width:0}
+.mk-col{display:flex;align-items:center;gap:10px;min-height:32px;margin-top:10px;min-width:0}
 .mk-lbl{flex:0 0 auto;min-width:40px;white-space:nowrap;font-size:var(--rc-fs-xs);
   color:var(--rc-mute)}
 .sw-wrap{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0}
@@ -137,8 +143,8 @@ button.sw.none[aria-pressed="true"]::after{content:"";position:absolute;left:50%
   font-size:var(--rc-fs-xs);color:var(--rc-dim);cursor:pointer}
 .mk-under input[type=checkbox]{width:15px;height:15px;min-height:0;accent-color:var(--rc-primary)}
 
-.mk-opts{display:grid;gap:6px 22px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
-  margin-top:4px;align-items:center}
+.mk-opts{display:grid;gap:10px 22px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+  margin-top:10px;align-items:center}
 .mk-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 0;
   border-bottom:1px solid var(--rc-line);font-size:var(--rc-fs-sm)}
 .mk-row .nm{min-width:180px;flex:1 1 180px;color:var(--rc-fg)}

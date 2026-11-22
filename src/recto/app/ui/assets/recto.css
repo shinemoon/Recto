@@ -288,8 +288,12 @@ blockquote {
 .kicker, .rc-kicker {
   font-size: var(--rc-fs-xs); letter-spacing: .12em; text-transform: uppercase;
   color: var(--rc-mute);
+  /* 小标题下面紧跟图表/列表, 没有下边距会贴死 (实测 0px) */
+  margin: 0 0 8px;
 }
-.kicker-sm { font-size: var(--rc-fs-xs); letter-spacing: .08em; color: var(--rc-mute); }
+.kicker-sm { font-size: var(--rc-fs-xs); letter-spacing: .08em; color: var(--rc-mute);
+  /* 统计卡里它是数字上方那行小字, 贴着数字 (实测 0px) 会读成一行 */
+  margin-bottom: 3px; }
 .headline {
   font-family: var(--rc-heading); font-weight: 400;
   font-size: calc(var(--rc-fs) * 1.6); line-height: 1.24; margin: 4px 0 8px;
@@ -673,7 +677,7 @@ pre:empty::before { content: "—"; color: var(--rc-mute); }
   display: flex; gap: 22px; flex-wrap: wrap;
 }
 .shelf-stat .s {
-  display: flex; flex-direction: column; gap: 1px; min-width: 74px;
+  display: flex; flex-direction: column; gap: 3px; min-width: 74px;
 }
 .shelf-stat .s b {
   font-family: var(--rc-heading); font-weight: 500;
@@ -681,9 +685,12 @@ pre:empty::before { content: "—"; color: var(--rc-mute); }
 }
 .shelf-stat .s span { font-size: var(--rc-fs-xs); color: var(--rc-mute); }
 
+/* 书架网格**没有自带下边距** —— 紧跟其后的折叠区 (`#sec-ident` 上传到掌阅云之类)
+ * 会贴到卡片底边上 (实测 0px, 一眼看着像同一块)。这里给一块呼吸。 */
 .shelf-grid {
   display: grid; gap: 18px;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  margin: 0 0 calc(var(--rc-gap) + 4px);
 }
 
 .bk-cell { position: relative; display: flex; min-width: 0; }
@@ -930,7 +937,8 @@ pre:empty::before { content: "—"; color: var(--rc-mute); }
 .tl-time .d { display: block; font-size: .92em; letter-spacing: .02em; }
 .tl-item .tl-content {
   font-family: var(--rc-serif); font-size: calc(var(--rc-fs) * 1.06);
-  line-height: 1.7; margin: 2px 0 6px; grid-column: 1 / -1;
+  /* 上面那行是来源/章节/位置, 只隔 2px 会糊成一片 (实测桌面与手机都是 2px) */
+  line-height: 1.7; margin: 8px 0 6px; grid-column: 1 / -1;
 }
 .tl-item .tl-content::first-letter { font-size: 1.05em; }
 .tl-item .tl-meta {
@@ -974,7 +982,7 @@ pre:empty::before { content: "—"; color: var(--rc-mute); }
 .chip.rd.active { background: var(--rc-surface-variant, rgba(0,0,0,.06)); border-color: transparent; color: var(--rc-fg); }
 
 .tool-card { padding: calc(var(--rc-pad) + 4px); }
-.tool-card h3 { margin-bottom: 4px; }
+.tool-card h3 { margin-bottom: 8px; }
 .tools-grid {
   display: grid; gap: var(--rc-gap);
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
@@ -993,6 +1001,9 @@ pre:empty::before { content: "—"; color: var(--rc-mute); }
   display: flex; gap: 8px; align-items: center; justify-content: center;
   margin-top: 18px; font-size: var(--rc-fs-sm); color: var(--rc-dim);
 }
+/* 分页条在列表**上方**时 (摘录面板: 上条 + 列表 + 下条), 它只写了 margin-top,
+ * 会让列表贴着自己的下沿 (实测 0px)。上下都要留白。 */
+.pager + .timeline, .pager + .muted { margin-top: 18px; }
 .pager a, .pager span {
   min-width: 36px; text-align: center; padding: 6px 10px;
   border: 1px solid var(--rc-outline-variant); border-radius: var(--rc-radius-pill);
@@ -1137,6 +1148,8 @@ body.rc-auth {
     padding: 0; background: none; box-shadow: none;
     color: inherit; font-size: var(--rc-fs-sm);
   }
+  /* 操作轨落到页头那一行后, 与下面的搜索栏只有 4px (实测) —— 页头行自己留出呼吸 */
+  .rc-head-row:has(> .rc-rail:only-child) { padding: 0 0 2px; margin: 0 0 12px; }
 }
 
 @media (max-width: 600px) {
@@ -1147,7 +1160,8 @@ body.rc-auth {
   .cards { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
   .card .n { font-size: calc(var(--rc-fs) * 1.75); }
   th, td { padding: 10px 12px; }
-  .tl-item { grid-template-columns: 1fr; }
+  /* 折成一列之后时段/元信息/正文会挨在一起 (实测 2px) —— 行距放大 */
+  .tl-item { grid-template-columns: 1fr; gap: 8px 0; }
   .tl-item .tl-time { justify-self: start; text-align: left; grid-row: 1; }
   .tl-time .d { display: inline; margin-left: 6px; }
   .bar-chart { height: 114px; gap: 5px; padding: 22px 2px 20px; }

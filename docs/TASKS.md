@@ -831,3 +831,50 @@ T19 把判定 / 启发嵌回了正文对应那一段，但正文本身还是"日
 
 `tests/test_pet_latest.py` 加两条钉住这个顺序（自报优先 + 只在自己为空时折算），
 免得以后有人把它改成"一律按账本"（那样就把"写进故事"与"实际长进"混成一回事了）。
+
+## T21 § 版面呼吸: 相邻块不许贴死 — `done` (2026-11-22)
+
+**报障**：书架上那一格格子（`#shelf`）与它下面的「上传到掌阅云」折叠区（`#sec-ident`）
+之间是 **0px** —— 两块贴在一起，看着像同一块。要求顺带扫一遍同类。
+
+**扫法**：写了个一次性探针，遍历 `body *` 的相邻**块级兄弟**（同栏、都可见、都 ≥24px 高），
+量 `next.top - prev.bottom`，打印 ≤7px 的对。桌面 1400 与手机 390 各跑一遍。
+
+**扫出来的（真问题）**
+1. `#shelf` → `#sec-ident` **0px** —— 报障点。`.shelf-grid` 有 `gap` 有网格，**唯独没有下边距**，
+   而 `details.sec` 只写了下边距。
+2. 摘录面板 `.pager` → `.timeline` **0px** —— `.pager` 只有 `margin-top`；而它在列表**上方**
+   也出现一次（上条 + 列表 + 下条）。
+3. 摘录卡 `.tl-meta`（来源/章节/位置）→ `.tl-content`（正文）**2px** —— 桌面与手机都一样。
+4. 「导出到纸间」表单：`<label>` 与 `<input>` 是**纯 inline 流**，两者**并排挤在同一行**
+   （卡片 1132px 宽，实际只用了左边 ~400px），字段之间 5px。
+5. 设置页「节奏与状态」：`.st-row` 只有 `min-height`，没有内边距也没有分隔线 ——
+   夹在开关行（8px 内边距 + 一根发丝线）之间时上下一齐贴死，0px。
+6. 概览小标题 `.kicker` → 下面的图表/列表 **0px**；统计卡 `.kicker-sm` → 大数字 **0px**。
+7. 手机专属：操作轨落回页头后与搜索栏只有 4px；摘录卡折成一列后时段/元信息/正文只有 2~4px。
+
+**修法（只动边距，不动结构）**
+- `.shelf-grid` 显式 `margin: 0 0 calc(var(--rc-gap) + 4px)`（桌面/手机都是 18px）
+- `.pager + .timeline` / `.pager + .muted` 补 `margin-top`
+- `.tl-item .tl-content` 上边距 2px → 8px
+- `.kicker` 补下边距 8px、`.kicker-sm` 补 3px
+- 设置页 `.st-block > .st-row` 与开关行同一节奏（8px 内边距 + 分隔线）；
+  `.st-two` 行距 6→14、`.mk-opts` 行距 6→10、分类配色卡标题与色板 2→10
+- 「导出到纸间」表单改单列网格：标签在上、控件占满一列、字段之间 12px
+- 手机：`.rc-head-row:has(> .rc-rail:only-child)` 留 12px；`.tl-item` 折列后 `gap: 8px 0`
+
+**约束（写进探针）**：相邻块之间**最小间距**钉死；0px 只允许出现在
+「自带内边距 / 自带分隔线」的元件之间（`.st-sw` / `.st-row` / `.mk-row` / `.epub-row` /
+`card-head` 对 `card-body` / `details.sec > summary` 对 `.sec-body`）。
+间距用 `var(--rc-gap)` 表达，疏密档（compact / roomy）改了不该红。
+
+**落在哪**
+- `src/recto/app/ui/assets/recto.css`（网格下边距 / 分页条 / 小标题 / 摘录正文 / 手机两条）
+- `src/recto/app/settings_page.py`（单列行节奏 / 两栏行距 / 配色卡）
+- `src/recto/app/excerpts.py`（`#zhijian-form` 单列表单）
+- 验收：`tests/test_spacing.py` **17 项**（查声明在不在）+ `tools/probe_spacing.mjs`
+  **14 项**（真浏览器量几何，1400 与 390 双视口）
+
+**别误记成回归**（都 stash 对照过基线，一样红）：`test_excerpt_persist` 2 项、
+`probe_material_shelf` 2 项（搜索即时过滤 / 水波纹）、`probe_all_pages` 3 项（阅读页 404）、
+`probe_btn_groups` 12 项（深色皮肤下 `/corpus/` 的 `.row` 按钮对比度）。

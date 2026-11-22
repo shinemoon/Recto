@@ -495,6 +495,15 @@ _EXTRA_CSS = """
 .tl-mini{color:var(--rc-mute);font-size:var(--rc-fs-xs);font-style:italic;
   line-height:1.5}
 .tl-content:has(> .tl-mini){padding:2px 0}
+/* 「导出到纸间」表单: 原来是纯 inline 流 —— 标签与输入框并排挤在一行
+ * (卡片 1132px 宽却只用了左边 400px), 字段之间只有 5px。
+ * 改成 标签在上 / 控件在下 的单列堆, 字段之间留 12px。 */
+#zhijian-form{display:grid;grid-template-columns:minmax(0,1fr);max-width:620px}
+#zhijian-form>label{display:block;margin:12px 0 6px;color:var(--rc-dim)}
+#zhijian-form>label:first-of-type{margin-top:0}
+#zhijian-form>input,#zhijian-form>select{width:100%}
+#zhijian-form>div:not(.out){display:flex;gap:8px}
+#zhijian-form>.btn-row{margin-top:14px}
 """
 
 # ---------- Page renderers ----------
