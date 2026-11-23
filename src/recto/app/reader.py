@@ -391,6 +391,10 @@ def _track_chapter(key: str, idx: int, payload: dict) -> None:
     以后拿它去编写自己的游历 (见 `recto.pet.encounters` / `recto.pet.chronicle`)。
     """
     try:
+        from recto.app import pet as _pet
+
+        if not _pet.enabled():
+            return      # 书宠关掉了 → 不记足迹 / 不记语料遭遇 (读者读书照旧)
         text = "".join(b.get("text") or "" for b in (payload.get("blocks") or []))
         if not text:
             return
@@ -446,9 +450,17 @@ def handle(h) -> bool:
         if method == "GET" and path == "/read/api/pet-brief":
             # 书宠最新一回的两行摘要 (阅读器右下角小图标悬停用)。与书无关,
             # 所以放在 book/<key> 之前。
+            from recto.app import pet as _pet
+
+            if not _pet.enabled():
+                # 关掉了就直说 —— 前端见 ok=false 把小图标整个藏起来
+                h._json(200, {"ok": False, "enabled": False, "lines": []})
+                return True
             from recto.pet import brief
 
-            h._json(200, brief.latest())
+            payload = brief.latest()
+            payload.setdefault("enabled", True)
+            h._json(200, payload)
             return True
 
         if method == "GET" and path == "/read/api/books":

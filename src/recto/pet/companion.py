@@ -35,6 +35,16 @@ _TICK: dict[str, Any] = {"thread": None, "stop": False, "at": 0.0,
                          "runs": 0, "last": None, "error": None}
 
 
+def _enabled() -> bool:
+    """书宠总开关 (设置页「书宠」)。关掉时心跳只空转, 一分钱不记。"""
+    try:
+        from recto.core import settings as _st
+
+        return _st.pet_enabled()
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def total_reading_minutes() -> int:
     """全部书加起来的**本地**阅读分钟 (不含云端那份)。
 
@@ -255,9 +265,14 @@ def _loop() -> None:
             gap = max(10.0, TICK_SEC)
             _TICK["at"] = time.time()
             _TICK["runs"] = int(_TICK.get("runs") or 0) + 1
-            gain = feed_now()
-            _TICK["last"] = gain
-            _TICK["error"] = None
+            if not _enabled():
+                # 总开关关掉 → 不折算、不动存档 (再打开时账还是接得上的)
+                _TICK["last"] = {"skipped": "pet_disabled"}
+                _TICK["error"] = None
+            else:
+                gain = feed_now()
+                _TICK["last"] = gain
+                _TICK["error"] = None
         except Exception as e:  # noqa: BLE001 — 心跳不能死
             _TICK["error"] = f"{type(e).__name__}: {e}"
             log.warning("陪读心跳出错 · %s", e)

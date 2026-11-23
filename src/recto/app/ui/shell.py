@@ -125,9 +125,22 @@ def _avatar_text(name: str) -> str:
     return name[:1].upper() if name else "⚙"
 
 
+def pet_on() -> bool:
+    """书宠总开关 —— 关掉时顶栏不出现入口 (页面本身也进不去)。"""
+    try:
+        from recto.core import settings as _st
+
+        return _st.pet_enabled()
+    except Exception:  # noqa: BLE001 — 设置读不出来就按"开"处理, 别让整页挂掉
+        return True
+
+
 def nav_html(active: str = "", user: str | None = None) -> str:
     out = ['<nav class="rc-nav" aria-label="主导航">']
+    show_pet = pet_on()
     for i, (key, label, href) in enumerate(NAV):
+        if key == "pet" and not show_pet:
+            continue
         if key == "appearance" and i:
             out.append('<span class="rc-nav-sep" aria-hidden="true"></span>')
         cur = ' aria-current="page"' if key == active else ""

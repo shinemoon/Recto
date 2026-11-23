@@ -18,7 +18,7 @@ src/recto/app/ui/
   shell.py            整页骨架 (顶栏 / 导航 / 页脚) + 登录页 + 静态资源白名单
   assets/recto.css    设计系统: 只认 --rc-* 变量, 不写死颜色
 src/recto/app/appearance.py   /appearance 页面 + /api/appearance
-src/recto/app/settings_page.py /settings 页面 + /api/settings + /api/mark (登录名 / 昵称 / 口令 / 书库目录 / 阅读高亮; 外观只在外观分区)
+src/recto/app/settings_page.py /settings 页面 + /api/settings + /api/mark (登录名 / 昵称 / 口令 / 书库目录 / 书宠开关 / 云端同步 / 阅读高亮; 外观只在外观分区)
 ```
 
 ## 1 三层结构

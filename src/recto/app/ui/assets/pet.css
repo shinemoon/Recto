@@ -1323,9 +1323,20 @@ body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body p {
   margin: 0 0 .68em;
 }
 /* 一屏版: 版心跟着字号一起收 (34em @ .92rem ≈ 500px) —— 桌面上一行 ~33 字,
-   手机上 18~20 字 (版心本来就窄, max-width 不起作用)。 */
+   手机上 18~20 字 (版心本来就窄, max-width 不起作用)。
+   **左右 auto 必须写在这里**: 上面 `.adv-read-body p` 的 `margin: 0 0 .68em` 是简写,
+   会把基础规则里的 `margin-left/right: auto` 一起清成 0 —— 正文就贴着窗口左缘了
+   (用户 2026-11-23 报"正文要和按回阅读一样居中", 根因就是这条)。 */
 body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body > p {
   max-width: 34em;
+  margin-left: auto; margin-right: auto;
+}
+/* 旁注 (判定 / 启发 / 交手) 与正文同版心 —— 两处宽度不一致时左缘会错开一格。
+   `font-size` 也要跟正文一样: `34em` 是拿字号算的宽度, 1em 差 2px 就差 60px。
+   (旁注里面的字自己有字号, 容器这一档只决定版心宽度。) */
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body .adv-inline {
+  max-width: 34em;
+  font-size: .92rem;
 }
 body.rc-pet-page:not(.rc-pet-story-page) .adv-read-foot { padding: 5px 12px 6px; gap: 8px; }
 body.rc-pet-page:not(.rc-pet-story-page) .adv-read-foot button { min-height: 30px; font-size: 12px; }

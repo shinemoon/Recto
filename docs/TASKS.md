@@ -878,3 +878,71 @@ T19 把判定 / 启发嵌回了正文对应那一段，但正文本身还是"日
 **别误记成回归**（都 stash 对照过基线，一样红）：`test_excerpt_persist` 2 项、
 `probe_material_shelf` 2 项（搜索即时过滤 / 水波纹）、`probe_all_pages` 3 项（阅读页 404）、
 `probe_btn_groups` 12 项（深色皮肤下 `/corpus/` 的 `.row` 按钮对比度）。
+
+## T22 § 读本正文居中 + 设置页「书宠开关」— `done` (2026-11-23)
+
+### 用户口径
+
+> 「Recto 的 webui 的书宠，它自己走的路显示页面，正文需要和'按回阅读'一样居中，
+> 然后 /settings 中增加一个'书宠开关'，可以一键 disable 掉所有书宠相关的内容」
+
+### ① 正文居中：一条 `margin` 简写清掉了 `auto`
+
+`#adv-read-body > p` 的基础规则里是 `margin-left/right: auto`（居中），
+但一屏版后面写了 `margin: 0 0 .68em` —— **简写**，把左右 `auto` 一起清成 0。
+于是正文贴着窗口左缘（实测 1400px 下左边 14px、右边 514px），
+而旁注 `.adv-inline` 仍是 `auto` 居中，两者左缘错开一格。
+
+修法（`ui/assets/pet.css` 一屏版那一段）：
+
+```css
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body > p {
+  max-width: 34em;
+  margin-left: auto; margin-right: auto;   /* 补回来 */
+}
+/* 旁注同版心 —— 而且 font-size 也得跟正文一样: 34em 是拿字号算的宽度 */
+body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body .adv-inline {
+  max-width: 34em; font-size: .92rem;
+}
+```
+
+实测（1400×900）：段落宽 500，左右余白 **291 / 301**（差 10px = 滚动条占位），
+中线偏 5px；旁注左缘与正文 **差 0px**；档案页本来就居中（左右差 0px）。
+390px 窄屏版心比窗口还宽，退化成"铺满 + 滚动条 10px"，仍无横向溢出。
+
+### ② 书宠开关：一个开关管五处
+
+`settings.json` 新增覆盖项 `pet_enabled`（`on`/`off`；空 = 回到默认"开"），
+优先级 **环境变量 `RECTO_PET_ENABLED` > `settings.json` > 默认开**
+（读 `core/settings.py` 的 `pet_enabled()` / `pet_source()`）。
+
+| 关掉之后 | 落点 |
+|---|---|
+| 顶栏「书宠」入口不出现 | `ui/shell.py` 的 `nav_html()` 过滤 `pet` 那一行 |
+| `/pet` `/pet/story` 回书架；`/pet/api/*` 返 404 `pet_disabled` | `app/pet.py` 的 `dispatch()` 开头一道闸 |
+| 阅读器右下角小图标不出现 | `app/reader.py` 的 `/read/api/pet-brief` 先问开关，关着直接 `ok:false` |
+| 语料遭遇不记 | `app/reader.py` 的 `_track_chapter()` 早退 |
+| 陪读心跳 / 后台推演空转 | `pet/companion.py` / `pet/chronicle.py` 的 `_loop()` 每轮现读开关 |
+
+**关掉 ≠ 删数据**：存档 `char.json`、游历、语料遭遇原样留着，再打开接着走
+（设置页文案明写这一条，免得用户以为会清空）。
+
+设置页那张卡（`/settings`，默认展开）除了开关还报现状：
+「已陪你读 N 分钟 · 走过 M 回 · 出处（环境变量 / 设置页 / 默认）」。
+
+### 落在哪
+
+| 位置 | 内容 |
+|---|---|
+| `core/settings.py` | `KEYS` 加 `pet_enabled`；`pet_enabled()` / `pet_source()` / `PET_SOURCE_LABEL` |
+| `app/ui/shell.py` | `pet_on()` + `nav_html()` 过滤 |
+| `app/pet.py` | `enabled()` + `dispatch()` 开头闸门 |
+| `app/reader.py` | `pet-brief` 开关 / `_track_chapter` 早退 |
+| `pet/companion.py` / `pet/chronicle.py` | `_enabled()` + `_loop()` 里挡 |
+| `app/settings_page.py` | `pet_state()` / 卡片 / `api_post` 收 `pet_enabled` / JS 开关 |
+| 验收 | `tests/test_pet_switch.py` **63 项**（开关三档来源 / 顶栏 / 分区闸门 / 阅读器 / 心跳 / 设置页 / CSS 契约）<br>`tools/probe_pet_center.mjs` **16 项**（真浏览器量左右余白与中线，1400 + 390 + 档案页）<br>`tools/probe_settings_pet.mjs` **20 项**（真浏览器: 关 → 入口消失 / 404 / 落书架 / 小图标不画 → 再打开 → 还原） |
+
+**探针卫生**：`probe_settings_pet` 会改 `settings.json` → 收尾按开头读到的值还原；
+`probe_pet_center` 纯只读（不翻页、不写进度）。
+
+**别误记成回归**：`test_excerpt_persist` 那 2 项（正文补上 / `_noText`）stash 对照基线一样红。

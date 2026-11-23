@@ -207,6 +207,45 @@ _JS = r"""
     var f = $('st-lib'); if (f && !f.value) f.value = lib.dir || '';
   }
 
+  // ---- 书宠 (总开关) ----
+  // 一键 disable 所有书宠相关的内容: 顶栏入口 / 页面 / 阅读器小图标 / 后台推演。
+  // 关掉只停"以后", 不动存档 —— 文案里明说, 免得用户以为会删。
+  function petPaint(d){
+    if (!d) return;
+    var on = $('pet-on'); if (on) on.checked = !!d.enabled;
+    var p = $('pet-pill');
+    if (p) {
+      p.textContent = d.enabled ? '已启用' : '已关闭';
+      p.className = 'pill' + (d.enabled ? '' : ' mute');
+    }
+    var s = $('pet-src'); if (s) s.textContent = d.source_label || '';
+    var m = $('pet-min'); if (m) m.textContent = d.enabled ? String(d.minutes || 0) : '—';
+    var c = $('pet-cycles'); if (c) c.textContent = d.enabled ? String(d.cycles || 0) : '—';
+  }
+  function petLoad(){
+    fetch('/api/settings', { credentials: 'same-origin' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ petPaint(d.pet); })
+      .catch(function(){ var p = $('pet-pill'); if (p) p.textContent = '读取失败'; });
+  }
+  document.addEventListener('change', function(ev){
+    var t = ev.target;
+    if (!t || t.id !== 'pet-on') return;
+    var on = !!t.checked;
+    t.disabled = true;
+    post('/api/settings', { pet_enabled: on ? 'on' : 'off' }).then(function(r){
+      petPaint(r.pet);
+      msg('pet-msg', on
+        ? '书宠已启用 —— 顶栏入口与后台推演恢复 (刷新页面后顶栏出现入口)'
+        : '书宠已关闭 —— 入口 / 页面 / 阅读器小图标 / 后台推演全部停下 (刷新后顶栏更新)');
+      t.disabled = false;
+    }).catch(function(e){
+      msg('pet-msg', e.message, true);
+      t.checked = !on;
+      t.disabled = false;
+    });
+  });
+
   // ---- 云端同步 (进度) ----
   var SY_LABEL = { env: '环境变量', settings: '设置页', config: 'config.toml' };
   function syPaint(d){
@@ -642,6 +681,7 @@ _JS = r"""
   // 两张卡各自拉一次, 互不阻塞
   syLoad();
   mkLoad();
+  petLoad();
 })();
 """
 
@@ -717,8 +757,42 @@ def sync_state() -> dict:
 def summary() -> dict:
     return {"ok": True, "nickname": st.nickname(),
             "login": _login_name(), "library": library_state(),
-            "sync": sync_state(),
+            "sync": sync_state(), "pet": pet_state(),
             "password_source": _password_source_label()}
+
+
+def pet_state() -> dict:
+    """书宠总开关 + 一点现状 (陪读分钟 / 走过几回)。
+
+    关掉时不读存档 —— 少开一次库, 也免得页面上出现"关了但还显示 700 分钟"的错觉。
+    """
+    on = st.pet_enabled()
+    src = st.pet_source()
+    out = {"enabled": on, "source": src,
+           "source_label": st.PET_SOURCE_LABEL.get(src, src),
+           "minutes": 0, "cycles": 0, "name": ""}
+    if not on:
+        return out
+    try:
+        from recto.pet import charsheet as _cs
+
+        ch = _cs.load_char()
+        out["minutes"] = int(ch.get("minutes") or 0)
+        out["name"] = str(ch.get("name") or "")
+    except Exception:  # noqa: BLE001 — 书宠库没建好不该挡住设置页
+        pass
+    try:
+        from recto.pet import store as _ps
+
+        c = _ps.conn()
+        try:
+            row = _ps.one(c, "SELECT count(*) AS n FROM adventure")
+        finally:
+            c.close()
+        out["cycles"] = int((row or {}).get("n") or 0)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def _login_name() -> str:
@@ -747,6 +821,7 @@ def _password_source_label() -> str:
 
 def page_html(user: str | None = None) -> str:
     lib = library_state()
+    pet = pet_state()
     nick = st.nickname()
     login = _login_name() or (user or "").strip()
     src_pill = "pill" if lib["source"] == "settings" else "pill mute"
@@ -809,6 +884,23 @@ def page_html(user: str | None = None) -> str:
            '<div class="st-note" style="margin-top:8px">'
            "当前书库目录由环境变量 RECTO_LIBRARY_DIR 决定, 本页改了也不生效。</div>")
         + "</div></details>",
+
+        # --- 书宠 (总开关) ---
+        '<details class="sec" open id="pet"><summary>书宠 '
+        f'<span class="pill{"" if pet["enabled"] else " mute"}" id="pet-pill">'
+        f'{"已启用" if pet["enabled"] else "已关闭"}</span></summary><div class="sec-body">'
+        '<div class="st-note">书宠是那个自己出门走路的陪读精灵: 它读你的账本、长本事、写游历。'
+        "关掉之后 —— 顶栏入口、书宠页面、阅读器右下角那个小图标、"
+        "<b>陪读心跳与后台推演全部停下</b>; 存档与已经写下的游历<b>不会删</b>, 再打开接着走。</div>"
+        '<label class="st-sw"><span>启用书宠<small>一键关掉所有书宠相关的内容</small></span>'
+        f'<input type="checkbox" class="m3" id="pet-on"'
+        f'{" checked" if pet["enabled"] else ""}></label>'
+        f'<div class="st-line">已陪你读 <b id="pet-min">'
+        f'{pet["minutes"] if pet["enabled"] else "—"}</b> 分钟'
+        f' · 走过 <b id="pet-cycles">{pet["cycles"] if pet["enabled"] else "—"}</b> 回'
+        f'<span class="pill mute" id="pet-src">{_e(pet["source_label"])}</span></div>'
+        '<div id="pet-msg" class="st-msg"></div>'
+        "</div></details>",
 
         # --- 云端同步 (阅读进度) ---
         '<details class="sec wide" id="sync"><summary>云端同步 '
@@ -947,6 +1039,18 @@ def api_post(body: dict) -> dict:
     lib_given = "library_dir" in body
     changed_lib = False
 
+    # 书宠总开关: "on"/"off" (空 = 回到默认"开")
+    pet_given = "pet_enabled" in body or "pet" in body
+    if pet_given:
+        raw = body.get("pet_enabled", body.get("pet"))
+        if raw is None or raw == "":
+            st.update(pet_enabled="")
+        else:
+            val = st._bool(raw)  # noqa: SLF001 — 与 settings 内部同一套真假判定
+            if val is None:
+                raise ValueError("书宠开关只接受 on / off")
+            st.update(pet_enabled="on" if val else "off")
+
     sync_given = "sync" in body
     if sync_given:
         raw = body.get("sync")
@@ -1008,13 +1112,13 @@ def api_post(body: dict) -> dict:
             st.update(library_dir=val)
             changed_lib = True
 
-    if nickname_given or lib_given or sync_given:
+    if nickname_given or lib_given or sync_given or pet_given:
         # sync 改了必须让配置单例重读 settings.json 的覆盖层, 否则新设置要等重启才生效
         _reload_runtime(rescan=changed_lib)
 
     out = summary()
     out["changed"] = {"nickname": nickname_given, "library": lib_given,
-                      "sync": sync_given}
+                      "sync": sync_given, "pet": pet_given}
     return out
 
 

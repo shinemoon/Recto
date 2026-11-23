@@ -90,6 +90,16 @@ def _body(h) -> dict:
         return {}
 
 
+def enabled() -> bool:
+    """书宠总开关 (设置页「书宠」那一项)。关掉时整个分区不提供服务。"""
+    try:
+        from recto.core import settings as _st
+
+        return _st.pet_enabled()
+    except Exception:  # noqa: BLE001 — 读不出设置就按"开"处理
+        return True
+
+
 # ------------------------------------------------------------------ 接口路由
 def _api(h, path: str, query: str) -> tuple[int, dict]:
     """`/pet/api/...` (已去掉前缀) → (状态码, JSON)。"""
@@ -437,6 +447,16 @@ def dispatch(h) -> bool:
     if not (path == PREFIX or path.startswith(PREFIX + "/")):
         return False
     rest = path[len(PREFIX):] or "/"
+
+    # 总开关关掉 → 这个分区整个不对外: 页面回书架, 接口一律 404
+    # (前端拿不到就不会画图标; 手书签也不会 500)
+    if not enabled():
+        if rest.startswith("/api/"):
+            h._json(404, {"error": "pet_disabled",  # noqa: SLF001
+                          "detail": "书宠已在设置页关闭"})
+        else:
+            h._redirect("/#library")  # noqa: SLF001
+        return True
 
     # 页面
     if rest in ("/", ""):

@@ -407,7 +407,7 @@ POST /bookstore/open/cloud/bookshelf/upsert   type=1  multipart: usr / current_v
 | `[device]` | `port` | `8080` | 墨水屏接入端口（**固件写死，不要改**） |
 | | `data_dir` | `data/` | 摘录账本目录（`decks/` + `aggregate/` + `events.jsonl`） |
 | `[ui]` | `timezone` | 空 = 跟随系统 | **只影响显示换算**（存盘一律本地时间）。写 IANA 名，如 `Asia/Shanghai`；环境变量 `RECTO_TZ` 优先 |
-| `[pet]` | `dir` | 空 | 书宠数据根（`config.json` 端点人格 / `char.json` 存档 / `lineage/` 历代存档 / `pet.sqlite` 书籍底细+语料遭遇+游历 / `chronicle.json` 推演状态）；推演参数在 `config.json` 的 `chronicle` 段 |
+| `[pet]` | `dir` | 空 | 书宠数据根（`config.json` 端点人格 / `char.json` 存档 / `lineage/` 历代存档 / `pet.sqlite` 书籍底细+语料遭遇+游历 / `chronicle.json` 推演状态）；推演参数在 `config.json` 的 `chronicle` 段。**总开关在设置页**（`settings.json` 的 `pet_enabled`，环境变量 `RECTO_PET_ENABLED` 优先）：关掉后顶栏入口 / 书宠页面 / 阅读器小图标 / 陪读心跳 / 后台推演一起停，**存档不删** |
 | `[corpus]` | `dir` | 空 | 语料 json 目录（阅读高亮从这里读） |
 | `[reader.mark]` | `enabled` | `true` | 阅读器高亮总开关 |
 | | `mode` | `highlight` | `highlight`（不改 DOM） / `span`（可加粗圆角） |
@@ -850,6 +850,12 @@ index.json         导出清单                    latest.json  最近一次成�
 1. **武侠人物属性体系**（参数骨架取自 MUD《侠客行》）—— 六项根骨 / 门派 / 技能绝招 / 性情 / 经脉
 2. **陪读数据源** —— 阅读器的真实阅读时长（只累计分钟、长「基本内功」、推经脉，**不给修为**）
 3. **后台推演** —— 读账本（读书记录 + 语料遭遇 + 书籍底细）→ 判成长 → **算一场遭遇** → 写一回游历
+
+**总开关在设置页**（`/settings` 的「书宠」卡）。关掉之后顶栏入口、`/pet` 页面、
+阅读器右下角小图标、陪读心跳与后台推演**一起停**（`/pet/api/*` 返 404，
+语料遭遇也不再记）；存档、游历、语料遭遇**一个都不删**，再打开接着走。
+值是 `settings.json` 的 `pet_enabled`（`on` / `off`），环境变量
+`RECTO_PET_ENABLED` 优先 —— 想整机彻底关掉用它更省事。
 
 ```
 src/recto/pet/charsheet.py   人物属性体系 (六项根骨/门派/技能/绝招/性情/经脉) + 存档

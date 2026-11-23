@@ -32,7 +32,9 @@ KEYS = ("nickname", "library_dir",
         "sync_stamp", "sync_push_debounce",
         # 定时同步 (心跳通道): 开关 + 周期 + 是否顺带推划线/时长
         "sync_interval", "sync_interval_sec",
-        "sync_tick_notes", "sync_tick_time")
+        "sync_tick_notes", "sync_tick_time",
+        # 书宠总开关 ("on"/"off"; 没有这一项 = 开)
+        "pet_enabled")
 
 
 # ---------------------------------------------------------------- 文件
@@ -124,6 +126,40 @@ def _bool(v, default: bool | None = None) -> bool | None:
     return default
 
 
+# ---------------------------------------------------------------- 书宠总开关
+# 用户口径 (2026-11-23): 设置页给一个开关, 一键关掉**所有**书宠相关的内容。
+#   · 顶栏「书宠」入口不再出现
+#   · /pet 与 /pet/story 页面回书架, /pet/api/* 返 404
+#   · 阅读器右下角那个小图标不再出现
+#   · 陪读心跳 / 后台推演 都不再跑 (也不记语料遭遇)
+# 关掉 ≠ 删数据: 存档 / 游历 / 语料遭遇 原样留着, 再打开接着走。
+PET_SOURCE_LABEL = {
+    "env": "环境变量 RECTO_PET_ENABLED",
+    "settings": "设置页",
+    "config": "默认 (开)",
+}
+
+
+def pet_enabled() -> bool:
+    """书宠总开关。优先级: 环境变量 > settings.json > 默认开。"""
+    env = os.environ.get("RECTO_PET_ENABLED")
+    if env is not None:
+        v = _bool(env)
+        if v is not None:
+            return v
+    v = _bool(load().get("pet_enabled"))
+    return True if v is None else v
+
+
+def pet_source() -> str:
+    """总开关的三档来源: env | settings | config"""
+    if _bool(os.environ.get("RECTO_PET_ENABLED")) is not None:
+        return "env"
+    if _bool(load().get("pet_enabled")) is not None:
+        return "settings"
+    return "config"
+
+
 _SYNC_BOOLS = (
     ("sync_auto", "auto"),
     ("sync_pull_on_open", "pull_on_open"),
@@ -202,6 +238,9 @@ def active_overrides() -> dict:
     iv = _interval_override(d)
     if iv is not None and os.environ.get("RECTO_SYNC_INTERVAL") is None:
         out["sync_interval_sec"] = iv
+    pet = _bool(d.get("pet_enabled"))
+    if pet is not None and os.environ.get("RECTO_PET_ENABLED") is None:
+        out["pet_enabled"] = pet
     return out
 
 

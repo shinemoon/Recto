@@ -68,6 +68,16 @@ _RUN: dict[str, Any] = {"thread": None, "stop": False, "at": 0.0, "runs": 0,
 _TICK_SEC = float(os.environ.get("RECTO_CHRONICLE_TICK_SEC", "60") or 60)
 
 
+def _enabled() -> bool:
+    """书宠总开关 (设置页「书宠」)。关掉时后台推演不跑 —— 既不判成长也不烧 token。"""
+    try:
+        from recto.core import settings as _st
+
+        return _st.pet_enabled()
+    except Exception:  # noqa: BLE001
+        return True
+
+
 # ------------------------------------------------------------------ 配置
 
 def cfg() -> dict[str, Any]:
@@ -2069,11 +2079,16 @@ def _loop() -> None:
         try:
             _RUN["at"] = time.time()
             _RUN["runs"] = int(_RUN.get("runs") or 0) + 1
-            out = run(trigger="tick")
-            _RUN["last"] = out.get("status")
-            _RUN["error"] = None
-            if out.get("status") == "ok":
-                log.info("后台推演 · 回合 #%s 完成", out.get("cycle"))
+            if not _enabled():
+                # 总开关关掉 → 不翻账本、不判成长、不写游历 (存档原样躺着)
+                _RUN["last"] = "disabled"
+                _RUN["error"] = None
+            else:
+                out = run(trigger="tick")
+                _RUN["last"] = out.get("status")
+                _RUN["error"] = None
+                if out.get("status") == "ok":
+                    log.info("后台推演 · 回合 #%s 完成", out.get("cycle"))
         except Exception as e:  # noqa: BLE001 — 心跳不能死
             _RUN["error"] = f"{type(e).__name__}: {e}"
             log.warning("后台推演出错 · %s", e)
