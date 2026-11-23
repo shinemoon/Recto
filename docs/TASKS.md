@@ -946,3 +946,65 @@ body.rc-pet-page:not(.rc-pet-story-page) .adv-read-body .adv-inline {
 `probe_pet_center` 纯只读（不翻页、不写进度）。
 
 **别误记成回归**：`test_excerpt_persist` 那 2 项（正文补上 / `_noText`）stash 对照基线一样红。
+
+## T23 § 内功与运功 (exert): 门派内功不再是装饰 — `done` (2026-11-23)
+
+### 用户口径
+
+> 「书宠目前有些技能一直没有触碰，类似剑法我可以理解是没有相应场景，
+> 但是为什么门派内功也从来没有使用？这和侠客行 mud 逻辑不吻合」
+
+### 查下来是**三处一起**把门派内功做成了死数
+
+1. **内力上限只认 `type == "neigong"`**（取最大）。而基本内功的 type 是 `basic` ——
+   读书自动长到 11 级，对内力上限 **一点贡献都没有**；门派内功又停在入门 1 级，
+   于是书宠 18 级时内力上限还冻在 53（实测 `derive()["neili_max"]`）。
+2. **门派内功没有任何熟练度来路**：`practice_from` 只记出手 / 绝招 / 拆招 / 过坎，
+   判词每回最多点 1 门且倾向挑"明显的"（兵刃 / 绝招）。
+3. **`SKILLS` 里每门内功的 `use` 写着"剑上更快一分 / 越练手越沉 / 落雪不陷…"，
+   代码里一条都没落地**；`charsheet` 开头那句"内功 (exert) 与绝招 (pfm) 分开"
+   也只是注释 —— 一处 exert 都没有。
+
+### 改了四处
+
+| 改什么 | 位置 | 口径 |
+|---|---|---|
+| 启用一台内功 | `charsheet._neigong_level` | 有门派 → **本门内功**；没有 → 等级最高的那门（照 `enable force`） |
+| 内力上限 | `charsheet.derive` | 启用那门 ×10 + 根骨×2 + 基本内功底子（每级 2，封顶 +40）+ 本门 +3/级 |
+| 本门内功各管一路 | `charsheet.SECT_NEIGONG` / `neigong_effects` | 观海诀(剑·命中) 磨墨功(刀·伤害) 养气诀(豁免) 踏雪功(闪避+先手) 通明诀(命中) 卧云功(气血) |
+| **运功** | `duel._try_exert` | 加力（伤害%，只撑三拍，每场 2 试）/ 回气（内力换气血，占一拍，每场 2 次） |
+
+熟练度：运成一式 **+6**，运功走岔 **+3**，打坐（`gear.selfcare`）**+4**。
+`chronicle.md` 明写**判词不许再点内功**（重复记账）。
+
+故事侧：`duel.exert` 进 payload；正文没有"内息 / 真气 / 丹田 / 调息"痕迹就重写一次，
+仍没有记 `exert_omitted`（走岔的不强制写）。
+
+### 数值校准（都实测过，不是估的）
+
+- **回气要"够得着"才准用**（加值+10 ≥ DC）：1 级内功成功率不足一半，
+  那一拍赌不起 —— 白挨一击比回几点气血更亏。于是它是**练出来的能力**。
+- **加力只撑三拍**：一加到底直接把胜率从 65% 拉到 75%（600 场实测），
+  那就不是"运一口气"了。
+- 现态：600 场 66% 胜 → **71%**（加力与内力上限各一半贡献），
+  交手中位拍数 16.8 → 18.1，绝招 4.25 → 4.12 每场（运功与绝招共用内力池）。
+
+### 落点
+
+| 位置 | 内容 |
+|---|---|
+| `pet/charsheet.py` | `SECT_NEIGONG` / `sect_neigong()` / `neigong_effects()` / `exert_spec()`；`_neigong_level` 改口径 + `_basic_neigong()` |
+| `pet/duel.py` | `_try_exert()` / `_exert_mods()`；`_fighter` 带 `neigong`/`exert_used`/`dmg_buff`；`usage.exert` / `usage.exert_fail` |
+| `pet/growth.py` | `PRACTICE["exert"|"exert_fail"|"rest"]`；`practice_from` 读 `usage.exert` |
+| `pet/gear.py` | 打坐那一笔记一笔内功熟练度（`REST_PRACTICE`） |
+| `pet/flavor.py` | 运功四路文辞（加力成 / 加力散 / 回气 / 走岔） |
+| `pet/chronicle.py` | `_exert_need` / `_exert_in_body` + 闸门与 `exert_shown/omitted` |
+| `pet/skills/*.md` | adventure 写运功 / chronicle 不许重复点内功 |
+| `ui/assets/pet.js` | 交手数据卡多「运功」「本门内功」两行 |
+| `docs/PET_GROWTH.md` | 新增 §12 整节 |
+| 验收 | `tests/test_pet_neigong.py` **42 项**；`test_pet_duel_gate.py` 42（假模型那稿补了"内息"一句） |
+
+### 留给下一轮
+
+- 对手这一版**不运功**（pseudo 人物没有内功）。要加就先给 `_foe_fighter` 挂一份 `neigong` spec。
+- 胜率已到 71%，再给任何一方加力都要先抬对手份量，否则会变成"必赢"。

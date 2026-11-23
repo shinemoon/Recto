@@ -310,7 +310,7 @@ def _weapon(fight: dict[str, Any]) -> str:
 
 def _fighter(name: str, stats: dict[str, Any], *, hp: int, hp_max: int,
              neili: int, neili_max: int, pfms: list[dict[str, Any]],
-             side: str) -> dict[str, Any]:
+             side: str, neigong: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "name": name, "side": side,
         "hp": int(hp), "hp_max": int(hp_max),
@@ -325,6 +325,10 @@ def _fighter(name: str, stats: dict[str, Any], *, hp: int, hp_max: int,
         "crit_range": int(stats.get("crit_range") or 20),
         "perform": dict(stats.get("perform") or {}),
         "pfms": pfms,
+        # 运功 (内功) —— 只有自己那一侧有; 对手这一版不运功 (见 docs/PET_GROWTH.md)
+        "neigong": dict(neigong or {}),
+        "exert_used": {},
+        "dmg_buff": 0,
         "stun": 0,
         "guard": 0.0,
         "ac_buff": 0,
@@ -336,10 +340,12 @@ def _fighter(name: str, stats: dict[str, Any], *, hp: int, hp_max: int,
 def _my_fighter(ch: dict[str, Any]) -> dict[str, Any]:
     """把书宠包成一个"交手用的"结构 (气血/内力从存档里取当前值)。"""
     res = cs.resources(ch)
-    return _fighter(ch.get("name") or "书宠", cs.d20_stats(ch),
+    stats = cs.d20_stats(ch)
+    return _fighter(ch.get("name") or "书宠", stats,
                     hp=res["hp"]["cur"], hp_max=res["hp"]["max"],
                     neili=res["neili"]["cur"], neili_max=res["neili"]["max"],
-                    pfms=_pfms_from(ch), side="me")
+                    pfms=_pfms_from(ch), side="me",
+                    neigong=stats.get("exert") or {})
 
 
 def _foe_fighter(foe: dict[str, Any]) -> dict[str, Any]:
@@ -376,14 +382,19 @@ def _attack_check(rng: random.Random, atk: dict[str, Any], dfd: dict[str, Any],
 
 
 def _damage_roll(rng: random.Random, atk: dict[str, Any], dfd: dict[str, Any],
-                 crit: bool) -> dict[str, Any]:
+                 crit: bool, rnd: int = 0) -> dict[str, Any]:
     dmg = atk["damage"]
     count = int(dmg["count"]) * (2 if crit else 1)
     dice = D.roll_dice(rng, count, int(dmg["sides"]))
-    raw = dice["sum"] + int(dmg["flat"])
+    # 运功加力 (exert powerup): 只**撑三拍** —— 一口气提上来会散, 不是永久加成。
+    # 旧写法一加到底, 实测把胜率从 65% 拉到 75%, 那就不是"运一口气"了。
+    buff = int(atk.get("dmg_buff") or 0)
+    if buff and int(rnd) > int(atk.get("dmg_buff_until") or 0):
+        buff = 0
+    raw = dice["sum"] + int(dmg["flat"]) + buff
     guard = float(dfd.get("guard") or 0.0)
     taken = max(1, int(round(raw * (1.0 - guard))) - int(dfd.get("pierce") or 0))
-    return {"dice": dice, "raw": int(raw), "taken": int(taken),
+    return {"dice": dice, "raw": int(raw), "taken": int(taken), "buff": int(buff),
             "guard": round(guard, 2), "pierce": int(dfd.get("pierce") or 0)}
 
 
@@ -449,10 +460,10 @@ def _log(log: list[dict[str, Any]], rnd: int, side: str, kind: str, text: str, *
          atk: dict[str, Any], dfd: dict[str, Any], move: str = "", sid: str = "",
          dmg: int = 0, self_dmg: int = 0, effect: str = "",
          rolls: list[dict[str, Any]] | None = None,
-         dice: dict[str, Any] | None = None) -> None:
+         dice: dict[str, Any] | None = None, ok: bool = False) -> None:
     log.append({
         "r": int(rnd), "side": side, "move": move, "sid": sid, "kind": kind, "text": text,
-        "dmg": int(dmg), "self": int(self_dmg), "effect": effect,
+        "dmg": int(dmg), "self": int(self_dmg), "effect": effect, "ok": bool(ok),
         "hp": {"a": int(atk["hp"]), "b": int(dfd["hp"])},
         # 必须**拷贝**: 调用方传的就是那个还在追加的列表, 不拷的话上一拍的
         # 战报会被下一拍的掷骰改写 (实测: "招式没运成"那一行里混进了后面那次
@@ -461,9 +472,94 @@ def _log(log: list[dict[str, Any]], rnd: int, side: str, kind: str, text: str, *
     })
 
 
+def _exert_mods(ng: dict[str, Any], tier: int) -> list[dict[str, Any]]:
+    """运功检定的加值: 那一门内功的等级 + 内力档次 (内息够厚才稳)。"""
+    lv = int(ng.get("level") or 0)
+    name = str(ng.get("name") or "内功")
+    return D.mods_of((f"{name} {lv} 级", D.skill_mod(lv), "skill"),
+                     ("内力档次", int(tier), "situ"))
+
+
+def _try_exert(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
+               log: list[dict[str, Any]], rnd: int, voice: Any) -> str:
+    """运功 (exert) —— 内功在这两式里被真正用掉。返回 ``"recover"`` 表示占掉了这一拍。
+
+    侠客行里内功不是"挨打的底子", 而是拿来运的:
+      · **加力** (powerup): 开打先提气, 此后每一拍都更沉; 每场至多试两次,
+        内力白花不心疼, 但运不成也就没有加成
+      · **回气** (recover): 血薄时以内力换气血, **占一拍** (少打一拳), 每场两次
+    旧实现里这两式只写在注释里, 所以内功除了抬内力上限一次也用不上。
+    """
+    ng = dict(atk.get("neigong") or {})
+    if not ng:
+        return ""
+    used = atk.setdefault("exert_used", {})
+    tier = int((atk.get("perform") or {}).get("neili_tier") or 0)
+    name = str(ng.get("name") or "内功")
+    sid = str(ng.get("sid") or "")
+
+    # ── 1) 加力: 每场一次 (失败可再试, 至多 tries 次)
+    pw = dict(ng.get("power") or {})
+    want_power = (pw and int(atk.get("dmg_buff") or 0) <= 0
+                  and int(used.get("power_tries") or 0) < int(pw.get("tries") or 1))
+    if want_power and int(atk["neili"]) >= int(pw["cost"]) and rng.random() < 0.85:
+        atk["neili"] = max(0, int(atk["neili"]) - int(pw["cost"]))
+        used["power_tries"] = int(used.get("power_tries") or 0) + 1
+        c = D.check(rng, label="运功 · 加力", dc=int(pw["dc"]),
+                    mods=_exert_mods(ng, tier), kind="perform")
+        if c["success"]:
+            flat = int((atk.get("damage") or {}).get("flat") or 0)
+            buff = max(1, int(round(flat * float(pw["pct"]) / 100.0)))
+            atk["dmg_buff"] = int(buff)
+            atk["dmg_buff_until"] = int(rnd) + 3      # 一口气只撑三拍
+            used["power"] = int(used.get("power") or 0) + 1
+            _log(log, rnd, str(atk["side"]), "exert",
+                 F.exert(voice, who=atk["name"], kind="power", name=name, amount=buff),
+                 atk=atk, dfd=dfd, sid=sid, effect="powerup", rolls=[c], ok=True)
+            return "power"
+        used["power_fail"] = int(used.get("power_fail") or 0) + 1
+        _log(log, rnd, str(atk["side"]), "exert",
+             F.exert(voice, who=atk["name"], kind="power_lost", name=name),
+             atk=atk, dfd=dfd, sid=sid, rolls=[c])
+        return "power_lost"
+
+    # ── 2) 回气: 血薄时以内力换气血 (占一拍)
+    rc = dict(ng.get("recover") or {})
+    hp_pct = float(atk["hp"]) / max(1, int(atk["hp_max"]))
+    neili_pct = float(atk["neili"]) / max(1, int(atk["neili_max"]))
+    # 回气要**占一拍**: 内功太浅时赌不起 (65% 的失败率下, 白挨一击比回那几点气血更亏)。
+    # 判据: 加值够到 "d20 掷 10 就能过" 才准用 —— 于是它是练出来的能力, 不是天生就有。
+    bonus_v = D.skill_mod(int(ng.get("level") or 0)) + tier
+    can_recover = bool(rc) and (bonus_v + 10) >= int(rc.get("dc") or 14)
+    if (rc and can_recover and hp_pct < 0.45 and neili_pct >= 0.3
+            and int(used.get("recover") or 0) < int(rc.get("limit") or 1)
+            and int(atk["neili"]) >= int(rc["cost"])):
+        atk["neili"] = max(0, int(atk["neili"]) - int(rc["cost"]))
+        c = D.check(rng, label="运功 · 回气", dc=int(rc["dc"]),
+                    mods=_exert_mods(ng, tier), kind="perform")
+        if c["success"]:
+            gain = int(rc["hp"])
+            atk["hp"] = min(int(atk["hp_max"]), int(atk["hp"]) + gain)
+            used["recover"] = int(used.get("recover") or 0) + 1
+            used["recover_hp"] = int(used.get("recover_hp") or 0) + gain
+            _log(log, rnd, str(atk["side"]), "exert",
+                 F.exert(voice, who=atk["name"], kind="recover", name=name, amount=gain),
+                 atk=atk, dfd=dfd, sid=sid, effect="recover", rolls=[c], ok=True)
+            return "recover"
+        back = 2 if c["fumble"] else 0
+        if back:
+            atk["hp"] = max(0, int(atk["hp"]) - back)
+        used["recover_fail"] = int(used.get("recover_fail") or 0) + 1
+        _log(log, rnd, str(atk["side"]), "exert",
+             F.exert(voice, who=atk["name"], kind="recover_lost", name=name),
+             atk=atk, dfd=dfd, sid=sid, self_dmg=back, rolls=[c])
+        return "recover"
+    return ""
+
+
 def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
           log: list[dict[str, Any]], rnd: int, voice: Any) -> None:
-    """一次出手: 解定身 → 选招 → 运功 → 攻击检定 → 伤害/效果。就地改两人。"""
+    """一次出手: 解定身 → 运功 → 选招 → 运功检定 → 攻击检定 → 伤害/效果。就地改两人。"""
     side = str(atk["side"])
 
     # 被定住: 掷豁免挣脱 (不过就再错过一拍)
@@ -485,6 +581,10 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
     atk["ac_buff"] = 0
     atk["atk_buff"] = 0
     atk["exposed"] = 0
+
+    # 运功 (内功): 加力先提气, 血薄则回气 —— 回气占掉这一拍
+    if _try_exert(atk, dfd, rng, log, rnd, voice) == "recover":
+        return
 
     pfm = _pick_pfm(atk, dfd, rng)
     rolls: list[dict[str, Any]] = []
@@ -577,7 +677,7 @@ def _turn(atk: dict[str, Any], dfd: dict[str, Any], rng: random.Random,
              atk=atk, dfd=dfd, move=move, sid=sid, rolls=rolls)
         return
 
-    hit = _damage_roll(rng, atk, dfd, bool(atk_check["crit"]))
+    hit = _damage_roll(rng, atk, dfd, bool(atk_check["crit"]), rnd)
     dfd["hp"] = max(0, dfd["hp"] - hit["taken"])
 
     stunned = 0
@@ -659,13 +759,24 @@ def resolve(ch: dict[str, Any], foe: dict[str, Any] | None = None, *,
         ch["fame"] = int(ch.get("fame") or 0) + fame_gain
 
     # ── 练到了什么 (给 growth.practice_from 用): 自己出手几拍、使了哪门绝招、
-    #    被攻几拍 (拆招 / 轻功)。判定掷了什么, 就该长什么 —— 别让战报与本事脱钩。
+    #    运了几次功、被攻几拍 (拆招 / 轻功)。判定掷了什么, 就该长什么 ——
+    #    别让战报与本事脱钩。
     usage: dict[str, Any] = {"turns": 0, "weapon": _weapon(me), "perform": {},
-                             "defended": 0, "rounds": int(log[-1]["r"]) if log else 0}
+                             "defended": 0, "rounds": int(log[-1]["r"]) if log else 0,
+                             "exert": {}, "exert_fail": 0,
+                             "exert_sid": str((me.get("neigong") or {}).get("sid") or "")}
     for e in log:
         kind = str(e.get("kind") or "")
         if e.get("side") == "me":
             if kind == "stun":
+                continue
+            if kind == "exert":
+                # 运功不算"出手", 但要记熟练度 —— 内功就是在这几拍里练的
+                s_id = str(e.get("sid") or usage["exert_sid"])
+                if e.get("ok"):
+                    usage["exert"][s_id] = int(usage["exert"].get(s_id, 0)) + 1
+                else:
+                    usage["exert_fail"] = int(usage["exert_fail"]) + 1
                 continue
             usage["turns"] = int(usage["turns"]) + 1
             s_id = str(e.get("sid") or "")
@@ -699,6 +810,13 @@ def resolve(ch: dict[str, Any], foe: dict[str, Any] | None = None, *,
         "moves": moves,
         "foe_moves": foe_moves,
         "usage": usage,
+        "exert": {"sid": usage["exert_sid"],
+                  "name": str((me.get("neigong") or {}).get("name") or ""),
+                  "level": int((me.get("neigong") or {}).get("level") or 0),
+                  "power": int((me["exert_used"] or {}).get("power") or 0),
+                  "recover": int((me["exert_used"] or {}).get("recover") or 0),
+                  "healed": int((me["exert_used"] or {}).get("recover_hp") or 0),
+                  "failed": int(usage.get("exert_fail") or 0)},
         "fame": fame_gain,
         "hp": {"from": start_hp, "to": me["hp"], "max": me["hp_max"]},
         "neili": {"from": start_neili, "to": me["neili"], "max": me["neili_max"]},

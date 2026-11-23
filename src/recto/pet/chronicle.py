@@ -515,6 +515,10 @@ def _duel_brief(duel: dict[str, Any] | None) -> dict[str, Any] | None:
         "moves": list(duel.get("moves") or []),
         "foe_moves": list(duel.get("foe_moves") or []),
         "hp": duel.get("hp"), "neili": duel.get("neili"),
+        # 运功 (内功被用掉的那几拍): 名字 + 成了几次 + 回了多少气血 + 走岔几次。
+        # 只给这些"发生过什么", 不给难度与骰点 —— 同一条规矩。
+        "exert": {k: (duel.get("exert") or {}).get(k)
+                  for k in ("sid", "name", "level", "power", "recover", "healed", "failed")},
         "rounds": rounds,
         "initiative": {"order": (duel.get("initiative") or {}).get("order") or []},
     }
@@ -668,6 +672,25 @@ def _gear_in_body(body: str, need: list[dict[str, Any]]) -> bool:
         if not any(w and w in text for w in (group.get("words") or [])):
             return False
     return True
+
+
+#: "运过功"在正文里该有的痕迹 —— 内息 / 真气 / 丹田 这一路词。
+#: 不认"运功"两个字本身: 那太像术语, 故事里本就该写成人话。
+_EXERT_WORDS = ("内息", "真气", "丹田", "气机", "运功", "行气", "吐纳", "一口气")
+
+
+def _exert_need(duel: dict[str, Any] | None) -> dict[str, Any]:
+    """这一场真运过功吗 (加力成 / 回气成)。走偏的那些不算 —— 没成的事不必写。"""
+    ex = dict((duel or {}).get("exert") or {})
+    n = int(ex.get("power") or 0) + int(ex.get("recover") or 0)
+    return dict(ex, need=n) if n else {}
+
+
+def _exert_in_body(body: str, need: dict[str, Any]) -> bool:
+    if not need:
+        return True
+    text = str(body or "")
+    return any(w in text for w in _EXERT_WORDS)
 
 
 def _chapter_label_of(path: str, spine: int) -> str:
@@ -1012,10 +1035,12 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
     checks_req = payload.get("checks") or []
     gear_req = payload.get("gear") or {}
     gear_need = _gear_need(gear_req)
+    exert_need = _exert_need(duel_req)
     duel_ok = _duel_in_body(body, duel_req, data)
     moves_ok = _moves_in_body(body, duel_req)
     checks_ok = (not checks_req) or bool((data or {}).get("checks_shown"))
     gear_ok = _gear_in_body(body, gear_need)
+    exert_ok = _exert_in_body(body, exert_need)
     spark_req = payload.get("spark") or {}
     spark_ok = _spark_in_body(body, spark_req, data)
     missing: list[str] = []
@@ -1027,6 +1052,8 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         missing.append("路上的坎")
     if gear_need and not gear_ok:
         missing.append("钱与药")
+    if exert_need and not exert_ok:
+        missing.append("内息")
     if spark_req and not spark_ok:
         missing.append("来处")
     if missing and body:
@@ -1043,6 +1070,15 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
                          + "、".join(str(g.get("what") or "") for g in gear_need)
                          + "。正文里要照实写出来 (敷药 / 看郎中 / 打坐 / 拿到那件东西), "
                            "一两句就够, 不要报账, 也不许改数额。")
+        if exert_need and not exert_ok:
+            notes.append("这一回它**真运过功**: "
+                         + str(exert_need.get("name") or "内功")
+                         + f" 的加力 {int(exert_need.get('power') or 0)} 次"
+                         + f"、回气 {int(exert_need.get('recover') or 0)} 次"
+                         + (f" (回了 {int(exert_need.get('healed') or 0)} 分气血)"
+                            if int(exert_need.get("healed") or 0) else "")
+                         + "。正文里要写出内息这件事 (气走经脉 / 提气 / 调息), 一两句, "
+                           "不要写成招式名, 也不要报数值。")
         log.info("游历 · 上一稿漏了%s, 重写一次", "与".join(missing))
         payload["contract_note"] = "\n".join(n for n in notes if n)
         user2 = ("按 %s.md 的契约重写这一回。只输出 JSON。\n\n" % guide
@@ -1054,24 +1090,29 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
             moves_ok2 = _moves_in_body(body2, duel_req)
             checks_ok2 = (not checks_req) or bool((data2 or {}).get("checks_shown"))
             gear_ok2 = _gear_in_body(body2, gear_need)
+            exert_ok2 = _exert_in_body(body2, exert_need)
             spark_ok2 = _spark_in_body(body2, spark_req, data2)
             if (not duel_req or (duel_ok2 and moves_ok2)) \
                     and (not checks_req or checks_ok2) \
                     and (not gear_need or gear_ok2) \
+                    and (not exert_need or exert_ok2) \
                     and (not spark_req or spark_ok2):
                 data, body = data2, body2
                 duel_ok, moves_ok, checks_ok, gear_ok = duel_ok2, moves_ok2, checks_ok2, gear_ok2
+                exert_ok = exert_ok2
                 spark_ok = spark_ok2
         payload.pop("contract_note", None)
         if ((duel_req and not (duel_ok and moves_ok))
                 or (checks_req and not checks_ok)
                 or (gear_need and not gear_ok)
+                or (exert_need and not exert_ok)
                 or (spark_req and not spark_ok)):
             log.warning("游历 · 重写后仍缺%s —— 这一回按缺项记",
                         "与".join(x for x, bad in (("交手", duel_req and not duel_ok),
                                                    ("招式名", duel_req and not moves_ok),
                                                    ("路上的坎", checks_req and not checks_ok),
                                                    ("钱与药", gear_need and not gear_ok),
+                                                   ("内息", exert_need and not exert_ok),
                                                    ("来处", spark_req and not spark_ok))
                                   if bad))
 
@@ -1121,6 +1162,8 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         "checks_shown": bool(checks_ok) if checks_req else bool(data.get("checks_shown")),
         # 钱与药是**核过正文**的, 不是听模型自报
         "gear_shown": bool(gear_ok) if gear_need else True,
+        # 运过功 (内息) 同样核正文 —— 内功在故事里要被看见
+        "exert_shown": bool(exert_ok) if exert_need else True,
         "days": jsonout.as_int(data.get("days"), 1, 1, 5),
         # 来处: 这一回的故事跟"读到的书与撞到的语料"有没有关系 —— 核过正文
         "spark_shown": bool(spark_ok) if spark_req else True,
@@ -1134,6 +1177,8 @@ def compose(ev: dict[str, Any], ch: dict[str, Any], gain: dict[str, Any],
         story["checks_omitted"] = True
     if gear_need and not story["gear_shown"]:
         story["gear_omitted"] = True
+    if exert_need and not story["exert_shown"]:
+        story["exert_omitted"] = True
     if spark_req and not story["spark_shown"]:
         story["spark_omitted"] = True
     if guide == "legacy":

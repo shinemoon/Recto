@@ -710,13 +710,132 @@ def effective_attrs(ch: dict[str, Any]) -> dict[str, int]:
 
 
 def _neigong_level(ch: dict[str, Any]) -> int:
-    """最高内功等级 —— 内力上限按它算 (侠客行: 内功等级 × 10)。"""
+    """**已启用**的那门内功等级 —— 内力上限按它算 (侠客行: 内功等级 × 10)。
+
+    侠客行里 ``enable force <内功>`` 只能启用一门: 内力的深浅看那一门, 不是你
+    会过几门内功。这里的口径照它:
+      · 有门派 → 启用**本门内功** (所以门派内功必须练, 否则内力永远停在入门那格)
+      · 没有门派 → 启用等级最高的那门
+    旧实现取"所有 type==neigong 的最大值", 而基本内功的 type 是 ``basic`` ——
+    于是读书自动长起来的那 11 级基本内功对内力上限**一点贡献都没有**, 门派内功
+    又停在 1 级, 内力上限从此冻在 53 (2026-11-23 实测)。
+    """
+    sect = sect_neigong(ch)
+    if sect.get("sid"):
+        return int(sect.get("level") or 0)
     best = 0
     for sid, lv in (ch.get("skills") or {}).items():
         sk = SKILL_BY_ID.get(sid)
         if sk and sk["type"] == "neigong":
             best = max(best, int(lv))
     return best
+
+
+def _basic_neigong(ch: dict[str, Any]) -> int:
+    """吐纳的底子 (基本内功) —— 给内力上限一份薄底子, 每级 2 点, 封顶 +40。"""
+    return min(40, skill_level(ch, "jibenneigong") * 2)
+
+
+#: 本门内功练到几级，各自**管什么** —— 门派内功不是装饰。
+#:
+#: 侠客行里内功有两层作用: 一层是"底子" (内力上限、回气), 另一层是**本门那一门**
+#: 的特性 —— 剑派的运气法门让剑更快, 刀派的让刀更沉。旧实现里 ``SKILLS`` 的
+#: ``use`` 写着这些, 代码里却一条都没落地, 于是门派内功停在入门 1 级、一辈子
+#: 不参与结算 (2026-11-23 用户报「门派内功从来没使用」的根因)。
+#: ``per`` = 每级给多少, ``when`` = 只在使这一路兵刃时算。
+SECT_NEIGONG: dict[str, dict[str, Any]] = {
+    "guanhai": {"stat": "hit", "per": 0.9, "when": "jianfa",
+                "cn": "剑上更快一分 —— 使剑时命中加值随本门内功长"},
+    "monengong": {"stat": "damage", "per": 1.1, "when": "daofa",
+                  "cn": "越练手越沉 —— 使刀时伤害加值随本门内功长"},
+    "yangqijue": {"stat": "save", "per": 0.8,
+                  "cn": "气息绵长 —— 定身一类的根骨豁免随本门内功长"},
+    "taxuegong": {"stat": "dodge", "per": 0.8, "extra": {"init": 0.5},
+                  "cn": "落雪不陷 —— 闪避与先手随本门内功长"},
+    "tongmingjue": {"stat": "hit", "per": 0.8,
+                    "cn": "照见来路 —— 命中加值随本门内功长"},
+    "woyungong": {"stat": "hp", "per": 2.0,
+                  "cn": "气血厚 —— 气血上限随本门内功长"},
+}
+
+
+def sect_neigong(ch: dict[str, Any]) -> dict[str, Any]:
+    """本门内功 —— 书宠真正在练的那一门 (门派定了它就是它)。
+
+    没有门派 / 没入过门 → ``sid`` 为空 (那它就只剩"底子"可练, 见 ``exert_spec``)。
+    """
+    school = SCHOOL_BY_ID.get(str(ch.get("school") or ""))
+    sid = str((school or {}).get("neigong") or "")
+    name = str((SKILL_BY_ID.get(sid) or {}).get("name") or "")
+    return {
+        "sid": sid, "name": name, "level": skill_level(ch, sid) if sid else 0,
+        "school": str((school or {}).get("name") or ""),
+        "effect": dict(SECT_NEIGONG.get(sid) or {}),
+    }
+
+
+def neigong_effects(ch: dict[str, Any]) -> dict[str, Any]:
+    """本门内功落到数值上的那几笔 (派生值, 不入库)。"""
+    s = sect_neigong(ch)
+    eff = s.get("effect") or {}
+    lv = int(s["level"])
+    out: dict[str, Any] = {"sid": s["sid"], "name": s["name"], "level": lv,
+                           "hit": 0, "dodge": 0, "damage": 0, "hp": 0, "save": 0,
+                           "init": 0, "cn": str(eff.get("cn") or ""),
+                           "card": s.get("school") or "",
+                           "off": ""}
+    stat = str(eff.get("stat") or "")
+    if not stat or lv <= 0:
+        out["off"] = "本门内功还没入门" if s["sid"] else "没有门派内功"
+        return out
+    when = str(eff.get("when") or "")
+    if when:
+        main = main_skill(ch)
+        if not main or str(main.get("id")) != when:
+            out["off"] = ("只在使" + str((SKILL_BY_ID.get(when) or {}).get("name") or when)
+                          + "时算")
+            return out
+    per = float(eff.get("per") or 0.0)
+    out[stat] = int(round(per * lv))
+    for k, v in (eff.get("extra") or {}).items():
+        out[str(k)] = int(round(float(v) * lv))
+    # 加成真的落到了数上才算 (命中 0.9/级 在 1 级时 round 成 1, 看得见)
+    return out
+
+
+def exert_spec(ch: dict[str, Any]) -> dict[str, Any]:
+    """**运功** (exert) 的口径 —— 侠客行里内功不是"挨打用的", 是拿来运的。
+
+    旧实现里 ``charsheet`` 开头那句"内功 (exert) 与绝招 (pfm) 分开"只是注释,
+    代码里一处 exert 都没有 → 内功除了抬内力上限，整场交手一次也用不上。
+
+    两式 (都按**本门内功**的等级算, 没有门派才退回最高的那门):
+      · 加力 (powerup): 开打先运气, 伤害加值涨 ``pct%``, 每场至多试两次
+      · 回气 (recover): 血薄时以内力换气血, 占一拍, 每场两次
+    """
+    s = sect_neigong(ch)
+    sid = str(s.get("sid") or "")
+    if not sid:
+        sid = ("jibenneigong" if skill_level(ch, "jibenneigong")
+               else max(SKILL_BY_ID, key=lambda k: skill_level(ch, k), default=""))
+    if not sid:
+        return {}
+    lv = skill_level(ch, sid)
+    name = str((SKILL_BY_ID.get(sid) or {}).get("name") or sid)
+    sect = bool(s.get("sid"))
+    pct = min(30, 6 + lv * 2)
+    rc_cost = 8 + lv
+    return {
+        "sid": sid, "name": name, "level": lv, "sect": sect,
+        # 运功的开销要**便宜**: 内力是和绝招共用的一池水, 运一次功不该顶掉半记绝招
+        # (旧取值 13/18 在第一版实测里把绝招次数砍掉四分之一)。
+        "power": {"pct": int(pct), "cost": 6 + lv // 2, "dc": max(8, 14 - lv // 4),
+                  "tries": 2},
+        "recover": {"cost": int(rc_cost),
+                    "hp": max(3, int(round(rc_cost * (1.0 + 0.05 * lv)))),
+                    "dc": max(8, 14 - lv // 4), "limit": 2},
+        "note": "运功: 加力涨伤害; 回气以内力换气血 (都按内功等级算)",
+    }
 
 
 # 交手时算"主修"的几类技能 (兵器 / 拳脚)。轻功与内功单独加成。
@@ -810,9 +929,14 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
       · 先攻 = 身法加值 + 轻功的一半 + 禀赋先手 + 佩物
       · 豁免 = 根骨 / 定力 / 身法 (各带对应基本功)
       · 绝招加值 = 绝招对应根骨的加值 + 招式等级 + 内力档次 (最多 +3)
+      · **本门内功**按它 `use` 里写的那一路加成 (命中 / 伤害 / 闪避 / 先手 / 豁免 / 气血),
+        单列 ``src="neigong"`` —— 门派内功练不练, 拆账上看得见
 
     **行囊里那三件东西** (兵器 / 护具 / 佩物) 走 ``gear_mods()``, 加成单列
     ``src="gear"`` —— 所以"换一把好刀"看得见, 也不是凭空多出来的。
+
+    **运功** (加力 / 回气) 的口径由 ``exert_spec()`` 给, 挂在返回值的 ``exert`` 上 ——
+    真正用掉它的是 ``duel._try_exert``。
     """
     from recto.pet import d20
 
@@ -822,27 +946,36 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
     main = main_skill(ch)
     derived = derive(ch)
     combat = derived["combat"]
+    ne = neigong_effects(ch)
+    ne_name = (str(ne.get("name") or "") + " " + str(ne.get("level") or 0) + " 级") \
+        if int(ne.get("level") or 0) else ""
 
     zhaojia = skill_level(ch, "jibenzhaojia")
     qg = skill_level(ch, "qinggong") + skill_level(ch, "jibenshenfa")
     parry_mod = d20.attr_mod(a["gen"]) + d20.skill_mod(zhaojia) + int(tm.get("parry") or 0) // 4
-    ac = 10 + parry_mod + d20.skill_mod(qg) // 3 + int(gm.get("ac") or 0)
+    ac = (10 + parry_mod + d20.skill_mod(qg) // 3 + int(gm.get("ac") or 0)
+          + int(ne.get("dodge") or 0) // 2)
     ac_parts = d20.mods_of(
         ("根骨 " + str(a["gen"]), d20.attr_mod(a["gen"]), "attr"),
         ("基本招架 " + str(zhaojia) + " 级", d20.skill_mod(zhaojia), "skill"),
         ("禀赋招架", int(tm.get("parry") or 0) // 4, "trait"),
         ("轻功 " + str(qg) + " 级", d20.skill_mod(qg) // 3, "skill"),
+        (ne_name + " 身法", int(ne.get("dodge") or 0) // 2, "neigong"),
         ((gm.get("armor") or {}).get("name") or "",
          int(gm.get("ac") or 0), "gear"),
     )
 
     main_lv = int(main["level"]) if main else 0
     main_attr = str(main.get("attr") or "li") if main else "li"
+    ne = neigong_effects(ch)
+    ne_name = (str(ne.get("name") or "") + " " + str(ne.get("level") or 0) + " 级") \
+        if int(ne.get("level") or 0) else ""
     attack_parts = d20.mods_of(
         (_attr_name(main_attr) + " " + str(a[main_attr]), d20.attr_mod(a[main_attr]), "attr"),
         ((main["name"] + " " + str(main_lv) + " 级") if main else "主修 无",
          d20.skill_mod(main_lv), "skill"),
         ("禀赋命中", int(tm.get("hit") or 0) // 3, "trait"),
+        (ne_name + " 运气", int(ne.get("hit") or 0), "neigong"),
         ((gm.get("weapon") or {}).get("name") or "", int(gm.get("attack") or 0), "gear"),
     )
     attack = sum(int(m["value"]) for m in attack_parts)
@@ -850,13 +983,15 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
     # 手上有兵器就用它的骰 (木剑 1d6 / 铁剑 1d8 / 雁翎刀 1d10 …); 空手才按主修的兵刃骰
     dice = gm.get("dice") or WEAPON_DICE.get(str(main["id"]) if main else "", DEFAULT_DICE)
     flat = (8 + d20.attr_mod(a["li"]) * 2 + d20.skill_mod(main_lv) * 2
-            + int(tm.get("damage") or 0) // 2 + int(gm.get("damage") or 0))
+            + int(tm.get("damage") or 0) // 2 + int(gm.get("damage") or 0)
+            + int(ne.get("damage") or 0))
     pierce = int(combat.get("defense") or 0) // 3 + int(gm.get("pierce") or 0)
 
     init_parts = d20.mods_of(
         ("身法 " + str(a["shen"]), d20.attr_mod(a["shen"]), "attr"),
         ("轻功 " + str(qg) + " 级", d20.skill_mod(qg) // 2, "skill"),
         ("禀赋先手", int(tm.get("speed") or 0) // 4, "trait"),
+        (ne_name + " 轻身", int(ne.get("init") or 0), "neigong"),
         ((gm.get("charm") or {}).get("name") or "", int(gm.get("init") or 0), "gear"),
     )
     neili_tier = min(3, int(derived["neili_max"]) // 40)
@@ -867,6 +1002,7 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
         parts = d20.mods_of(
             (_attr_name(attr_key) + " " + str(a[attr_key]), d20.attr_mod(a[attr_key]), "attr"),
             (sname + " " + str(lv) + " 级", d20.skill_mod(lv) // 2, "skill"),
+            (ne_name + " 养气", int(ne.get("save") or 0), "neigong"),
         )
         return {"total": sum(int(m["value"]) for m in parts), "parts": parts}
 
@@ -894,6 +1030,9 @@ def d20_stats(ch: dict[str, Any]) -> dict[str, Any]:
                  "armor": (gm.get("armor") or {}).get("name") or "",
                  "charm": (gm.get("charm") or {}).get("name") or ""},
         "main": dict(main) if main else None,
+        # 运功 (内功真正被"用起来"的地方) 与它落到数值上的那几笔
+        "exert": exert_spec(ch),
+        "neigong": ne,
     }
 
 
@@ -949,10 +1088,14 @@ def derive(ch: dict[str, Any]) -> dict[str, Any]:
 
     tm = trait_mods(ch)
     gm = gear_mods(ch)
-    hp_max = 20 + a["gen"] * 3 + level * 2 + ng + vein_bonus * 2
+    ne = neigong_effects(ch)
+    hp_max = 20 + a["gen"] * 3 + level * 2 + ng + vein_bonus * 2 + int(ne["hp"])
     spirit_max = 20 + a["ding"] * 3 + a["wu"] * 2
     jingli_max = a["gen"] * 5 + a["na"] * 5
-    neili_max = ng * 10 + a["gen"] * 2
+    # 内力上限: 已启用那门内功给主体, 基本内功给薄底子, **本门内功另加一份**
+    # (它每级 +3: 门派运气法门比瞎练的底子精纯一分)。
+    neili_max = (ng * 10 + a["gen"] * 2 + _basic_neigong(ch)
+                 + int(ne["level"]) * 3)
     if tm.get("hp_pct"):
         hp_max = hp_max * (100 + int(tm["hp_pct"])) / 100.0
     if tm.get("neili_pct"):
@@ -1004,6 +1147,8 @@ def derive(ch: dict[str, Any]) -> dict[str, Any]:
             "neigong": ng,
         },
         "neigong_level": ng,
+        "neigong_sect": ne,
+        "exert": exert_spec(ch),
         "wuxing": wuxing,
         "school_bonus": bonus,
         "exp_needed": exp_needed(level),

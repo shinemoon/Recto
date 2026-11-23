@@ -309,6 +309,19 @@ function renderChar(ch) {
         signed(((sv[k] || {}).total) || 0);
     }).join(' · ')]);
     rows.push(['暴击', '骰出 ' + (t.crit_range || 20) + ' 以上即大成功 · 骰出 20 必中']);
+    // 运功 (exert) —— 内功真正被用掉的地方; 没有它, 内功就只是内力上限的一个数
+    const ex = t.exert || {};
+    if (ex.name) {
+      const pw = ex.power || {}, rc = ex.recover || {};
+      rows.push(['运功', esc(ex.name) + ' ' + (ex.level || 0) + ' 级' +
+        ' · 加力 +' + (pw.pct || 0) + '% (内力 ' + (pw.cost || 0) + ')' +
+        ' · 回气 ' + (rc.hp || 0) + ' (内力 ' + (rc.cost || 0) + ' ×' + (rc.limit || 0) + ')']);
+    }
+    const ng = t.neigong || {};
+    if (ng.sid) {
+      rows.push(['本门内功', esc(ng.name) + ' ' + (ng.level || 0) + ' 级 · ' +
+        esc(ng.off || ng.cn || '')]);
+    }
     d20box.innerHTML = rows.map(function (r) {
       return '<div class="cs-d20-row"><span class="cs-d20-l">' + esc(r[0]) +
         '</span><span class="cs-d20-v">' + r[1] + '</span></div>';

@@ -201,6 +201,20 @@ BUFF = ["缓缓吐出一口长气, 掌心隐隐发热", "肩背一松, 力道重
 STUNNED = ["那处穴道还麻着, 一动就抽痛", "半边身子不听使唤, 只能干看着",
            "试着挣了一下, 内息反倒滞住", "劲提不起来, 脚下像钉住了"]
 
+#: 运功 (exert) 的几路文辞 —— 这是内功**在场上被用掉**的地方, 与绝招分开写:
+#: 加力是"把气提上来", 回气是"把气收回去"。
+EXERT_POWER = ["沉腰坐马, 一口真气提到掌心", "把内息在经脉里压过一遍, 力道忽然重了",
+               "脚下不动, 气却先到, 手背上浮起一层薄红",
+               "闭了一瞬眼, 再睁开时呼吸都沉下去"]
+EXERT_POWER_LOST = ["内息提到一半就散了, 劲力没接上", "一口气提不起来, 只'哼'了一声",
+                    "想运功, 经脉却像堵了一处", "气到肩头就退回丹田, 白费了一口"]
+EXERT_RECOVER = ["退到一旁坐下, 双手按膝, 慢慢把气收回丹田",
+                 "趁着空档调息, 一点一点把内息捋顺",
+                 "把掌心覆在伤处, 气行了一周, 痛缓了些",
+                 "深吸一口气, 憋住, 再缓缓吐出 —— 气血跟着回来一点"]
+EXERT_RECOVER_LOST = ["内息行到半途断了, 胸口反倒一闷", "调息调岔了, 脸色一白",
+                      "想把气压回去, 那口气却顶上来, 咳了两声"]
+
 
 # ------------------------------------------------------------------ 取词
 
@@ -346,6 +360,23 @@ def stunned(v: Voice, *, who: str) -> str:
 def new_voice(rng: random.Random) -> Voice:
     """开一场新的打斗就开一张新嘴。"""
     return Voice(rng)
+
+
+def exert(v: Voice, *, who: str, kind: str, name: str, amount: int = 0) -> str:
+    """运功那一拍 (内功在这里被真正用掉)。
+
+    ``kind``: ``power`` 加力成了 / ``power_lost`` 加力没成 /
+    ``recover`` 回气 / ``recover_lost`` 回气走岔。
+    """
+    if kind == "power":
+        return (f"{who}{v.pick(EXERT_POWER)}, 走的正是 {name} 的路子"
+                f" —— 此后出手更沉 (+{int(amount)})。")
+    if kind == "power_lost":
+        return f"{who}{v.pick(EXERT_POWER_LOST)} —— {name} 这一口没运成。"
+    if kind == "recover":
+        return (f"{who}{v.pick(EXERT_RECOVER)}, 依 {name} 把气归位"
+                f" —— 气血回了 {int(amount)}。")
+    return f"{who}{v.pick(EXERT_RECOVER_LOST)} —— 这一调反倒伤了内息。"
 
 
 def beat(v: Voice, *, kind: str, who: str = "", whom: str = "",

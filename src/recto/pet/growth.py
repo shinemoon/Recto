@@ -65,6 +65,10 @@ PRACTICE = {
     "check_ok": 9,   # 过了一道坎
     "check_no": 6,   # 没过 —— 败也是练, 只是少些
     "judged": 25,    # 判词点名的那一门 (说书人说"这一趟悟到了")
+    # 运功 (exert) —— 内功唯一"真被用掉"的地方, 所以它的熟练度只能从这里来
+    "exert": 6,      # 运成一式 (加力 / 回气)
+    "exert_fail": 3, # 运功走岔, 没成 —— 白花了一口真气, 也是练
+    "rest": 4,       # 打坐调息 (gear.selfcare 里那次)
 }
 #: 一趟里**同一门功夫**最多攒多少实战熟练度 (防"一场车轮战直接把上限打满")
 PER_SKILL_PER_CYCLE_CAP = 50
@@ -424,6 +428,12 @@ def practice_from(ch: dict[str, Any], duel: dict[str, Any] | None = None,
         for sid, n in (usage.get("perform") or {}).items():
             add(sid, int(n) * PRACTICE["perform"], "绝招")
         add("jibenzhaojia", int(usage.get("defended") or 0) * PRACTICE["defend"], "拆招")
+        # 运功: 内功唯一的实战进账 (加力 / 回气), 没成的也算练
+        for sid, n in (usage.get("exert") or {}).items():
+            add(sid, int(n) * PRACTICE["exert"], "运功")
+        fails = int(usage.get("exert_fail") or 0)
+        if fails:
+            add(usage.get("exert_sid"), fails * PRACTICE["exert_fail"], "运功未成")
 
     for c in (checks or []):
         n = PRACTICE["check_ok"] if c.get("success") else PRACTICE["check_no"]

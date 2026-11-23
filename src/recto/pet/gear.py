@@ -48,6 +48,10 @@ INN = {"name": "客栈", "price": 18,
        "heal": {"hp": 0.30, "spirit": 0.30, "neili": 0.20},
        "note": "在客栈歇了一夜, 热水泡过脚"}
 
+#: 打坐一次给内功多少熟练度 —— 打坐就是运功, 这是内功最稳的进账
+#: (与growth.PRACTICE["rest"] 同值; 那个表管"一趟里记多少", 这里管"当场加多少")。
+REST_PRACTICE = 4
+
 
 def _w(iid: str, name: str, price: int, dice: tuple[int, int], *,
        attack: int = 0, desc: str = "") -> dict[str, Any]:
@@ -460,7 +464,16 @@ def selfcare(ch: dict[str, Any], *, seed: int | None = None,
     if pct("hp") < 0.55 or pct("neili") < 0.4:
         got = cs.restore(ch, 0.45 + 0.15 * rng.random())
         if got.get("hp") or got.get("neili"):
-            acts.append({"kind": "rest", "name": "打坐", "healed": got})
+            act = {"kind": "rest", "name": "打坐", "healed": got}
+            # 打坐就是运功 —— 内功能从这里攒熟练度 (否则它一辈子停在入门那一格)
+            ng = cs.sect_neigong(ch)
+            sid = str(ng.get("sid") or "jibenneigong")
+            prac = cs.add_practice(ch, sid, REST_PRACTICE)
+            if int(prac.get("added") or 0):
+                act["practice"] = {"id": sid, "name": str(ng.get("name") or "基本内功"),
+                                   "gain": int(prac["added"]),
+                                   "leveled": bool(prac.get("leveled"))}
+            acts.append(act)
             notes.append("找了个背风处打坐, 气回了些")
 
     r1 = cs.resources(ch)
